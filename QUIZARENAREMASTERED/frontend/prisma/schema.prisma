@@ -1,0 +1,109 @@
+// QuizArena — Prisma schema (PostgreSQL)
+// Simplified for thesis-demo purposes; expand as needed.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  PROFESSOR
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String
+  password  String
+  role      Role
+  createdAt DateTime @default(now())
+
+  sections       Section[]      @relation("ProfessorSections")
+  enrollments    Enrollment[]
+  battleResults  BattleResult[]
+}
+
+model Section {
+  id           Int      @id @default(autoincrement())
+  name         String
+  subject      String
+  code         String
+  semester     String
+  capacity     Int
+  status       String   @default("active") // active | archived
+  schedule     String?
+  room         String?
+  professorId  Int
+  professor    User     @relation("ProfessorSections", fields: [professorId], references: [id])
+
+  enrollments  Enrollment[]
+  questions    Question[]
+  battles      Battle[]
+}
+
+model Enrollment {
+  id        Int     @id @default(autoincrement())
+  studentId Int
+  sectionId Int
+  student   User    @relation(fields: [studentId], references: [id])
+  section   Section @relation(fields: [sectionId], references: [id])
+
+  @@unique([studentId, sectionId])
+}
+
+model Question {
+  id          Int        @id @default(autoincrement())
+  sectionId   Int
+  section     Section    @relation(fields: [sectionId], references: [id])
+  text        String
+  subject     String
+  difficulty  Difficulty
+  topic       String
+  type        String     // e.g. multiple_choice, identification
+  points      Int
+  timeLimit   Int
+  choices     String[]   // empty for non-multiple-choice
+  answer      String
+  explanation String?
+  tags        String[]
+  aiGenerated Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+}
+
+model Battle {
+  id        Int            @id @default(autoincrement())
+  sectionId Int
+  section   Section        @relation(fields: [sectionId], references: [id])
+  status    String         @default("pending") // pending | live | finished
+  startedAt DateTime?
+  endedAt   DateTime?
+  createdAt DateTime       @default(now())
+
+  results   BattleResult[]
+}
+
+model BattleResult {
+  id         Int    @id @default(autoincrement())
+  battleId   Int
+  battle     Battle @relation(fields: [battleId], references: [id])
+  studentId  Int
+  student    User   @relation(fields: [studentId], references: [id])
+  score      Int
+  correct    Int
+  total      Int
+  speedBonus Int    @default(0)
+  accuracy   Float
+  streak     Int    @default(0)
+  rank       Int
+}
