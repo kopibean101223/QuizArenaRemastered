@@ -328,7 +328,7 @@ function SubmitBtn({
         <>
           <Loader2 size={20} strokeWidth={2.5} style={{ animation: "spin 0.8s linear infinite" }} />
           Please wait…
-        </>
+        </>                       
       ) : (
         <>
           {label}
@@ -400,16 +400,34 @@ function SignUpForm() {
     return e;
   }
 
-  function handleSubmit() {
-    const e = validate();
-    setErrors(e);
-    if (Object.keys(e).length) return;
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      setSuccess(true);
-    }, 2000);
+ async function handleSubmit() {
+  const e = validate();
+  setErrors(e);
+  if (Object.keys(e).length) return;
+
+  setLoading(true);
+  try {
+    const response = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password, role }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setErrors({ server: data.message || 'Registration failed.' });
+      return;
+    }
+
+    setSuccess(true);
+    // Optionally redirect or set user context here
+  } catch (err) {
+    setErrors({ server: 'An error occurred during account creation.' });
+  } finally {
+    setLoading(false);
   }
+}
 
   if (success) {
     return (
