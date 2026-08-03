@@ -1,3 +1,6 @@
+"use client";
+
+import { useRouter } from "next/navigation";
 import {
   LayoutDashboard, Layers, Library, Sparkles,
   Swords, FlaskConical, LogOut, Trophy,
@@ -13,16 +16,17 @@ const C = {
 interface NavItem { id: Page; icon: React.ReactNode; label: string; }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "dashboard",   icon: <LayoutDashboard size={17} strokeWidth={2}/>, label: "Dashboard"         },
-  { id: "sections",    icon: <Layers          size={17} strokeWidth={2}/>, label: "My Sections"       },
-  { id: "questions",   icon: <Library         size={17} strokeWidth={2}/>, label: "Question Bank"     },
-  { id: "aigen",       icon: <Sparkles        size={17} strokeWidth={2}/>, label: "AI Generator"      },
-  { id: "matchmaking", icon: <Swords          size={17} strokeWidth={2}/>, label: "Matchmaking"       },
-  { id: "analyzer",    icon: <FlaskConical    size={17} strokeWidth={2}/>, label: "Solution Analyzer" },
+  { id: "dashboard",    icon: <LayoutDashboard size={17} strokeWidth={2}/>, label: "Dashboard"         },
+  { id: "sections",     icon: <Layers          size={17} strokeWidth={2}/>, label: "My Sections"       },
+  { id: "questions",    icon: <Library         size={17} strokeWidth={2}/>, label: "Question Bank"     },
+  { id: "aigen",        icon: <Sparkles        size={17} strokeWidth={2}/>, label: "AI Generator"      },
+  { id: "matchmaking",  icon: <Swords          size={17} strokeWidth={2}/>, label: "Matchmaking"       },
+  { id: "analyzer",     icon: <FlaskConical    size={17} strokeWidth={2}/>, label: "Solution Analyzer" },
 ];
 
 export function ProfSidebar() {
-  const { user, page, navigate, logout } = useApp();
+  const router = useRouter();
+  const { user, page, logout } = useApp();
 
   return (
     <aside style={{
@@ -54,7 +58,7 @@ export function ProfSidebar() {
         {NAV_ITEMS.map(item => {
           const active = page === item.id;
           return (
-            <button key={item.id} type="button" onClick={() => navigate(item.id)}
+            <button key={item.id} type="button" onClick={() => router.push(`/?page=${item.id}`)}
               style={{
                 display: "flex", alignItems: "center", gap: 9,
                 padding: "9px 11px", borderRadius: 9, cursor: "pointer",

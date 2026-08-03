@@ -1,5 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+"use client";
+
+import { useState, useEffect } from "react";
 import { useApp } from "../context/AppContext";
+import { signUpUser, loginUserAndFetchRole, loginWithGoogle } from '@/lib/services/authService';
+import { useRouter } from 'next/navigation';
 import {
   Trophy,
   Star,
@@ -14,56 +18,31 @@ import {
   CheckCircle2,
 } from "lucide-react";
 
-// ─── Palette tokens ────────────────────────────────────────────────────────────
 const C = {
-  indigo: "#5B3DF6",
-  indigoDeep: "#4228D4",
-  indigoLight: "#7B5EFA",
-  coral: "#FF6B4A",
-  coralHover: "#E8573A",
   yellow: "#FFC93C",
+  coral: "#FF6B4A",
   green: "#2ED47A",
   red: "#FF4757",
-  navy: "#1B1E2B",
-  offWhite: "#FAFAFC",
-  muted: "#717182",
-  border: "rgba(0,0,0,0.1)",
-  inputBg: "#F3F3F7",
 };
 
-// ─── Tiny helpers ──────────────────────────────────────────────────────────────
-function useHover() {
-  const [hovered, setHovered] = useState(false);
-  return {
-    hovered,
-    handlers: {
-      onMouseEnter: () => setHovered(true),
-      onMouseLeave: () => setHovered(false),
-    },
-  };
-}
-
-function err(msg: string) {
+function ErrorText({ msg }: { msg: string }) {
   return (
-    <span
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 5,
-        fontFamily: "Manrope, sans-serif",
-        fontSize: 12,
-        fontWeight: 600,
-        color: C.red,
-        marginTop: 5,
-      }}
-    >
+    <span className="font-body flex items-center gap-1.5 text-xs font-semibold text-[#FF4757] mt-1">
       <AlertCircle size={12} strokeWidth={2.5} />
       {msg}
     </span>
   );
 }
 
-// ─── Confetti dots decorating the left panel ───────────────────────────────────
+function FormError({ msg }: { msg: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-[10px] border-[1.5px] border-[#FF4757]/30 bg-[#FF4757]/[0.08] px-3.5 py-2.5">
+      <AlertCircle size={15} color={C.red} strokeWidth={2.5} className="shrink-0" />
+      <span className="font-body text-[13px] font-semibold text-[#FF4757]">{msg}</span>
+    </div>
+  );
+}
+
 const CONFETTI = [
   { x: 8, y: 12, size: 10, color: C.yellow, shape: "circle" },
   { x: 88, y: 8, size: 8, color: C.coral, shape: "circle" },
@@ -77,41 +56,37 @@ const CONFETTI = [
   { x: 60, y: 82, size: 6, color: C.coral, shape: "square" },
 ];
 
-// ─── Trophy / Podium SVG illustration ─────────────────────────────────────────
+const FLOAT_ANIMS = ["floatA", "floatB", "floatC", "floatA", "floatB", "floatC", "floatA", "floatB", "floatC", "floatA"];
+
 function TrophyIllustration() {
   return (
-    <svg width="260" height="220" viewBox="0 0 260 220" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {/* Podium base */}
+    <svg
+      viewBox="0 0 260 220"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className="w-[180px] sm:w-[220px] lg:w-[260px] h-auto"
+    >
       <rect x="40" y="150" width="60" height="60" rx="8" fill="rgba(255,255,255,0.15)" />
       <rect x="100" y="125" width="60" height="85" rx="8" fill="rgba(255,255,255,0.22)" />
       <rect x="160" y="165" width="60" height="45" rx="8" fill="rgba(255,255,255,0.12)" />
 
-      {/* Podium labels */}
       <text x="70" y="185" textAnchor="middle" fontFamily="Fredoka, sans-serif" fontSize="18" fontWeight="700" fill="rgba(255,255,255,0.6)">2</text>
       <text x="130" y="158" textAnchor="middle" fontFamily="Fredoka, sans-serif" fontSize="22" fontWeight="700" fill="#FFC93C">1</text>
       <text x="190" y="195" textAnchor="middle" fontFamily="Fredoka, sans-serif" fontSize="16" fontWeight="700" fill="rgba(255,255,255,0.5)">3</text>
 
-      {/* Trophy cup body */}
       <path d="M105 30 C95 30 85 38 85 52 C85 68 95 80 110 88 L110 102 L100 108 L100 116 L160 116 L160 108 L150 102 L150 88 C165 80 175 68 175 52 C175 38 165 30 155 30 Z" fill="#FFC93C" />
-      {/* Trophy cup shine */}
       <path d="M105 30 C95 30 85 38 85 52 C85 68 95 80 110 88 L110 102 L100 108 L100 116 L160 116 L160 108 L150 102 L150 88 C165 80 175 68 175 52 C175 38 165 30 155 30 Z" fill="url(#trophyGrad)" />
-      {/* Trophy handles */}
       <path d="M85 46 C72 46 66 52 66 60 C66 68 72 74 85 74" stroke="#FFC93C" strokeWidth="7" strokeLinecap="round" fill="none" />
       <path d="M175 46 C188 46 194 52 194 60 C194 68 188 74 175 74" stroke="#FFC93C" strokeWidth="7" strokeLinecap="round" fill="none" />
-      {/* Trophy base */}
       <rect x="98" y="114" width="64" height="10" rx="3" fill="#E8A800" />
       <rect x="94" y="122" width="72" height="8" rx="4" fill="#E8A800" />
 
-      {/* Star on trophy */}
       <polygon points="130,45 133,55 143,55 135,61 138,71 130,65 122,71 125,61 117,55 127,55" fill="white" opacity="0.9" />
-
-      {/* Floating mini-stars */}
       <polygon points="50,40 52,46 58,46 53,50 55,56 50,52 45,56 47,50 42,46 48,46" fill="#FFC93C" opacity="0.9" />
       <polygon points="210,30 212,35 217,35 213,38 215,43 210,40 205,43 207,38 203,35 208,35" fill="white" opacity="0.7" />
       <polygon points="40,100 41.5,104.5 46,104.5 42.5,107 44,111.5 40,109 36,111.5 37.5,107 34,104.5 38.5,104.5" fill="#FF6B4A" opacity="0.85" />
       <polygon points="218,95 219.5,99.5 224,99.5 220.5,102 222,106.5 218,104 214,106.5 215.5,102 212,99.5 216.5,99.5" fill="#FFC93C" opacity="0.8" />
 
-      {/* Confetti particles around trophy */}
       <rect x="76" y="20" width="8" height="8" rx="2" fill="#FF6B4A" opacity="0.9" transform="rotate(20 80 24)" />
       <rect x="180" y="18" width="7" height="7" rx="2" fill="#2ED47A" opacity="0.85" transform="rotate(-15 183 21)" />
       <circle cx="60" cy="68" r="4" fill="#FFC93C" opacity="0.8" />
@@ -129,7 +104,6 @@ function TrophyIllustration() {
   );
 }
 
-// ─── Input field component ─────────────────────────────────────────────────────
 function Field({
   label,
   id,
@@ -151,68 +125,39 @@ function Field({
   suffix?: React.ReactNode;
   disabled?: boolean;
 }) {
-  const [focused, setFocused] = useState(false);
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <label
-        htmlFor={id}
-        style={{
-          fontFamily: "Manrope, sans-serif",
-          fontSize: 13,
-          fontWeight: 700,
-          color: C.navy,
-        }}
-      >
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="font-body text-[13px] font-bold text-[#1B1E2B]">
         {label}
       </label>
-      <div style={{ position: "relative" }}>
+      <div className="relative">
         <input
           id={id}
           type={type}
           placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
           disabled={disabled}
-          style={{
-            width: "100%",
-            background: error ? "rgba(255,71,87,0.05)" : C.inputBg,
-            border: `2px solid ${error ? C.red : focused ? C.indigo : "transparent"}`,
-            borderRadius: 14,
-            padding: suffix ? "13px 48px 13px 16px" : "13px 16px",
-            fontFamily: "Manrope, sans-serif",
-            fontSize: 15,
-            fontWeight: 500,
-            color: C.navy,
-            outline: "none",
-            transition: "border-color 0.15s, background 0.15s",
-            boxSizing: "border-box",
-            opacity: disabled ? 0.5 : 1,
-          }}
+          className={[
+            "font-body w-full rounded-[14px] px-4 py-[13px] text-[15px] font-medium text-[#1B1E2B]",
+            "outline-none border-2 transition-colors box-border disabled:opacity-50",
+            suffix ? "pr-12" : "",
+            error
+              ? "bg-[#FF4757]/[0.05] border-[#FF4757]"
+              : "bg-[#F3F3F7] border-transparent focus:border-[#5B3DF6]",
+          ].join(" ")}
         />
         {suffix && (
-          <div
-            style={{
-              position: "absolute",
-              right: 14,
-              top: "50%",
-              transform: "translateY(-50%)",
-              color: C.muted,
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
+          <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center text-[#717182]">
             {suffix}
           </div>
         )}
       </div>
-      {error && err(error)}
+      {error && <ErrorText msg={error} />}
     </div>
   );
 }
 
-// ─── Role toggle button ─────────────────────────────────────────────────────────
 function RoleBtn({
   active,
   icon,
@@ -230,56 +175,29 @@ function RoleBtn({
     <button
       type="button"
       onClick={onClick}
-      style={{
-        flex: 1,
-        background: active ? C.indigo : C.inputBg,
-        border: `2.5px solid ${active ? C.indigo : "transparent"}`,
-        borderRadius: 16,
-        padding: "14px 12px",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 6,
-        cursor: "pointer",
-        transition: "background 0.15s, border-color 0.15s, box-shadow 0.15s",
-        boxShadow: active ? `0 4px 14px rgba(91,61,246,0.28)` : "none",
-      }}
+      className={[
+        "flex-1 rounded-2xl border-[2.5px] px-3 py-3.5 flex flex-col items-center gap-1.5 transition-all",
+        active
+          ? "bg-[#5B3DF6] border-[#5B3DF6] shadow-[0_4px_14px_rgba(91,61,246,0.28)]"
+          : "bg-[#F3F3F7] border-transparent shadow-none",
+      ].join(" ")}
     >
       <div
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: 12,
-          background: active ? "rgba(255,255,255,0.18)" : "rgba(91,61,246,0.1)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: active ? "#FFFFFF" : C.indigo,
-          transition: "background 0.15s, color 0.15s",
-        }}
+        className={[
+          "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+          active ? "bg-white/[0.18] text-white" : "bg-[#5B3DF6]/10 text-[#5B3DF6]",
+        ].join(" ")}
       >
         {icon}
       </div>
-      <span
-        style={{
-          fontFamily: "Fredoka, sans-serif",
-          fontSize: 17,
-          fontWeight: 600,
-          color: active ? "#FFFFFF" : C.navy,
-          lineHeight: 1,
-        }}
-      >
+      <span className={["font-heading text-[17px] font-semibold leading-none", active ? "text-white" : "text-[#1B1E2B]"].join(" ")}>
         {label}
       </span>
       <span
-        style={{
-          fontFamily: "Manrope, sans-serif",
-          fontSize: 11,
-          fontWeight: 500,
-          color: active ? "rgba(255,255,255,0.65)" : C.muted,
-          lineHeight: 1.3,
-          textAlign: "center",
-        }}
+        className={[
+          "font-body text-[11px] font-medium leading-[1.3] text-center",
+          active ? "text-white/65" : "text-[#717182]",
+        ].join(" ")}
       >
         {sub}
       </span>
@@ -287,7 +205,6 @@ function RoleBtn({
   );
 }
 
-// ─── Primary submit button ─────────────────────────────────────────────────────
 function SubmitBtn({
   label,
   loading,
@@ -297,38 +214,24 @@ function SubmitBtn({
   loading: boolean;
   onClick: () => void;
 }) {
-  const { hovered, handlers } = useHover();
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={loading}
-      style={{
-        width: "100%",
-        background: loading ? `${C.coral}99` : hovered ? C.coralHover : C.coral,
-        border: "none",
-        borderRadius: 16,
-        padding: "15px 24px",
-        fontFamily: "Fredoka, sans-serif",
-        fontSize: 19,
-        fontWeight: 600,
-        color: "#FFFFFF",
-        cursor: loading ? "default" : "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 10,
-        boxShadow: loading ? "none" : `0 5px 20px rgba(255,107,74,0.38)`,
-        transition: "background 0.15s, box-shadow 0.15s",
-        letterSpacing: "0.01em",
-      }}
-      {...handlers}
+      className={[
+        "font-heading w-full rounded-2xl px-6 py-[15px] text-lg sm:text-[19px] font-semibold text-white",
+        "flex items-center justify-center gap-2.5 tracking-[0.01em] transition-colors",
+        loading
+          ? "bg-[#FF6B4A]/60 cursor-default shadow-none"
+          : "bg-[#FF6B4A] hover:bg-[#E8573A] cursor-pointer shadow-[0_5px_20px_rgba(255,107,74,0.38)]",
+      ].join(" ")}
     >
       {loading ? (
         <>
-          <Loader2 size={20} strokeWidth={2.5} style={{ animation: "spin 0.8s linear infinite" }} />
+          <Loader2 size={20} strokeWidth={2.5} className="animate-spin" />
           Please wait…
-        </>                       
+        </>
       ) : (
         <>
           {label}
@@ -339,7 +242,6 @@ function SubmitBtn({
   );
 }
 
-// ─── Tab pill ──────────────────────────────────────────────────────────────────
 function Tab({
   label,
   active,
@@ -353,27 +255,28 @@ function Tab({
     <button
       type="button"
       onClick={onClick}
-      style={{
-        flex: 1,
-        padding: "10px 0",
-        background: active ? "#FFFFFF" : "transparent",
-        border: "none",
-        borderRadius: 12,
-        fontFamily: "Fredoka, sans-serif",
-        fontSize: 17,
-        fontWeight: 600,
-        color: active ? C.indigo : C.muted,
-        cursor: "pointer",
-        boxShadow: active ? "0 2px 10px rgba(0,0,0,0.08)" : "none",
-        transition: "all 0.18s",
-      }}
+      className={[
+        "font-heading flex-1 py-2.5 rounded-xl text-base sm:text-[17px] font-semibold transition-all",
+        active ? "bg-white text-[#5B3DF6] shadow-[0_2px_10px_rgba(0,0,0,0.08)]" : "bg-transparent text-[#717182]",
+      ].join(" ")}
     >
       {label}
     </button>
   );
 }
 
-// ─── Sign Up Form ──────────────────────────────────────────────────────────────
+function SuccessPanel({ title, message }: { title: string; message: string }) {
+  return (
+    <div className="flex flex-col items-center gap-4 py-8 text-center">
+      <div className="w-[72px] h-[72px] rounded-full bg-[#2ED47A]/[0.12] flex items-center justify-center">
+        <CheckCircle2 size={36} color={C.green} strokeWidth={2} />
+      </div>
+      <h3 className="font-heading text-2xl sm:text-[26px] font-bold text-[#1B1E2B] m-0">{title}</h3>
+      <p className="font-body text-sm text-[#717182] m-0 leading-relaxed">{message}</p>
+    </div>
+  );
+}
+
 function SignUpForm() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -400,89 +303,32 @@ function SignUpForm() {
     return e;
   }
 
- async function handleSubmit() {
-  const e = validate();
-  setErrors(e);
-  if (Object.keys(e).length) return;
+  async function handleSubmit() {
+    const e = validate();
+    setErrors(e);
+    if (Object.keys(e).length) return;
 
-  setLoading(true);
-  try {
-    const response = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password, role }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      setErrors({ server: data.message || 'Registration failed.' });
-      return;
+    setLoading(true);
+    try {
+      await signUpUser(email, password, name, role);
+      setSuccess(true);
+    } catch (err: any) {
+      setErrors({ form: err.message || "Could not reach the server. Please try again." });
+    } finally {
+      setLoading(false);
     }
-
-    setSuccess(true);
-    // Optionally redirect or set user context here
-  } catch (err) {
-    setErrors({ server: 'An error occurred during account creation.' });
-  } finally {
-    setLoading(false);
   }
-}
 
   if (success) {
     return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 16,
-          padding: "32px 0",
-          textAlign: "center",
-        }}
-      >
-        <div
-          style={{
-            width: 72,
-            height: 72,
-            borderRadius: "50%",
-            background: "rgba(46,212,122,0.12)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <CheckCircle2 size={36} color={C.green} strokeWidth={2} />
-        </div>
-        <h3
-          style={{
-            fontFamily: "Fredoka, sans-serif",
-            fontSize: 26,
-            fontWeight: 700,
-            color: C.navy,
-            margin: 0,
-          }}
-        >
-          You're in the arena!
-        </h3>
-        <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, color: C.muted, margin: 0, lineHeight: 1.6 }}>
-          Account created successfully. Check your UMak Gmail to verify your account.
-        </p>
+      <div className="flex flex-col items-center gap-4">
+        <SuccessPanel
+          title="You're in the arena!"
+          message="Account created successfully. Check your UMak Gmail to verify your account."
+        />
         <button
           onClick={() => setSuccess(false)}
-          style={{
-            marginTop: 8,
-            background: C.indigo,
-            color: "#fff",
-            border: "none",
-            borderRadius: 14,
-            padding: "12px 28px",
-            fontFamily: "Fredoka, sans-serif",
-            fontSize: 17,
-            fontWeight: 600,
-            cursor: "pointer",
-            boxShadow: `0 4px 14px rgba(91,61,246,0.3)`,
-          }}
+          className="font-heading -mt-2 bg-[#5B3DF6] text-white rounded-2xl px-7 py-3 text-lg font-semibold cursor-pointer shadow-[0_4px_14px_rgba(91,61,246,0.3)]"
         >
           Continue
         </button>
@@ -491,7 +337,8 @@ function SignUpForm() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+    <div className="flex flex-col gap-4 sm:gap-[18px]">
+      {errors.form && <FormError msg={errors.form} />}
       <Field
         label="Full Name"
         id="su-name"
@@ -524,19 +371,16 @@ function SignUpForm() {
           <button
             type="button"
             onClick={() => setShowPw((v) => !v)}
-            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: C.muted, display: "flex" }}
+            className="bg-transparent border-none cursor-pointer p-0 text-[#717182] flex"
           >
             {showPw ? <EyeOff size={18} strokeWidth={2} /> : <Eye size={18} strokeWidth={2} />}
           </button>
         }
       />
 
-      {/* Role selector */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: C.navy }}>
-          I am a…
-        </span>
-        <div style={{ display: "flex", gap: 10 }}>
+      <div className="flex flex-col gap-2">
+        <span className="font-body text-[13px] font-bold text-[#1B1E2B]">I am a…</span>
+        <div className="flex gap-2.5">
           <RoleBtn
             active={role === "student"}
             icon={<GraduationCap size={20} strokeWidth={2} />}
@@ -556,19 +400,18 @@ function SignUpForm() {
 
       <SubmitBtn label="Create Account" loading={loading} onClick={handleSubmit} />
 
-      <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, color: C.muted, textAlign: "center", margin: 0, lineHeight: 1.6 }}>
+      <p className="font-body text-xs text-[#717182] text-center m-0 leading-relaxed">
         By signing up you agree to QuizArena's{" "}
-        <a href="#" style={{ color: C.indigo, fontWeight: 700, textDecoration: "none" }}>Terms</a>{" "}
+        <a href="#" className="text-[#5B3DF6] font-bold no-underline">Terms</a>{" "}
         and{" "}
-        <a href="#" style={{ color: C.indigo, fontWeight: 700, textDecoration: "none" }}>Privacy Policy</a>.
+        <a href="#" className="text-[#5B3DF6] font-bold no-underline">Privacy Policy</a>.
       </p>
     </div>
   );
 }
 
-// ─── Login Form ────────────────────────────────────────────────────────────────
 function LoginForm() {
-  const { login } = useApp();
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -584,70 +427,45 @@ function LoginForm() {
     return e;
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     const e = validate();
     setErrors(e);
     if (Object.keys(e).length) return;
+
     setLoading(true);
-    setTimeout(() => {
-      const result = login(email.trim(), password);
-      if (result === "bad_credentials") {
-        setLoading(false);
-        setErrors({ form: "Invalid email or password." });
+    try {
+      const role = await loginUserAndFetchRole(email.trim(), password);
+      setSuccess(true);
+      
+      // ✅ FIX: Match parameter routes defined in Middleware
+      if (role?.toLowerCase() === 'professor') {
+        router.push('/?page=dashboard');
+      } else if (role?.toLowerCase() === 'student') {
+        router.push('/?page=lobby');
       } else {
-        setSuccess(true);
-        // navigation handled by AppContext — page switches automatically
+        router.push('/?page=role');
       }
-    }, 900);
+    } catch (err: any) {
+      setErrors({ form: err.message || "Invalid email or password." });
+      setLoading(false);
+    }
+  }
+
+  async function handleGoogleAuth() {
+    try {
+      await loginWithGoogle();
+    } catch (err: any) {
+      setErrors({ form: err.message || "Failed to initialize Google login." });
+    }
   }
 
   if (success) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 16,
-          padding: "32px 0",
-          textAlign: "center",
-        }}
-      >
-        <div
-          style={{
-            width: 72,
-            height: 72,
-            borderRadius: "50%",
-            background: "rgba(46,212,122,0.12)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <CheckCircle2 size={36} color={C.green} strokeWidth={2} />
-        </div>
-        <h3 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: C.navy, margin: 0 }}>
-          Welcome back!
-        </h3>
-        <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, color: C.muted, margin: 0 }}>
-          Logging you in to the arena…
-        </p>
-      </div>
-    );
+    return <SuccessPanel title="Welcome back!" message="Logging you in to the arena…" />;
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {/* Form-level error (bad credentials) */}
-      {errors.form && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8,
-          background: "rgba(255,71,87,0.08)", border: "1.5px solid rgba(255,71,87,0.3)",
-          borderRadius: 10, padding: "10px 14px" }}>
-          <AlertCircle size={15} color={C.red} strokeWidth={2.5} style={{ flexShrink: 0 }}/>
-          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600,
-            color: C.red }}>{errors.form}</span>
-        </div>
-      )}
+    <div className="flex flex-col gap-4 sm:gap-[18px]">
+      {errors.form && <FormError msg={errors.form} />}
       <Field
         label="Email"
         id="li-email"
@@ -658,28 +476,16 @@ function LoginForm() {
         error={errors.email}
         disabled={loading}
       />
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <label
-            htmlFor="li-password"
-            style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: C.navy }}
-          >
+      <div className="flex flex-col gap-1.5">
+        <div className="flex justify-between items-center">
+          <label htmlFor="li-password" className="font-body text-[13px] font-bold text-[#1B1E2B]">
             Password
           </label>
-          <a
-            href="#"
-            style={{
-              fontFamily: "Manrope, sans-serif",
-              fontSize: 12,
-              fontWeight: 700,
-              color: C.indigo,
-              textDecoration: "none",
-            }}
-          >
+          <a href="#" className="font-body text-xs font-bold text-[#5B3DF6] no-underline">
             Forgot Password?
           </a>
         </div>
-        <div style={{ position: "relative" }}>
+        <div className="relative">
           <input
             id="li-password"
             type={showPw ? "text" : "password"}
@@ -687,72 +493,37 @@ function LoginForm() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={loading}
-            style={{
-              width: "100%",
-              background: errors.password ? "rgba(255,71,87,0.05)" : C.inputBg,
-              border: `2px solid ${errors.password ? C.red : "transparent"}`,
-              borderRadius: 14,
-              padding: "13px 48px 13px 16px",
-              fontFamily: "Manrope, sans-serif",
-              fontSize: 15,
-              fontWeight: 500,
-              color: C.navy,
-              outline: "none",
-              boxSizing: "border-box",
-              opacity: loading ? 0.5 : 1,
-            }}
+            className={[
+              "font-body w-full rounded-[14px] pl-4 pr-12 py-[13px] text-[15px] font-medium text-[#1B1E2B]",
+              "outline-none border-2 box-border disabled:opacity-50",
+              errors.password ? "bg-[#FF4757]/[0.05] border-[#FF4757]" : "bg-[#F3F3F7] border-transparent",
+            ].join(" ")}
           />
           <button
             type="button"
             onClick={() => setShowPw((v) => !v)}
-            style={{
-              position: "absolute",
-              right: 14,
-              top: "50%",
-              transform: "translateY(-50%)",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              color: C.muted,
-              display: "flex",
-              padding: 0,
-            }}
+            className="absolute right-3.5 top-1/2 -translate-y-1/2 bg-transparent border-none cursor-pointer text-[#717182] flex p-0"
           >
             {showPw ? <EyeOff size={18} strokeWidth={2} /> : <Eye size={18} strokeWidth={2} />}
           </button>
         </div>
-        {errors.password && err(errors.password)}
+        {errors.password && <ErrorText msg={errors.password} />}
       </div>
 
       <SubmitBtn label="Log In" loading={loading} onClick={handleSubmit} />
 
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ flex: 1, height: 1, background: C.border }} />
-        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, color: C.muted, fontWeight: 600 }}>or continue with</span>
-        <div style={{ flex: 1, height: 1, background: C.border }} />
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-px bg-black/10" />
+        <span className="font-body text-xs text-[#717182] font-semibold whitespace-nowrap">or continue with</span>
+        <div className="flex-1 h-px bg-black/10" />
       </div>
 
       <button
         type="button"
-        style={{
-          width: "100%",
-          background: C.offWhite,
-          border: `2px solid ${C.border}`,
-          borderRadius: 14,
-          padding: "12px 24px",
-          fontFamily: "Manrope, sans-serif",
-          fontSize: 15,
-          fontWeight: 700,
-          color: C.navy,
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 10,
-          boxSizing: "border-box",
-        }}
+        onClick={handleGoogleAuth}
+        disabled={loading}
+        className="font-body w-full bg-[#FAFAFC] border-2 border-black/10 rounded-2xl px-6 py-3 text-[15px] font-bold text-[#1B1E2B] cursor-pointer flex items-center justify-center gap-2.5 box-border disabled:opacity-50"
       >
-        {/* Google G */}
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
           <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908C16.658 14.078 17.64 11.845 17.64 9.2z" fill="#4285F4"/>
           <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
@@ -765,9 +536,33 @@ function LoginForm() {
   );
 }
 
-// ─── Main AuthScreen component ────────────────────────────────────────────────
 export function AuthScreen() {
+  const { user, isLoading } = useApp();
+  const router = useRouter();
   const [tab, setTab] = useState<"signup" | "login">("login");
+
+  // ✅ FIX: Redirect existing sessions to parameter routes
+  useEffect(() => {
+    if (!isLoading && user) {
+      if (user.role === "professor") {
+        router.push("/?page=dashboard");
+      } else if (user.role === "student") {
+        router.push("/?page=lobby");
+      } else {
+        router.push("/?page=role");
+      }
+    }
+  }, [user, isLoading, router]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#FAFAFC]">
+        <Loader2 size={36} className="animate-spin text-[#5B3DF6]" />
+      </div>
+    );
+  }
+
+  if (user) return null;
 
   return (
     <>
@@ -776,148 +571,66 @@ export function AuthScreen() {
         @keyframes floatA { 0%,100%{transform:translateY(0px) rotate(0deg)} 50%{transform:translateY(-10px) rotate(8deg)} }
         @keyframes floatB { 0%,100%{transform:translateY(0px) rotate(0deg)} 50%{transform:translateY(-7px) rotate(-6deg)} }
         @keyframes floatC { 0%,100%{transform:translateY(0px)} 50%{transform:translateY(-14px)} }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
       `}</style>
 
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          background: C.offWhite,
-          fontFamily: "Manrope, sans-serif",
-        }}
-      >
-        {/* ── LEFT PANEL ── */}
+      <div className="font-body min-h-screen flex flex-col md:flex-row bg-[#FAFAFC]">
         <div
-          style={{
-            flex: "0 0 48%",
-            background: `linear-gradient(150deg, ${C.indigo} 0%, #4228D4 60%, #331FA8 100%)`,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "56px 48px",
-            position: "relative",
-            overflow: "hidden",
-          }}
+          className="relative flex flex-col items-center justify-center overflow-hidden
+                     w-full md:w-[46%] lg:w-[48%] shrink-0
+                     px-6 py-10 sm:px-10 sm:py-12 md:px-10 md:py-14
+                     bg-[linear-gradient(150deg,#5B3DF6_0%,#4228D4_60%,#331FA8_100%)]"
         >
-          {/* Background glow blobs */}
-          <div style={{
-            position: "absolute", top: "-80px", right: "-80px",
-            width: 320, height: 320, borderRadius: "50%",
-            background: "rgba(255,255,255,0.06)", pointerEvents: "none",
-          }} />
-          <div style={{
-            position: "absolute", bottom: "-60px", left: "-60px",
-            width: 260, height: 260, borderRadius: "50%",
-            background: "rgba(255,201,60,0.08)", pointerEvents: "none",
-          }} />
+          <div className="pointer-events-none absolute -top-20 -right-20 w-56 h-56 sm:w-80 sm:h-80 rounded-full bg-white/[0.06]" />
+          <div className="pointer-events-none absolute -bottom-16 -left-16 w-44 h-44 sm:w-[260px] sm:h-[260px] rounded-full bg-[#FFC93C]/[0.08]" />
 
-          {/* Confetti dots */}
-          {CONFETTI.map((d, i) => (
-            <div
-              key={i}
-              style={{
-                position: "absolute",
-                left: `${d.x}%`,
-                top: `${d.y}%`,
-                width: d.size,
-                height: d.size,
-                borderRadius: d.shape === "circle" ? "50%" : 3,
-                background: d.color,
-                opacity: (d as any).opacity ?? 1,
-                animation: `float${["A","B","C","A","B","C","A","B","C","A"][i]} ${2.5 + i * 0.3}s ease-in-out infinite`,
-                pointerEvents: "none",
-              }}
-            />
-          ))}
+          <div className="hidden sm:block">
+            {CONFETTI.map((d, i) => (
+              <div
+                key={i}
+                className="pointer-events-none absolute"
+                style={{
+                  left: `${d.x}%`,
+                  top: `${d.y}%`,
+                  width: d.size,
+                  height: d.size,
+                  borderRadius: d.shape === "circle" ? "50%" : 3,
+                  background: d.color,
+                  opacity: (d as any).opacity ?? 1,
+                  animation: `${FLOAT_ANIMS[i]} ${2.5 + i * 0.3}s ease-in-out infinite`,
+                }}
+              />
+            ))}
+          </div>
 
-          {/* Logo */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-            <div
-              style={{
-                width: 52,
-                height: 52,
-                borderRadius: 16,
-                background: "rgba(255,255,255,0.15)",
-                backdropFilter: "blur(8px)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                border: "1.5px solid rgba(255,255,255,0.2)",
-              }}
-            >
-              <Trophy fill={C.yellow} color="transparent" size={26} />
+          <div className="flex items-center gap-3 mb-2 sm:mb-3">
+            <div className="w-11 h-11 sm:w-[52px] sm:h-[52px] rounded-2xl bg-white/[0.15] backdrop-blur-sm flex items-center justify-center border-[1.5px] border-white/20">
+              <Trophy fill={C.yellow} color="transparent" size={24} />
             </div>
-            <span
-              style={{
-                fontFamily: "Fredoka, sans-serif",
-                fontSize: 30,
-                fontWeight: 700,
-                color: "#FFFFFF",
-                letterSpacing: "0.01em",
-              }}
-            >
+            <span className="font-heading text-2xl sm:text-[30px] font-bold text-white tracking-[0.01em]">
               QuizArena
             </span>
           </div>
 
-          {/* Tagline */}
-          <div style={{ textAlign: "center", marginBottom: 8, maxWidth: 340 }}>
-            <h2
-              style={{
-                fontFamily: "Fredoka, sans-serif",
-                fontSize: 36,
-                fontWeight: 700,
-                color: "#FFFFFF",
-                lineHeight: 1.2,
-                margin: "0 0 12px",
-              }}
-            >
+          <div className="text-center mb-2 max-w-[340px]">
+            <h2 className="font-heading text-2xl sm:text-3xl lg:text-[36px] font-bold text-white leading-[1.2] mb-2 sm:mb-3">
               Battle your way to{" "}
-              <span
-                style={{
-                  color: C.yellow,
-                  display: "inline-block",
-                  animation: "floatC 3s ease-in-out infinite",
-                }}
-              >
+              <span className="text-[#FFC93C] inline-block" style={{ animation: "floatC 3s ease-in-out infinite" }}>
                 brilliance!
               </span>
             </h2>
-            <p
-              style={{
-                fontFamily: "Manrope, sans-serif",
-                fontSize: 15,
-                fontWeight: 500,
-                color: "rgba(255,255,255,0.65)",
-                lineHeight: 1.6,
-                margin: 0,
-              }}
-            >
+            <p className="font-body text-sm text-white/65 leading-relaxed m-0 hidden sm:block">
               Live quiz battles powered by your UMak curriculum. Compete, learn, and climb the leaderboard.
             </p>
           </div>
 
-          {/* Trophy illustration */}
           <div
-            style={{
-              animation: "floatC 4s ease-in-out infinite",
-              filter: "drop-shadow(0 16px 32px rgba(0,0,0,0.22))",
-              marginTop: 8,
-            }}
+            className="hidden sm:block mt-2"
+            style={{ animation: "floatC 4s ease-in-out infinite", filter: "drop-shadow(0 16px 32px rgba(0,0,0,0.22))" }}
           >
             <TrophyIllustration />
           </div>
 
-          {/* Stats strip */}
-          <div
-            style={{
-              display: "flex",
-              gap: 20,
-              marginTop: 4,
-            }}
-          >
+          <div className="hidden sm:flex gap-3 md:gap-5 mt-1 flex-wrap justify-center">
             {[
               { icon: <Zap fill={C.yellow} color="transparent" size={16} />, val: "2,400+", label: "Active Students" },
               { icon: <Star fill={C.yellow} color="transparent" size={16} />, val: "12K", label: "Quizzes Played" },
@@ -925,125 +638,47 @@ export function AuthScreen() {
             ].map((s) => (
               <div
                 key={s.label}
-                style={{
-                  background: "rgba(255,255,255,0.1)",
-                  borderRadius: 12,
-                  padding: "8px 14px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 7,
-                  backdropFilter: "blur(4px)",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                }}
+                className="bg-white/10 rounded-xl px-3.5 py-2 flex items-center gap-[7px] backdrop-blur-sm border border-white/[0.12]"
               >
                 {s.icon}
                 <div>
-                  <p style={{ fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: "#FFFFFF", margin: 0, lineHeight: 1 }}>
-                    {s.val}
-                  </p>
-                  <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.5)", margin: 0 }}>
-                    {s.label}
-                  </p>
+                  <p className="font-heading text-[15px] sm:text-base font-bold text-white m-0 leading-none">{s.val}</p>
+                  <p className="font-body text-[10px] font-semibold text-white/50 m-0">{s.label}</p>
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* ── RIGHT PANEL ── */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "48px 40px",
-            overflowY: "auto",
-          }}
-        >
-          <div style={{ width: "100%", maxWidth: 420 }}>
-            {/* Greeting */}
-            <div style={{ marginBottom: 28 }}>
-              <h1
-                style={{
-                  fontFamily: "Fredoka, sans-serif",
-                  fontSize: 32,
-                  fontWeight: 700,
-                  color: C.navy,
-                  margin: "0 0 6px",
-                  lineHeight: 1.2,
-                }}
-              >
+        <div className="flex-1 flex items-center justify-center px-5 py-8 sm:px-8 sm:py-10 md:px-10 md:py-12 overflow-y-auto">
+          <div className="w-full max-w-[420px]">
+            <div className="mb-6 sm:mb-7">
+              <h1 className="font-heading text-[26px] sm:text-[32px] font-bold text-[#1B1E2B] mb-1.5 leading-[1.2]">
                 {tab === "signup" ? "Join the arena! 🏆" : "Welcome back! ⚡"}
               </h1>
-              <p
-                style={{
-                  fontFamily: "Manrope, sans-serif",
-                  fontSize: 14,
-                  fontWeight: 500,
-                  color: C.muted,
-                  margin: 0,
-                }}
-              >
+              <p className="font-body text-sm font-medium text-[#717182] m-0">
                 {tab === "signup"
                   ? "Create your QuizArena account with your UMak Gmail."
                   : "Log in to your account and get back to the leaderboard."}
               </p>
             </div>
 
-            {/* Tab switcher */}
-            <div
-              style={{
-                background: C.inputBg,
-                borderRadius: 16,
-                padding: 5,
-                display: "flex",
-                marginBottom: 28,
-              }}
-            >
+            <div className="bg-[#F3F3F7] rounded-2xl p-[5px] flex mb-6 sm:mb-7">
               <Tab label="Sign Up" active={tab === "signup"} onClick={() => setTab("signup")} />
               <Tab label="Log In" active={tab === "login"} onClick={() => setTab("login")} />
             </div>
 
-            {/* Form area */}
-            <div
-              style={{
-                background: "#FFFFFF",
-                borderRadius: 24,
-                padding: "32px 32px 28px",
-                boxShadow: "0 4px 28px rgba(0,0,0,0.07)",
-                border: `1.5px solid rgba(0,0,0,0.05)`,
-              }}
-            >
+            <div className="bg-white rounded-3xl px-6 py-7 sm:px-8 sm:pt-8 sm:pb-7 shadow-[0_4px_28px_rgba(0,0,0,0.07)] border-[1.5px] border-black/5">
               {tab === "signup" ? <SignUpForm /> : <LoginForm />}
             </div>
 
-            {/* Switch tab hint */}
-            <p
-              style={{
-                fontFamily: "Manrope, sans-serif",
-                fontSize: 13,
-                fontWeight: 500,
-                color: C.muted,
-                textAlign: "center",
-                marginTop: 20,
-              }}
-            >
+            <p className="font-body text-[13px] font-medium text-[#717182] text-center mt-5">
               {tab === "signup" ? (
                 <>
                   Already have an account?{" "}
                   <button
                     onClick={() => setTab("login")}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: C.indigo,
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      padding: 0,
-                      fontSize: 13,
-                      fontFamily: "Manrope, sans-serif",
-                    }}
+                    className="font-body bg-transparent border-none text-[#5B3DF6] font-bold cursor-pointer p-0 text-[13px]"
                   >
                     Log In
                   </button>
@@ -1053,16 +688,7 @@ export function AuthScreen() {
                   New to QuizArena?{" "}
                   <button
                     onClick={() => setTab("signup")}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: C.indigo,
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      padding: 0,
-                      fontSize: 13,
-                      fontFamily: "Manrope, sans-serif",
-                    }}
+                    className="font-body bg-transparent border-none text-[#5B3DF6] font-bold cursor-pointer p-0 text-[13px]"
                   >
                     Create Account
                   </button>

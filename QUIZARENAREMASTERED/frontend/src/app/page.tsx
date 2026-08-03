@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { AppProvider, useApp } from "@/context/AppContext";
 import { AuthScreen } from "@/components/AuthScreen";
 import { BattleLobby } from "@/components/BattleLobby";
@@ -11,16 +13,40 @@ import { QuestionBank } from "@/components/QuestionBank";
 import { AIQuestionGenerator } from "@/components/AIQuestionGenerator";
 import { Matchmaking } from "@/components/Matchmaking";
 import { SolutionAnalyzer } from "@/components/SolutionAnalyzer";
+import ChooseRole from "@/components/chooserole"; 
 
-// NOTE: This app manages its own "pages" via AppContext (page state), the
-// same way it did in the original Vite/SPA version. That behavior is kept
-// as-is here for a simple thesis demo. If you want real Next.js routing
-// later (e.g. /lobby, /dashboard as actual URLs), each case below can be
-// moved into its own src/app/<route>/page.tsx file.
-function Router() {
-  const { page } = useApp();
+function RouterContent() {
+  const { page, setPage } = useApp();
+  const searchParams = useSearchParams();
+  const [isMounted, setIsMounted] = useState(false);
 
-  switch (page) {
+  // 1. Mark component as mounted to safely render client-only state
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  // 2. Sync URL query parameter to AppContext
+  useEffect(() => {
+    const targetPage = searchParams.get("page");
+    if (targetPage && setPage && targetPage !== page) {
+      setPage(targetPage);
+    }
+  }, [searchParams, setPage, page]);
+
+  // 3. Prevent Hydration Mismatch: Render a loading shell during SSR frame
+  if (!isMounted) {
+    return (
+      <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center">
+        <div className="size-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // 4. Derive target active page (Prioritize URL param first)
+  const targetPage = searchParams.get("page");
+  const activePage = targetPage || page;
+
+  switch (activePage) {
     // Student flow
     case "lobby":
       return <BattleLobby />;
@@ -43,7 +69,11 @@ function Router() {
     case "analyzer":
       return <SolutionAnalyzer />;
 
-    // Auth
+    
+    case "role":
+      return <ChooseRole />; 
+
+  
     case "login":
     default:
       return <AuthScreen />;
@@ -54,7 +84,9 @@ export default function Home() {
   return (
     <AppProvider>
       <div className="size-full overflow-auto">
-        <Router />
+        <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+          <RouterContent />
+        </Suspense>
       </div>
     </AppProvider>
   );

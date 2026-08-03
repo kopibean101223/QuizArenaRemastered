@@ -1,74 +1,151 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+"use client";
+
+import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import { createBrowserClient } from "@supabase/ssr";
 
 export type Role = "student" | "professor";
 
 export type Page =
   // auth
-  | "login"
+  | "login" | "role"
   // student
   | "lobby" | "battle" | "results"
   // professor
   | "dashboard" | "sections" | "questions" | "aigen" | "matchmaking" | "analyzer";
 
 export interface AppUser {
+  id: string;
   email: string;
   name: string;
-  role: Role;
+  role: Role | null;
 }
-
-// ── Hardcoded test accounts ───────────────────────────────────────────────────
-const ACCOUNTS: { email: string; password: string; name: string; role: Role; home: Page }[] = [
-  { email: "am@umak.edu.ph",   password: "Gingging1331", name: "Alex M.",       role: "student",   home: "lobby"     },
-  { email: "emer@umak.edu.ph", password: "Gingging1221", name: "Prof. Reyes",   role: "professor", home: "dashboard" },
-];
 
 interface AppContextValue {
   user: AppUser | null;
   page: Page;
-  login:    (email: string, password: string) => "ok" | "bad_credentials";
-  logout:   () => void;
+  setPage: (page: Page) => void;
+  logout: () => Promise<void>;
   navigate: (page: Page) => void;
+  isLoading: boolean;
 }
 
 const AppContext = createContext<AppContextValue>({
   user: null,
   page: "login",
-  login:    () => "bad_credentials",
-  logout:   () => {},
+  setPage: () => {},
+  logout: async () => {},
   navigate: () => {},
+  isLoading: true,
 });
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [user, setUser]   = useState<AppUser | null>(null);
-  const [page, setPage]   = useState<Page>("login");
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [page, setPage] = useState<Page>("login");
+  const [isLoading, setIsLoading] = useState(true);
 
-  function login(email: string, password: string): "ok" | "bad_credentials" {
-    const account = ACCOUNTS.find(
-      a => a.email.toLowerCase() === email.toLowerCase() && a.password === password
-    );
-    if (!account) return "bad_credentials";
-    setUser({ email: account.email, name: account.name, role: account.role });
-    setPage(account.home);
-    return "ok";
-  }
+  // Initialize Supabase Browser Client
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
-  function logout() {
+  // 1. Fetch current session & active role from Supabase on mount
+  useEffect(() => {
+    async function syncSession() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (session?.user) {
+          // Resolve role from metadata or profiles table
+          let role = session.user.user_metadata?.role as Role | undefined;
+
+          if (!role) {
+            const { data: profile } = await supabase
+              .from("profiles")
+              .select("role")
+              .eq("user_id", session.user.id)
+              .maybeSingle();
+
+            role = profile?.role;
+          }
+
+          const appUser: AppUser = {
+            id: session.user.id,
+            email: session.user.email || "",
+            name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "User",
+            role: role || null,
+          };
+
+          setUser(appUser);
+        } else {
+          setUser(null);
+        }
+      } catch (err) {
+        console.error("❌ Error fetching session in AppContext:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    syncSession();
+
+    // Listen for realtime auth state changes (login, logout, token refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        let role = session.user.user_metadata?.role as Role | undefined;
+
+        if (!role) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("role")
+            .eq("user_id", session.user.id)
+            .maybeSingle();
+
+          role = profile?.role;
+        }
+
+        setUser({
+          id: session.user.id,
+          email: session.user.email || "",
+          name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "User",
+          role: role || null,
+        });
+      } else {
+        setUser(null);
+        setPage("login");
+      }
+      setIsLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // 2. Perform Supabase Logout
+  async function logout() {
+    await supabase.auth.signOut();
     setUser(null);
     setPage("login");
+    window.location.href = "/?page=login";
   }
 
+  // 3. Navigation Guard
   function navigate(target: Page) {
-    // Guard: students can't access professor pages and vice versa
-    if (!user) { setPage("login"); return; }
+    if (!user) {
+      setPage("login");
+      return;
+    }
+
     const studentPages: Page[] = ["lobby", "battle", "results"];
     const professorPages: Page[] = ["dashboard", "sections", "questions", "aigen", "matchmaking", "analyzer"];
+
     if (user.role === "student" && professorPages.includes(target)) return;
     if (user.role === "professor" && studentPages.includes(target)) return;
+
     setPage(target);
   }
 
   return (
-    <AppContext.Provider value={{ user, page, login, logout, navigate }}>
+    <AppContext.Provider value={{ user, page, setPage, logout, navigate, isLoading }}>
       {children}
     </AppContext.Provider>
   );
