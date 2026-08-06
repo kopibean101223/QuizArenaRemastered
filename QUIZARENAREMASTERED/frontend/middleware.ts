@@ -7,7 +7,7 @@ export default async function middleware(request: NextRequest) {
       headers: request.headers,
     },
   })
-
+  
   // 1. Initialize Supabase client
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
