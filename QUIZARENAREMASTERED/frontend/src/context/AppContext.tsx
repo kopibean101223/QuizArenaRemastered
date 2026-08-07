@@ -6,12 +6,12 @@ import { createBrowserClient } from "@supabase/ssr";
 export type Role = "student" | "professor";
 
 export type Page =
-  // auth
   | "login" | "role"
-  // student
   | "lobby" | "battle" | "results"
-  // professor
   | "dashboard" | "sections" | "questions" | "aigen" | "matchmaking" | "analyzer";
+
+const STUDENT_PAGES: Page[] = ["lobby", "battle", "results"];
+const PROFESSOR_PAGES: Page[] = ["dashboard", "sections", "questions", "aigen", "matchmaking", "analyzer"];
 
 export interface AppUser {
   id: string;
@@ -40,56 +40,96 @@ const AppContext = createContext<AppContextValue>({
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
-  const [page, setPage] = useState<Page>("login");
+  const [page, setPageInternal] = useState<Page>("login");
   const [isLoading, setIsLoading] = useState(true);
 
-  // Initialize Supabase Browser Client
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  // 1. Fetch current session & active role from Supabase on mount
-  useEffect(() => {
-    async function syncSession() {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-
-        if (session?.user) {
-          // Resolve role from metadata or profiles table
-          let role = session.user.user_metadata?.role as Role | undefined;
-
-          if (!role) {
-            const { data: profile } = await supabase
-              .from("profiles")
-              .select("role")
-              .eq("user_id", session.user.id)
-              .maybeSingle();
-
-            role = profile?.role;
-          }
-
-          const appUser: AppUser = {
-            id: session.user.id,
-            email: session.user.email || "",
-            name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "User",
-            role: role || null,
-          };
-
-          setUser(appUser);
-        } else {
-          setUser(null);
-        }
-      } catch (err) {
-        console.error("❌ Error fetching session in AppContext:", err);
-      } finally {
-        setIsLoading(false);
+  // Helper to safely set page with strict RBAC rules
+  const setPage = (target: Page) => {
+    if (!user) {
+      if (target !== "login" && target !== "role") {
+        setPageInternal("login");
+      } else {
+        setPageInternal(target);
       }
+      return;
     }
 
-    syncSession();
+    if (user.role === "professor" && STUDENT_PAGES.includes(target)) {
+      setPageInternal("dashboard");
+      return;
+    }
+    if (user.role === "student" && PROFESSOR_PAGES.includes(target)) {
+      setPageInternal("lobby");
+      return;
+    }
 
-    // Listen for realtime auth state changes (login, logout, token refresh)
+    setPageInternal(target);
+  };
+
+  useEffect(() => {
+  async function syncSession() {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (session?.user) {
+        let role = session.user.user_metadata?.role as Role | undefined;
+
+        if (!role) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("role")
+            .eq("user_id", session.user.id)
+            .maybeSingle();
+
+          role = profile?.role;
+        }
+
+        const appUser: AppUser = {
+          id: session.user.id,
+          email: session.user.email || "",
+          name: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "User",
+          role: role || null,
+        };
+
+        setUser(appUser);
+
+        // Get URL parameter or pick role-based default route
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlPage = urlParams.get("page") as Page | null;
+
+        const defaultPage = appUser.role === "professor" ? "dashboard" : "lobby";
+
+        // FIX: If URL has no page parameter OR is set to 'login', redirect to role default
+        if (!urlPage || urlPage === "login") {
+          setPageInternal(appUser.role ? defaultPage : "role");
+        } else {
+          // Validate requested URL against user role
+          if (appUser.role === "professor" && STUDENT_PAGES.includes(urlPage)) {
+            setPageInternal("dashboard");
+          } else if (appUser.role === "student" && PROFESSOR_PAGES.includes(urlPage)) {
+            setPageInternal("lobby");
+          } else {
+            setPageInternal(urlPage);
+          }
+        }
+      } else {
+        setUser(null);
+        setPageInternal("login");
+      }
+    } catch (err) {
+      console.error("Error fetching session in AppContext:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  syncSession();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         let role = session.user.user_metadata?.role as Role | undefined;
@@ -112,7 +152,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         });
       } else {
         setUser(null);
-        setPage("login");
+        setPageInternal("login");
       }
       setIsLoading(false);
     });
@@ -120,27 +160,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 2. Perform Supabase Logout
   async function logout() {
     await supabase.auth.signOut();
     setUser(null);
-    setPage("login");
+    setPageInternal("login");
     window.location.href = "/?page=login";
   }
 
-  // 3. Navigation Guard
   function navigate(target: Page) {
-    if (!user) {
-      setPage("login");
-      return;
-    }
-
-    const studentPages: Page[] = ["lobby", "battle", "results"];
-    const professorPages: Page[] = ["dashboard", "sections", "questions", "aigen", "matchmaking", "analyzer"];
-
-    if (user.role === "student" && professorPages.includes(target)) return;
-    if (user.role === "professor" && studentPages.includes(target)) return;
-
     setPage(target);
   }
 

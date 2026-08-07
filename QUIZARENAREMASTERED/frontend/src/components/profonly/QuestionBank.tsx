@@ -525,7 +525,17 @@ export function QuestionBank() {
   const [page,setPage]=useState(1);
   const [hoveredRow,setHoveredRow]=useState<number|null>(null);
   const [showFilterPanel,setShowFilterPanel]=useState(false);
+// --- DYNAMIC FILTER COMPUTATION ---
+  // 1. Get all unique subjects from the DB + defaults
+  const uniqueDbSubjects = Array.from(new Set(questions.map(q => q.subject || "General")));
+  const dynamicSubjects = ["All Subjects", ...Array.from(new Set([...SUBJECTS.slice(1), ...uniqueDbSubjects])).sort()];
 
+  // 2. Get topics only for the currently selected subject (or all if "All Subjects")
+  const matchingQuestionsForTopic = subjectF === "All Subjects" ? questions : questions.filter(q => q.subject === subjectF);
+  const uniqueDbTopics = Array.from(new Set(matchingQuestionsForTopic.map(q => q.topic || "General")));
+  const defaultTopicsForSubject = subjectF === "All Subjects" ? ALL_TOPICS.slice(1) : (TOPICS[subjectF] || []);
+  const dynamicTopics = ["All Topics", ...Array.from(new Set([...defaultTopicsForSubject, ...uniqueDbTopics])).sort()];
+  // ----------------------------------
   // Active filter count
   const activeFilters=[subjectF,diffF,topicF,typeF].filter(v=>!v.startsWith("All")).length;
 
@@ -620,35 +630,31 @@ export function QuestionBank() {
         </div>
 
         {/* ── Filter panel (dropdown) ── */}
-        {showFilterPanel&&(
-          <div style={{background:C.white,borderBottom:`1.5px solid ${C.border}`,
-            padding:"14px 24px",display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap"}}>
+     {/* Filter panel */}
+        {showFilterPanel && (
+          <div style={{ background: C.white, borderBottom: `1.5px solid ${C.border}`, padding: "14px 24px", display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
             {[
-              {label:"Subject",v:subjectF,set:(v:string)=>{setSubjectF(v);setPage(1);},opts:SUBJECTS},
-              {label:"Difficulty",v:diffF,set:(v:string)=>{setDiffF(v);setPage(1);},opts:DIFFICULTIES},
-              {label:"Topic",v:topicF,set:(v:string)=>{setTopicF(v);setPage(1);},opts:ALL_TOPICS},
-              {label:"Question Type",v:typeF,set:(v:string)=>{setTypeF(v);setPage(1);},opts:QTYPES},
-            ].map(f=>(
-              <div key={f.label} style={{display:"flex",flexDirection:"column",gap:4,minWidth:150}}>
-                <span style={{fontFamily:"Manrope,sans-serif",fontSize:11,fontWeight:700,color:C.muted,
-                  textTransform:"uppercase",letterSpacing:"0.08em"}}>{f.label}</span>
-                <Dropdown value={f.v} options={f.opts} onChange={f.set} width={160}/>
+              { 
+                label: "Subject", 
+                v: subjectF, 
+                set: (v: string) => { setSubjectF(v); setTopicF("All Topics"); setPage(1); }, // Resets topic when subject changes
+                opts: dynamicSubjects // Uses dynamic subjects
+              },
+              { label: "Difficulty", v: diffF, set: (v: string) => { setDiffF(v); setPage(1); }, opts: DIFFICULTIES },
+              { 
+                label: "Topic", 
+                v: topicF, 
+                set: (v: string) => { setTopicF(v); setPage(1); }, 
+                opts: dynamicTopics // Uses filtered dynamic topics
+              },
+              { label: "Question Type", v: typeF, set: (v: string) => { setTypeF(v); setPage(1); }, opts: QTYPES },
+            ].map(f => (
+              <div key={f.label} style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150 }}>
+                <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>{f.label}</span>
+                <Dropdown value={f.v} options={f.opts} onChange={f.set} width={160} />
               </div>
             ))}
-            {activeFilters>0&&(
-              <button type="button" onClick={()=>{setSubjectF("All Subjects");setDiffF("All Difficulties");
-                setTopicF("All Topics");setTypeF("All Types");setPage(1);}} style={{
-                  background:"none",border:"none",cursor:"pointer",fontFamily:"Manrope,sans-serif",
-                  fontSize:12,fontWeight:700,color:C.red,padding:"8px 0",alignSelf:"flex-end",
-              }}>
-                Clear all filters
-              </button>
-            )}
-            <button type="button" onClick={()=>setShowFilterPanel(false)} style={{
-              background:C.inputBg,border:"none",borderRadius:10,padding:"8px 14px",
-              fontFamily:"Manrope,sans-serif",fontSize:12,fontWeight:700,color:C.muted,
-              cursor:"pointer",alignSelf:"flex-end",
-            }}>Done</button>
+            <button type="button" onClick={() => setShowFilterPanel(false)} style={{ background: C.inputBg, border: "none", borderRadius: 10, padding: "8px 14px", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, cursor: "pointer", alignSelf: "flex-end" }}>Done</button>
           </div>
         )}
 
@@ -775,14 +781,13 @@ export function QuestionBank() {
                       WebkitLineClamp:2,WebkitBoxOrient:"vertical",textOverflow:"ellipsis"}}>
                       {q.text}
                     </p>
-                    <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                      {q.tags.slice(0,2).map(t=>(
-                        <span key={t} style={{background:C.inputBg,borderRadius:5,padding:"2px 7px",
-                          fontFamily:"Manrope,sans-serif",fontSize:10,fontWeight:600,color:C.muted}}>
-                          #{t}
-                        </span>
-                      ))}
-                    </div>
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 4 }}>
+  {[q.topic, q.type].filter(Boolean).map(t => (
+    <span key={t} style={{ background: C.inputBg, borderRadius: 5, padding: "2px 7px", fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: C.muted }}>
+      #{t.replace(/\s+/g, '')}
+    </span>
+  ))}
+</div>
                   </div>
 
                   <SubjectBadge subject={q.subject}/>

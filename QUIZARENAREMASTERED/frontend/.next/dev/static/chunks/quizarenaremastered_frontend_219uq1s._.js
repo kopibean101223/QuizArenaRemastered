@@ -1,5 +1,0 @@
-(globalThis["TURBOPACK_CHUNK_LISTS"] || (globalThis["TURBOPACK_CHUNK_LISTS"] = [])).push({
-    script: typeof document === "object" ? document.currentScript : undefined,
-    chunks: ["static/chunks/quizarenaremastered_frontend_src_app_globals_0_zt5eo.css","static/chunks/1k75_next_dist_0ehhas7._.js","static/chunks/quizarenaremastered_frontend_src_components_studentONLY_0ymywne._.js","static/chunks/quizarenaremastered_frontend_src_components_profonly_12t0er2._.js","static/chunks/quizarenaremastered_frontend_src_components_Matchmaking_tsx_1xexves._.js","static/chunks/quizarenaremastered_frontend_src_components_0bcrkjb._.js","static/chunks/quizarenaremastered_frontend_src_0khjkmd._.js","static/chunks/1k75_@supabase_auth-js_dist_module_0t25nbz._.js","static/chunks/1k75_lucide-react_dist_esm_0bq7ejm._.js","static/chunks/1k75_lodash_0k631j8._.js","static/chunks/1k75_recharts_es6_0n42t_1._.js","static/chunks/1k75_@supabase_05-tys7._.js","static/chunks/1k75_1g_xi6-._.js"],
-    source: "entry"
-});
