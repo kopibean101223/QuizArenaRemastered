@@ -2,13 +2,21 @@ import React, { useState, useEffect, useRef } from "react";
 import { useApp } from "../../context/AppContext";
 import { StudentTopBar } from "../shared/StudentTopBar";
 import {
-  Crown, Zap, Star, Trophy, Flame, MessageCircle,
-  CheckCircle2, Wifi, WifiOff, Volume2, VolumeX, Send, ArrowRight
+  Trophy,
+  Zap,
+  Star,
+  Send,
+  ArrowRight
 } from "lucide-react";
 
 import {
-  C, OPTION_COLORS, AVATAR_COLORS, REACTIONS, QuestionData,
-  INIT_PLAYERS, INIT_CHAT, Player, ChatMsg, Vote,
+  C,
+  AVATAR_COLORS,
+  QuestionData,
+  INIT_PLAYERS,
+  INIT_CHAT,
+  Player,
+  ChatMsg,
 } from "./LiveBattleCOMPONENTONLY/Constants";
 import { CountdownBar } from "./LiveBattleCOMPONENTONLY/CountdownBar";
 import { AnswerBtn } from "./LiveBattleCOMPONENTONLY/AnswerButton";
@@ -78,7 +86,7 @@ const MANUAL_QUESTIONS: QuestionData[] = [
   },
 ];
 
-export function LiveBattle() {
+export function SelfPacedBattle() {
   const { navigate } = useApp();
   const socketRef = useRef<WebSocket | null>(null);
 
@@ -87,34 +95,42 @@ export function LiveBattle() {
 
   const currentQuestion = questions[currentIndex];
 
+  // Unique identifier for the current student
+  const [playerId] = useState(() => `user_${Math.floor(1000 + Math.random() * 9000)}`);
+  const [playerName] = useState("You");
+
+  // ── INDIVIDUAL TIMER COMPUTATION ──
+  const [startedAt, setStartedAt] = useState<number | null>(Date.now());
+  const computeTimeLeft = (limit: number, startTs: number | null) => {
+    if (!startTs) return limit;
+    const elapsedSeconds = Math.floor((Date.now() - Number(startTs)) / 1000);
+    return Math.max(limit - elapsedSeconds, 0);
+  };
+
   const [timeLeft, setTimeLeft] = useState(currentQuestion?.timeLimit || 15);
   const [selected, setSelected] = useState<number | null>(null);
   const [revealed, setRevealed] = useState(false);
-  const [myVote, setMyVote] = useState<number | null>(null);
-  const [votes, setVotes] = useState<Vote[]>([]);
 
   const [players, setPlayers] = useState<Player[]>(INIT_PLAYERS);
   const [chat, setChat] = useState<ChatMsg[]>(INIT_CHAT);
   const [chatInput, setChatInput] = useState("");
-  const [mode, setMode] = useState<"solo" | "discussion">("discussion");
-  const [speedMode] = useState(true);
-  const [reactionBursts, setReactionBursts] = useState<{ id: number; emoji: string; x: number; y: number }[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const isLeader = players.find((p) => p.isMe)?.isLeader || false;
+  const myPlayer = players.find((p) => p.isMe);
 
-  // ── 1. FIXED WEBSOCKET CONNECTION EFFECT ──
+  // ── WEBSOCKET CONNECTION & SELF-PACED SYNC ──
   useEffect(() => {
     const socket = new WebSocket("ws://localhost:8080");
-    
-    // ✅ Save reference so functions ou tside useEffect can send messages
     socketRef.current = socket;
 
     socket.onopen = () => {
       socket.send(
         JSON.stringify({
-          type: "JOIN_BATTLE",
+          mode: "SELF_PACED",
+          type: "JOIN_SELF_PACED_BATTLE",
           battleId: "room_101",
+          playerId,
+          sender: playerName,
         })
       );
     };
@@ -123,35 +139,43 @@ export function LiveBattle() {
       try {
         const data = JSON.parse(event.data);
 
-        // State restoration on initial join/reconnect
-        if (data.type === "ROOM_STATE_SYNC") {
+        // Initial sync of the student's personal question index and timer
+        if (data.type === "SELF_PACED_STATE_SYNC") {
           if (typeof data.currentIndex === "number") {
             setCurrentIndex(data.currentIndex);
           }
-          if (Array.isArray(data.history) && data.history.length > 0) {
-            // Map Redis history logs to chat format
-            const formattedHistory: ChatMsg[] = data.history.map((h: any, idx: number) => ({
-              id: Date.now() + idx,
-              player: h.sender || "Anonymous",
-              initials: (h.sender || "AN").substring(0, 2).toUpperCase(),
-              color: AVATAR_COLORS[idx % AVATAR_COLORS.length],
-              text: h.message,
-              ts: h.timestamp ? new Date(h.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "now",
-            }));
-            setChat(formattedHistory);
+          if (data.startedAt) {
+            setStartedAt(Number(data.startedAt));
+          }
+          if (typeof data.score === "number") {
+            setPlayers((prev) =>
+              prev.map((p) => (p.isMe ? { ...p, score: data.score } : p))
+            );
           }
         }
 
-        // ✅ Synchronize exact index received from server broadcast
-        if (data.type === "QUESTION_ADVANCED") {
+        // Server confirms individual question advance and sets personal start time
+        if (data.type === "PLAYER_QUESTION_STARTED") {
           if (typeof data.currentIndex === "number") {
             setCurrentIndex(data.currentIndex);
-          } else {
-            setCurrentIndex((prev) => prev + 1);
+          }
+          if (data.startedAt) {
+            setStartedAt(Number(data.startedAt));
           }
         }
 
-        // ✅ Real-time incoming chat action
+        // Real-time update when ANY player in the room advances their score
+        if (data.type === "PLAYER_SCORE_UPDATED") {
+          setPlayers((prev) =>
+            prev.map((p) =>
+              p.id === data.playerId || (p.isMe && data.playerId === playerId)
+                ? { ...p, score: data.score }
+                : p
+            )
+          );
+        }
+
+        // Chat Broadcasts
         if (data.type === "BATTLE_ACTION") {
           setChat((prev) => [
             ...prev,
@@ -166,7 +190,7 @@ export function LiveBattle() {
           ]);
         }
       } catch (err) {
-        console.error("Failed to parse incoming WebSocket message:", err);
+        console.error("Failed to parse incoming WS message:", err);
       }
     };
 
@@ -174,30 +198,36 @@ export function LiveBattle() {
       socket.close();
       socketRef.current = null;
     };
-  }, []);
+  }, [playerId, playerName]);
 
-  // Sync state per question change
+  // Reset answer states on question change
   useEffect(() => {
     if (!currentQuestion) return;
-    setTimeLeft(currentQuestion.timeLimit);
     setSelected(null);
     setRevealed(false);
-    setMyVote(null);
-    setVotes([]);
   }, [currentIndex, currentQuestion]);
 
-  // Timer logic
+  // Individual countdown timer tick
   useEffect(() => {
-    if (revealed) return;
-    if (timeLeft <= 0) {
-      setRevealed(true);
-      return;
-    }
-    const t = setTimeout(() => setTimeLeft((n) => n - 1), 1000);
-    return () => clearTimeout(t);
-  }, [timeLeft, revealed]);
+    if (!currentQuestion) return;
+    const limit = currentQuestion.timeLimit;
 
-  // Scroll chat
+    setTimeLeft(computeTimeLeft(limit, startedAt));
+
+    if (revealed) return;
+
+    const interval = setInterval(() => {
+      const remaining = computeTimeLeft(limit, startedAt);
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        setRevealed(true);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [startedAt, currentQuestion, revealed]);
+
+  // Chat auto-scroll
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat]);
@@ -205,45 +235,22 @@ export function LiveBattle() {
   function handleSelect(i: number) {
     if (revealed || selected !== null) return;
     setSelected(i);
-    if (mode === "solo") {
-      setTimeout(() => processAnswer(i), 1200);
-    }
-  }
-
-  function handleVote(i: number) {
-    setMyVote(i);
-    setVotes((v) => {
-      const newV = v
-        .filter((x) => !x.voters.includes("You"))
-        .map((x) => ({ ...x, count: x.count - 1 }));
-      const existing = newV.find((x) => x.option === i);
-      if (existing) {
-        return newV.map((x) =>
-          x.option === i ? { ...x, count: x.count + 1, voters: [...x.voters, "You"] } : x
-        );
-      }
-      return [...newV, { option: i, count: 1, voters: ["You"] }];
-    });
-    setSelected(i);
-  }
-
-  function handleConfirmLeader() {
-    if (myVote !== null) {
-      processAnswer(myVote);
-    }
+    processAnswer(i);
   }
 
   function processAnswer(userChoice: number) {
     setRevealed(true);
     const isCorrect = userChoice === currentQuestion.correct;
-    
+    let newScore = myPlayer?.score || 0;
+
     if (isCorrect) {
+      newScore += currentQuestion.points;
       setPlayers((prev) =>
         prev.map((p) =>
           p.isMe
             ? {
                 ...p,
-                score: p.score + currentQuestion.points,
+                score: newScore,
                 streak: p.streak + 1,
               }
             : p
@@ -256,58 +263,51 @@ export function LiveBattle() {
     }
   }
 
-  // ── 2. FIXED NEXT QUESTION / RESULTS HANDLER ──
+  // Advance player independently to the next question
   function handleNextQuestion() {
-    if (currentIndex < questions.length - 1) {
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(
-          JSON.stringify({
-            type: "ADVANCE_QUESTION",
-            battleId: "room_101",
-          })
-        );
-      } else {
-        setCurrentIndex((prev) => prev + 1);
-      }
-    } else {
+    const isLastQuestion = currentIndex >= questions.length - 1;
+    const nextIndex = currentIndex + 1;
+
+    if (isLastQuestion) {
       navigate("results");
+      return;
+    }
+
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({
+          mode: "SELF_PACED",
+          type: "ADVANCE_SELF_PACED_QUESTION",
+          battleId: "room_101",
+          playerId,
+          sender: playerName,
+          currentIndex: nextIndex,
+          score: myPlayer?.score || 0,
+        })
+      );
+    } else {
+      setCurrentIndex(nextIndex);
+      setStartedAt(Date.now());
     }
   }
 
-  // ── 3. FIXED CHAT BROADCASTER ──
+  // Chat message submission
   function sendChat() {
     if (!chatInput.trim()) return;
 
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(
         JSON.stringify({
+          mode: "SELF_PACED",
           type: "BATTLE_ACTION",
           battleId: "room_101",
-          sender: "You",
+          playerId,
+          sender: playerName,
           message: chatInput.trim(),
         })
       );
-    } else {
-      // Fallback local chat push if offline
-      setChat((c) => [
-        ...c,
-        {
-          id: Date.now(),
-          player: "You",
-          initials: "ME",
-          color: AVATAR_COLORS[0],
-          text: chatInput.trim(),
-          ts: "now",
-        },
-      ]);
     }
     setChatInput("");
-  }
-
-  const totalVotes = votes.reduce((a, v) => a + v.count, 0);
-  function voteFor(i: number) {
-    const v = votes.find((x) => x.option === i);
-    return totalVotes ? ((v?.count ?? 0) / totalVotes) * 100 : 0;
   }
 
   if (!currentQuestion) return null;
@@ -315,31 +315,7 @@ export function LiveBattle() {
   return (
     <>
       <StudentTopBar />
-      <style>{`
-        @keyframes timerPulse   { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
-        @keyframes rankPop      { 0%{transform:scale(0.9)} 60%{transform:scale(1.05)} 100%{transform:scale(1)} }
-        @keyframes reactionFloat{ 0%{opacity:1;transform:translateY(0) scale(1)} 100%{opacity:0;transform:translateY(-80px) scale(1.5)} }
-      `}</style>
 
-      {/* Floating Reactions */}
-      {reactionBursts.map((r) => (
-        <div
-          key={r.id}
-          style={{
-            position: "fixed",
-            left: r.x,
-            top: r.y,
-            fontSize: 28,
-            pointerEvents: "none",
-            zIndex: 1000,
-            animation: "reactionFloat 1.1s ease-out forwards",
-          }}
-        >
-          {r.emoji}
-        </div>
-      ))}
-
-      {/* Main Container */}
       <div
         style={{
           minHeight: "100vh",
@@ -351,7 +327,7 @@ export function LiveBattle() {
           paddingTop: 48,
         }}
       >
-        {/* ── TOP BAR ── */}
+        {/* TOP BAR */}
         <div
           style={{
             padding: "12px 20px",
@@ -391,24 +367,23 @@ export function LiveBattle() {
           <CountdownBar timeLeft={timeLeft} timeLimit={currentQuestion.timeLimit} />
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            {speedMode && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  background: "rgba(255,201,60,0.15)",
-                  border: "1.5px solid rgba(255,201,60,0.35)",
-                  borderRadius: 20,
-                  padding: "5px 12px",
-                }}
-              >
-                <Zap size={13} fill={C.yellow} color="transparent" />
-                <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: C.yellow }}>
-                  SPEED MODE
-                </span>
-              </div>
-            )}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                background: "rgba(46,212,122,0.15)",
+                border: "1.5px solid rgba(46,212,122,0.35)",
+                borderRadius: 20,
+                padding: "5px 12px",
+              }}
+            >
+              <Zap size={13} fill={C.green} color="transparent" />
+              <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: C.green }}>
+                SELF-PACED
+              </span>
+            </div>
+
             <div
               style={{
                 display: "flex",
@@ -425,41 +400,13 @@ export function LiveBattle() {
                 {currentQuestion.points} pts
               </span>
             </div>
-
-            <div style={{ display: "flex", background: "rgba(255,255,255,0.07)", borderRadius: 20, padding: "3px 4px", gap: 3 }}>
-              {(
-                [
-                  ["solo", "⚡ Solo"],
-                  ["discussion", "👥 Team"],
-                ] as const
-              ).map(([v, l]) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setMode(v)}
-                  style={{
-                    background: mode === v ? C.indigo : "transparent",
-                    border: "none",
-                    borderRadius: 16,
-                    padding: "4px 10px",
-                    fontFamily: "Manrope, sans-serif",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: mode === v ? "#fff" : "rgba(255,255,255,0.4)",
-                    cursor: "pointer",
-                  }}
-                >
-                  {l}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
 
-        {/* ── QUESTION & OPTIONS AREA ── */}
+        {/* QUESTION & OPTIONS AREA */}
         <div style={{ flex: 1, display: "flex", gap: 0, overflow: "hidden" }}>
           <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "20px", minWidth: 0 }}>
-            {/* Question card */}
+            {/* Question Card */}
             <div
               style={{
                 background: "rgba(255,255,255,0.05)",
@@ -491,24 +438,23 @@ export function LiveBattle() {
               </p>
             </div>
 
-            {/* Answer buttons */}
+            {/* Answer Options */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
               {currentQuestion.options.map((opt, i) => (
                 <AnswerBtn
                   key={i}
                   index={i}
                   text={opt}
-                  selected={mode === "discussion" ? myVote === i : selected === i}
+                  selected={selected === i}
                   revealed={revealed}
                   isCorrect={i === currentQuestion.correct}
-                  disabled={revealed || (mode === "solo" && selected !== null)}
-                  onClick={() => (mode === "discussion" ? handleVote(i) : handleSelect(i))}
-                  votePct={mode === "discussion" ? voteFor(i) : undefined}
+                  disabled={revealed || selected !== null}
+                  onClick={() => handleSelect(i)}
                 />
               ))}
             </div>
 
-            {/* Answer feedback & advance button */}
+            {/* Answer Feedback & Advance Action */}
             {revealed && (
               <div
                 style={{
@@ -557,7 +503,7 @@ export function LiveBattle() {
             )}
           </div>
 
-          {/* ── RIGHT LEADERBOARD ── */}
+          {/* RIGHT LEADERBOARD */}
           <div
             style={{
               width: 240,
@@ -570,7 +516,7 @@ export function LiveBattle() {
           >
             <div style={{ padding: "14px", borderBottom: "1.5px solid rgba(255,255,255,0.06)" }}>
               <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 17, fontWeight: 700, color: "#fff" }}>
-                Leaderboard
+                Live Standings
               </span>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "10px", display: "flex", flexDirection: "column", gap: 5 }}>
@@ -583,82 +529,56 @@ export function LiveBattle() {
           </div>
         </div>
 
-        {/* ── TEAM DISCUSSION FOOTER ── */}
-        {mode === "discussion" && (
-          <div
-            style={{
-              height: 180,
-              background: "rgba(0,0,0,0.3)",
-              borderTop: "1.5px solid rgba(255,255,255,0.07)",
-              display: "flex",
-            }}
-          >
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", borderRight: "1.5px solid rgba(255,255,255,0.06)" }}>
-              <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
-                {chat.map((m) => (
-                  <ChatBubble key={m.id} msg={m} />
-                ))}
-                <div ref={chatEndRef} />
-              </div>
-              <div style={{ padding: "8px 10px", display: "flex", gap: 7, alignItems: "center" }}>
-                <input
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && sendChat()}
-                  placeholder="Type to discuss…"
-                  style={{
-                    flex: 1,
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1.5px solid rgba(255,255,255,0.1)",
-                    borderRadius: 10,
-                    padding: "7px 12px",
-                    color: "#fff",
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={sendChat}
-                  style={{
-                    width: 32,
-                    height: 32,
-                    background: C.indigo,
-                    border: "none",
-                    borderRadius: 9,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Send size={14} color="#fff" />
-                </button>
-              </div>
-            </div>
-
-            {/* Confirm choice panel for Leader */}
-            <div style={{ width: 220, padding: "16px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
-              {isLeader && !revealed && (
-                <button
-                  type="button"
-                  onClick={handleConfirmLeader}
-                  disabled={myVote === null}
-                  style={{
-                    width: "100%",
-                    background: myVote !== null ? C.green : "rgba(255,255,255,0.1)",
-                    border: "none",
-                    borderRadius: 12,
-                    padding: "10px",
-                    color: "#fff",
-                    fontWeight: 700,
-                    cursor: myVote !== null ? "pointer" : "default",
-                  }}
-                >
-                  Confirm Choice
-                </button>
-              )}
-            </div>
+        {/* CHAT FOOTER */}
+        <div
+          style={{
+            height: 140,
+            background: "rgba(0,0,0,0.3)",
+            borderTop: "1.5px solid rgba(255,255,255,0.07)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+            {chat.map((m) => (
+              <ChatBubble key={m.id} msg={m} />
+            ))}
+            <div ref={chatEndRef} />
           </div>
-        )}
+          <div style={{ padding: "8px 10px", display: "flex", gap: 7, alignItems: "center" }}>
+            <input
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && sendChat()}
+              placeholder="Send a message to the room…"
+              style={{
+                flex: 1,
+                background: "rgba(255,255,255,0.06)",
+                border: "1.5px solid rgba(255,255,255,0.1)",
+                borderRadius: 10,
+                padding: "7px 12px",
+                color: "#fff",
+              }}
+            />
+            <button
+              type="button"
+              onClick={sendChat}
+              style={{
+                width: 32,
+                height: 32,
+                background: C.indigo,
+                border: "none",
+                borderRadius: 9,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Send size={14} color="#fff" />
+            </button>
+          </div>
+        </div>
       </div>
     </>
   );

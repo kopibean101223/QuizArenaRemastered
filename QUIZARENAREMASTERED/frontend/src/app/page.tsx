@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { AppProvider, useApp } from "@/context/AppContext";
 import { AuthScreen } from "@/components/AuthScreen";
 import { BattleLobby } from "@/components/studentONLY/BattleLobby";
-import { LiveBattle } from "@/components/studentONLY/LiveBattle";
+import { LiveBattle } from "@/components/studentONLY/LiveBattle_OwnPace";
 import { BattleResults } from "@/components/studentONLY/BattleResults";
 import { ProfessorDashboard } from "@/components/profonly/ProfessorDashboard";
 import { SectionsDashboard } from "@/components/profonly/SectionsDashboard";

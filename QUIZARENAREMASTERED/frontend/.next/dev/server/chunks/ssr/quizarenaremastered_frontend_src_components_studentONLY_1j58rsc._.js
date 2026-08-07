@@ -4241,6 +4241,16 @@ function LiveBattle() {
     const [questions] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useState"])(MANUAL_QUESTIONS);
     const [currentIndex, setCurrentIndex] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useState"])(0);
     const currentQuestion = questions[currentIndex];
+    // `startedAt` is the server (Redis) timestamp for when the CURRENT question
+    // started. It is the single source of truth for the timer. `timeLeft` is
+    // always derived from it, so a page reload can never grant extra time —
+    // we recompute "how much time is left" instead of restarting the clock.
+    const [startedAt, setStartedAt] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useState"])(null);
+    const computeTimeLeft = (limit, startTs)=>{
+        if (!startTs) return limit;
+        const elapsedSeconds = Math.floor((Date.now() - startTs) / 1000);
+        return Math.max(limit - elapsedSeconds, 0);
+    };
     const [timeLeft, setTimeLeft] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useState"])(currentQuestion?.timeLimit || 15);
     const [selected, setSelected] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useState"])(null);
     const [revealed, setRevealed] = (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useState"])(false);
@@ -4262,16 +4272,23 @@ function LiveBattle() {
         socket.onopen = ()=>{
             socket.send(JSON.stringify({
                 type: "JOIN_BATTLE",
-                battleId: "room_101"
+                battleId: "room_101",
+                totalQuestions: MANUAL_QUESTIONS.length
             }));
         };
         socket.onmessage = (event)=>{
             try {
                 const data = JSON.parse(event.data);
-                // State restoration on initial join/reconnect
+                // State restoration on initial join/reconnect (including page reloads).
+                // Both the question index AND the original start timestamp come from
+                // the server, so the timer resumes from where it actually is instead
+                // of resetting to the full time limit.
                 if (data.type === "ROOM_STATE_SYNC") {
                     if (typeof data.currentIndex === "number") {
                         setCurrentIndex(data.currentIndex);
+                    }
+                    if (typeof data.startedAt === "number") {
+                        setStartedAt(data.startedAt);
                     }
                     if (Array.isArray(data.history) && data.history.length > 0) {
                         // Map Redis history logs to chat format
@@ -4289,13 +4306,31 @@ function LiveBattle() {
                         setChat(formattedHistory);
                     }
                 }
-                // ✅ Synchronize exact index received from server broadcast
+                // ✅ Synchronize exact index + start time received from server broadcast
                 if (data.type === "QUESTION_ADVANCED") {
                     if (typeof data.currentIndex === "number") {
                         setCurrentIndex(data.currentIndex);
                     } else {
                         setCurrentIndex((prev)=>prev + 1);
                     }
+                    if (typeof data.startedAt === "number") {
+                        setStartedAt(data.startedAt);
+                    }
+                }
+                // ✅ Server confirms the room has been put back to Q1 (repeat run)
+                if (data.type === "ROOM_RESET") {
+                    setCurrentIndex(typeof data.currentIndex === "number" ? data.currentIndex : 0);
+                    setStartedAt(typeof data.startedAt === "number" ? data.startedAt : Date.now());
+                    setPlayers(__TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$src$2f$components$2f$studentONLY$2f$LiveBattleCOMPONENTONLY$2f$Constants$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["INIT_PLAYERS"]);
+                    setChat(__TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$src$2f$components$2f$studentONLY$2f$LiveBattleCOMPONENTONLY$2f$Constants$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["INIT_CHAT"]);
+                    setSelected(null);
+                    setRevealed(false);
+                    setMyVote(null);
+                    setVotes([]);
+                }
+                // ✅ Server confirms every question has been answered by everyone
+                if (data.type === "QUIZ_COMPLETED") {
+                    navigate("results");
                 }
                 // ✅ Real-time incoming chat action
                 if (data.type === "BATTLE_ACTION") {
@@ -4323,10 +4358,13 @@ function LiveBattle() {
             socketRef.current = null;
         };
     }, []);
-    // Sync state per question change
+    // Sync local answer/vote state per question change. Note: timeLeft is
+    // intentionally NOT reset here — it is derived from `startedAt` (see the
+    // timer effect below) so that a reload mid-question doesn't hand out extra
+    // time. `startedAt` itself only changes when the server confirms a new
+    // question via QUESTION_ADVANCED / ROOM_STATE_SYNC / ROOM_RESET.
     (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useEffect"])(()=>{
         if (!currentQuestion) return;
-        setTimeLeft(currentQuestion.timeLimit);
         setSelected(null);
         setRevealed(false);
         setMyVote(null);
@@ -4335,17 +4373,25 @@ function LiveBattle() {
         currentIndex,
         currentQuestion
     ]);
-    // Timer logic
+    // Timer logic — recomputed from `startedAt` every tick (rather than a plain
+    // decrementing counter) so it self-corrects after tab throttling and is
+    // unaffected by re-renders or reloads; it always reflects real elapsed time.
     (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useEffect"])(()=>{
+        if (!currentQuestion) return;
+        const limit = currentQuestion.timeLimit;
+        setTimeLeft(computeTimeLeft(limit, startedAt));
         if (revealed) return;
-        if (timeLeft <= 0) {
-            setRevealed(true);
-            return;
-        }
-        const t = setTimeout(()=>setTimeLeft((n)=>n - 1), 1000);
-        return ()=>clearTimeout(t);
+        const interval = setInterval(()=>{
+            const remaining = computeTimeLeft(limit, startedAt);
+            setTimeLeft(remaining);
+            if (remaining <= 0) {
+                setRevealed(true);
+            }
+        }, 1000);
+        return ()=>clearInterval(interval);
     }, [
-        timeLeft,
+        startedAt,
+        currentQuestion,
         revealed
     ]);
     // Scroll chat
@@ -4417,15 +4463,20 @@ function LiveBattle() {
     }
     // ── 2. FIXED NEXT QUESTION / RESULTS HANDLER ──
     function handleNextQuestion() {
-        if (currentIndex < questions.length - 1) {
-            if (socketRef.current?.readyState === WebSocket.OPEN) {
-                socketRef.current.send(JSON.stringify({
-                    type: "ADVANCE_QUESTION",
-                    battleId: "room_101"
-                }));
-            } else {
-                setCurrentIndex((prev)=>prev + 1);
-            }
+        const isLastQuestion = currentIndex >= questions.length - 1;
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+            socketRef.current.send(JSON.stringify({
+                type: "ADVANCE_QUESTION",
+                battleId: "room_101",
+                isLastQuestion
+            }));
+        // When it's the last question, the server broadcasts QUIZ_COMPLETED and
+        // the onmessage handler above navigates to "results" for everyone at
+        // once — we don't navigate directly here so all players finish together.
+        } else if (!isLastQuestion) {
+            // Offline fallback: no live connection, just advance locally.
+            setCurrentIndex((prev)=>prev + 1);
+            setStartedAt(Date.now());
         } else {
             navigate("results");
         }
@@ -4466,7 +4517,7 @@ function LiveBattle() {
         children: [
             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$src$2f$components$2f$shared$2f$StudentTopBar$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["StudentTopBar"], {}, void 0, false, {
                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                lineNumber: 317,
+                lineNumber: 374,
                 columnNumber: 7
             }, this),
             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("style", {
@@ -4477,7 +4528,7 @@ function LiveBattle() {
       `
             }, void 0, false, {
                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                lineNumber: 318,
+                lineNumber: 375,
                 columnNumber: 7
             }, this),
             reactionBursts.map((r)=>/*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -4493,7 +4544,7 @@ function LiveBattle() {
                     children: r.emoji
                 }, r.id, false, {
                     fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                    lineNumber: 326,
+                    lineNumber: 383,
                     columnNumber: 9
                 }, this)),
             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -4543,12 +4594,12 @@ function LiveBattle() {
                                             size: 18
                                         }, void 0, false, {
                                             fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                            lineNumber: 379,
+                                            lineNumber: 436,
                                             columnNumber: 15
                                         }, this)
                                     }, void 0, false, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 367,
+                                        lineNumber: 424,
                                         columnNumber: 13
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -4563,7 +4614,7 @@ function LiveBattle() {
                                                 children: "Question"
                                             }, void 0, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 382,
+                                                lineNumber: 439,
                                                 columnNumber: 15
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -4587,25 +4638,25 @@ function LiveBattle() {
                                                         ]
                                                     }, void 0, true, {
                                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                        lineNumber: 386,
+                                                        lineNumber: 443,
                                                         columnNumber: 42
                                                     }, this)
                                                 ]
                                             }, void 0, true, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 385,
+                                                lineNumber: 442,
                                                 columnNumber: 15
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 381,
+                                        lineNumber: 438,
                                         columnNumber: 13
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                lineNumber: 366,
+                                lineNumber: 423,
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$src$2f$components$2f$studentONLY$2f$LiveBattleCOMPONENTONLY$2f$CountdownBar$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["CountdownBar"], {
@@ -4613,7 +4664,7 @@ function LiveBattle() {
                                 timeLimit: currentQuestion.timeLimit
                             }, void 0, false, {
                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                lineNumber: 391,
+                                lineNumber: 448,
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -4641,7 +4692,7 @@ function LiveBattle() {
                                                 color: "transparent"
                                             }, void 0, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 406,
+                                                lineNumber: 463,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
@@ -4654,13 +4705,13 @@ function LiveBattle() {
                                                 children: "SPEED MODE"
                                             }, void 0, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 407,
+                                                lineNumber: 464,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 395,
+                                        lineNumber: 452,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -4680,7 +4731,7 @@ function LiveBattle() {
                                                 color: "transparent"
                                             }, void 0, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 423,
+                                                lineNumber: 480,
                                                 columnNumber: 15
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
@@ -4696,13 +4747,13 @@ function LiveBattle() {
                                                 ]
                                             }, void 0, true, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 424,
+                                                lineNumber: 481,
                                                 columnNumber: 15
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 412,
+                                        lineNumber: 469,
                                         columnNumber: 13
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -4739,24 +4790,24 @@ function LiveBattle() {
                                                 children: l
                                             }, v, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 436,
+                                                lineNumber: 493,
                                                 columnNumber: 17
                                             }, this))
                                     }, void 0, false, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 429,
+                                        lineNumber: 486,
                                         columnNumber: 13
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                lineNumber: 393,
+                                lineNumber: 450,
                                 columnNumber: 11
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                        lineNumber: 355,
+                        lineNumber: 412,
                         columnNumber: 9
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -4806,12 +4857,12 @@ function LiveBattle() {
                                                     children: currentQuestion.subject
                                                 }, void 0, false, {
                                                     fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                    lineNumber: 474,
+                                                    lineNumber: 531,
                                                     columnNumber: 17
                                                 }, this)
                                             }, void 0, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 473,
+                                                lineNumber: 530,
                                                 columnNumber: 15
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -4825,13 +4876,13 @@ function LiveBattle() {
                                                 children: currentQuestion.text
                                             }, void 0, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 489,
+                                                lineNumber: 546,
                                                 columnNumber: 15
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 463,
+                                        lineNumber: 520,
                                         columnNumber: 13
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -4852,12 +4903,12 @@ function LiveBattle() {
                                                 votePct: mode === "discussion" ? voteFor(i) : undefined
                                             }, i, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 497,
+                                                lineNumber: 554,
                                                 columnNumber: 17
                                             }, this))
                                     }, void 0, false, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 495,
+                                        lineNumber: 552,
                                         columnNumber: 13
                                     }, this),
                                     revealed && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -4879,7 +4930,7 @@ function LiveBattle() {
                                                 children: selected === currentQuestion.correct ? "🎉" : "❌"
                                             }, void 0, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 525,
+                                                lineNumber: 582,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -4895,7 +4946,7 @@ function LiveBattle() {
                                                         children: selected === currentQuestion.correct ? `Correct! +${currentQuestion.points} pts` : "Wrong Answer"
                                                     }, void 0, false, {
                                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                        lineNumber: 527,
+                                                        lineNumber: 584,
                                                         columnNumber: 19
                                                     }, this),
                                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -4914,19 +4965,19 @@ function LiveBattle() {
                                                                 children: currentQuestion.options[currentQuestion.correct]
                                                             }, void 0, false, {
                                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                                lineNumber: 531,
+                                                                lineNumber: 588,
                                                                 columnNumber: 37
                                                             }, this)
                                                         ]
                                                     }, void 0, true, {
                                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                        lineNumber: 530,
+                                                        lineNumber: 587,
                                                         columnNumber: 19
                                                     }, this)
                                                 ]
                                             }, void 0, true, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 526,
+                                                lineNumber: 583,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("button", {
@@ -4953,25 +5004,25 @@ function LiveBattle() {
                                                         size: 15
                                                     }, void 0, false, {
                                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                        lineNumber: 554,
+                                                        lineNumber: 611,
                                                         columnNumber: 19
                                                     }, this)
                                                 ]
                                             }, void 0, true, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 534,
+                                                lineNumber: 591,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 513,
+                                        lineNumber: 570,
                                         columnNumber: 15
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                lineNumber: 461,
+                                lineNumber: 518,
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -4999,12 +5050,12 @@ function LiveBattle() {
                                             children: "Leaderboard"
                                         }, void 0, false, {
                                             fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                            lineNumber: 572,
+                                            lineNumber: 629,
                                             columnNumber: 15
                                         }, this)
                                     }, void 0, false, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 571,
+                                        lineNumber: 628,
                                         columnNumber: 13
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -5025,24 +5076,24 @@ function LiveBattle() {
                                                 }
                                             }, p.id, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 580,
+                                                lineNumber: 637,
                                                 columnNumber: 19
                                             }, this))
                                     }, void 0, false, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 576,
+                                        lineNumber: 633,
                                         columnNumber: 13
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                lineNumber: 561,
+                                lineNumber: 618,
                                 columnNumber: 11
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                        lineNumber: 460,
+                        lineNumber: 517,
                         columnNumber: 9
                     }, this),
                     mode === "discussion" && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -5075,20 +5126,20 @@ function LiveBattle() {
                                                     msg: m
                                                 }, m.id, false, {
                                                     fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                    lineNumber: 599,
+                                                    lineNumber: 656,
                                                     columnNumber: 19
                                                 }, this)),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
                                                 ref: chatEndRef
                                             }, void 0, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 601,
+                                                lineNumber: 658,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 597,
+                                        lineNumber: 654,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -5114,7 +5165,7 @@ function LiveBattle() {
                                                 }
                                             }, void 0, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 604,
+                                                lineNumber: 661,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("button", {
@@ -5136,24 +5187,24 @@ function LiveBattle() {
                                                     color: "#fff"
                                                 }, void 0, false, {
                                                     fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                    lineNumber: 633,
+                                                    lineNumber: 690,
                                                     columnNumber: 19
                                                 }, this)
                                             }, void 0, false, {
                                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                                lineNumber: 618,
+                                                lineNumber: 675,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                        lineNumber: 603,
+                                        lineNumber: 660,
                                         columnNumber: 15
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                lineNumber: 596,
+                                lineNumber: 653,
                                 columnNumber: 13
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$quizarenaremastered$2f$frontend$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -5182,30 +5233,30 @@ function LiveBattle() {
                                     children: "Confirm Choice"
                                 }, void 0, false, {
                                     fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                    lineNumber: 641,
+                                    lineNumber: 698,
                                     columnNumber: 17
                                 }, this)
                             }, void 0, false, {
                                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                                lineNumber: 639,
+                                lineNumber: 696,
                                 columnNumber: 13
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                        lineNumber: 588,
+                        lineNumber: 645,
                         columnNumber: 11
                     }, this)
                 ]
             }, void 0, true, {
                 fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-                lineNumber: 343,
+                lineNumber: 400,
                 columnNumber: 7
             }, this)
         ]
     }, void 0, true, {
         fileName: "[project]/quizarenaremastered/frontend/src/components/studentONLY/LiveBattle.tsx",
-        lineNumber: 316,
+        lineNumber: 373,
         columnNumber: 5
     }, this);
 }
