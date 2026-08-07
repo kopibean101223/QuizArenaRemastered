@@ -9,7 +9,7 @@ import {
   ChevronDown, ChevronUp, BookOpen, Sparkles, RefreshCw,
   Pencil, Check, XCircle, Flag, Trophy, LayoutDashboard,
   Library, BarChart2, Settings, Layers, LogOut,
-  AlertTriangle, Zap, CircleDot, AlignLeft, Hash, Circle,
+  AlertTriangle, Zap, CircleDot, AlignLeft, Hash, Circle, Plus,
 } from "lucide-react";
 
 // ─── Tokens ────────────────────────────────────────────────────────────────────
@@ -50,6 +50,11 @@ export interface SyllabusDoc {
   filename: string;
   chunks?: any;
   createdAt?: string;
+  uploadDate?: string;
+  size?: string;
+  status?: DocStatus;
+  pages?: number;
+  subject?: string;
 }
 export interface Choice {
   label: string;
@@ -69,14 +74,14 @@ export interface Citation {
 }
 export interface GeneratedQuestion {
   id: number;
-  docId: number; // <-- Required for document relation & deletion filtering
+  docId: number; 
   text: string;
   type: string;
   choices?: Choice[];
   answer: string;
   difficulty: string;
   topic: string;
-  status: QuestionStatus; // <-- Required for PENDING / APPROVED / REJECTED status
+  status: QuestionStatus; 
   citation: Citation;
   flagged?: boolean;
   flagReason?: string;
@@ -107,8 +112,10 @@ const QTYPE_ICON: Record<string, React.ReactNode> = {
   "True / False":    <CircleDot size={10} strokeWidth={2.5} />,
   "Identification":  <Hash size={10} strokeWidth={2.5} />,
   "Short Answer":    <AlignLeft size={10} strokeWidth={2.5} />,
+  "Coding":          <Layers size={10} strokeWidth={2.5} />,
+  "Mathematics":     <Hash size={10} strokeWidth={2.5} />,
 };
-// ─── Sidebar ───────────────────────────────────────────────────────────────────
+
 function Sidebar() { 
   return <ProfSidebar />; 
 }
@@ -117,8 +124,6 @@ function Sidebar() {
 function CitationPanel({ citation, flagged, flagReason, onFlag }:
   { citation: Citation; flagged: boolean; flagReason?: string; onFlag: (reason: string) => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [flagOpen, setFlagOpen] = useState(false);
-  const [flagText, setFlagText] = useState(flagReason ?? "");
   const isStrong = citation?.confidence === "strong";
 
   return (
@@ -160,7 +165,7 @@ function CitationPanel({ citation, flagged, flagReason, onFlag }:
 
       {expanded && (
         <div style={{ padding: "0 14px 12px" }}>
-          <div style={{ background: "rgba(255,255,255,0.7)", border: `1px solid ${C.indigoBorder}`, borderRadius: 10, padding: "10px 13px" }}>
+          <div style={{ background: "rgba(255,255,255,0.7)", border: `1.5px solid ${C.indigoBorder}`, borderRadius: 10, padding: "10px 13px" }}>
             <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 500, color: "#3D3D5C", margin: 0, lineHeight: 1.65, fontStyle: "italic" }}>
               "{citation?.excerpt || "No context provided."}"
             </p>
@@ -365,37 +370,6 @@ function ActionBtn({ icon, label, bg, color, border, onClick }: { icon: React.Re
   );
 }
 
-// ─── Syllabus Document Row ─────────────────────────────────────────────────────
-function DocRow({ doc, onRemove }: { doc: SyllabusDoc; onRemove: (id: number) => void }) {
-  const ds = DOC_STATUS[doc.status] || DOC_STATUS.processing;
-  return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", background: C.white, borderRadius: 14, border: `1.5px solid ${C.border}`, boxShadow: "0 1px 6px rgba(0,0,0,0.04)" }}>
-      <div style={{ width: 36, height: 36, borderRadius: 10, background: C.indigoLight, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <FileText size={17} color={C.indigo} strokeWidth={2} />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: C.navy, margin: 0, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {doc.filename}
-        </p>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 500, color: C.muted }}>{doc.uploadDate}</span>
-          {doc.status === "ready" && (
-            <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 500, color: C.muted }}>{doc.pages}p · {doc.size}</span>
-          )}
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: ds.bg, color: ds.color, borderRadius: 20, padding: "2px 8px", fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 800 }}>
-            {ds.icon}{ds.text}
-          </span>
-        </div>
-      </div>
-      {doc.status === "ready" && (
-        <button type="button" onClick={() => onRemove(doc.id)} style={{ background: "transparent", border: "none", cursor: "pointer", color: C.muted, display: "flex", padding: "2px", borderRadius: 7, flexShrink: 0 }}>
-          <X size={14} strokeWidth={2.5} />
-        </button>
-      )}
-    </div>
-  );
-}
-
 // ─── Generate Config Panel ─────────────────────────────────────────────────────
 function GeneratePanel({ 
   docs, 
@@ -403,12 +377,11 @@ function GeneratePanel({
   generating 
 }: { 
   docs: SyllabusDoc[]; 
-  onGenerate: (config: { count: string; difficulty: string; qtypes: string[]; docId: number | "all"; category: string }) => void; 
+  onGenerate: (config: { count: string; difficulty: string; qtypes: string[]; docId: number | "all" }) => void; 
   generating: boolean;
 }) {
   const [count, setCount] = useState("5");
   const [difficulty, setDifficulty] = useState("Medium");
-  const [category, setCategory] = useState("General"); // <-- Add this state
   const [selectedQtypes, setSelectedQtypes] = useState<string[]>(["Multiple Choice"]);
   const [selectedDoc, setSelectedDoc] = useState<number | "all">("all");
   
@@ -417,7 +390,7 @@ function GeneratePanel({
   const toggleQtype = (type: string) => {
     setSelectedQtypes(prev => {
       if (prev.includes(type)) {
-        if (prev.length === 1) return prev; // Keep at least one selected
+        if (prev.length === 1) return prev; 
         return prev.filter(t => t !== type);
       } else {
         return [...prev, type];
@@ -458,17 +431,6 @@ function GeneratePanel({
           ))}
         </div>
       </div>
-      {/* Category */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Category</label>
-        <div style={{ display: "flex", gap: 5 }}>
-          {["General", "Coding", "Mathematics"].map(c => (
-            <button key={c} type="button" onClick={() => setCategory(c)} style={{ flex: 1, background: category === c ? C.indigoLight : C.offWhite, border: `1.5px solid ${category === c ? C.indigo : C.border}`, borderRadius: 8, padding: "6px 0", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: category === c ? C.indigo : C.muted, cursor: "pointer" }}>
-              {c}
-            </button>
-          ))}
-        </div>
-      </div>
 
       {/* Difficulty */}
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -482,14 +444,14 @@ function GeneratePanel({
         </div>
       </div>
 
-      {/* Multi-Select Question Types Without Checkbox */}
+      {/* Multi-Select Question Types (Now includes Coding & Mathematics) */}
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Question Types</label>
           <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: C.indigo }}>Multi-select</span>
         </div>
         <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-          {["Multiple Choice", "True / False", "Identification", "Short Answer"].map(t => {
+          {["Multiple Choice", "True / False", "Identification", "Short Answer", "Coding", "Mathematics"].map(t => {
             const isSelected = selectedQtypes.includes(t);
             return (
               <button 
@@ -522,7 +484,7 @@ function GeneratePanel({
       {/* Action Button */}
       <button 
         type="button" 
-       onClick={() => onGenerate({ count, difficulty, qtypes: selectedQtypes, docId: selectedDoc, category })}
+        onClick={() => onGenerate({ count, difficulty, qtypes: selectedQtypes, docId: selectedDoc })}
         disabled={generating || readyDocs.length === 0 || selectedQtypes.length === 0} 
         style={{ 
           width: "100%", 
@@ -549,7 +511,6 @@ function GeneratePanel({
   );
 }
 
-
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 export function AIQuestionGenerator() {
   const [docs, setDocs] = useState<SyllabusDoc[]>([]);
@@ -557,17 +518,15 @@ export function AIQuestionGenerator() {
   const [statusFilter, setStatusFilter] = useState<"all" | QuestionStatus>("all");
   const [generating, setGenerating] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [loading, setLoading] = useState<boolean>(false);
   const [isUploading, setIsUploading] = useState(false);
 
-useEffect(() => {
+  useEffect(() => {
     async function fetchInitialData() {
       try {
         const response = await fetch("/api/rag/data");
         if (response.ok) {
           const data = await response.json();
           setDocs(data.docs || []);
-          // FIX: Normalize status to lowercase
           const normalizedQuestions = (data.questions || []).map((q: any) => ({
             ...q,
             status: String(q.status || "pending").toLowerCase() as QuestionStatus
@@ -581,7 +540,7 @@ useEffect(() => {
     fetchInitialData();
   }, []);
 
-async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -597,7 +556,6 @@ async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
       return;
     }
 
-    // 1. START LOADING
     setIsUploading(true);
 
     const tempId = Date.now();
@@ -630,61 +588,59 @@ async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
       setDocs(d => d.filter(x => x.id !== tempId));
     } finally {
       if (fileRef.current) fileRef.current.value = "";
-      // 2. STOP LOADING
       setIsUploading(false);
     }
   }
-// Inside AIQuestionGenerator.tsx
-const handleGenerate = async (config: {
-  count: string;
-  difficulty: string;
-  qtypes: string[];
-  docId: number | "all";
-}) => {
-  if (docs.length === 0) {
-    alert("Please upload at least one syllabus document first.");
-    return;
-  }
 
-  setGenerating(true);
-  setLoading(true);
-
-  try {
-    const activeDocId = config.docId === "all" ? docs[0].id : config.docId;
-
-    const response = await fetch("/api/rag/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        count: parseInt(config.count, 10),
-        difficulty: config.difficulty,
-        types: config.qtypes,
-        document_id: activeDocId,
-        category: config.category, // <-- Send category to Next.js API
-      }),
-    });
-
-    const resData = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      // Read detail from FastAPI or error from Next.js
-      const errorMessage = resData?.detail || resData?.error || "Failed to generate questions.";
-      throw new Error(errorMessage);
+  const handleGenerate = async (config: {
+    count: string;
+    difficulty: string;
+    qtypes: string[];
+    docId: number | "all";
+  }) => {
+    if (docs.length === 0) {
+      alert("Please upload at least one syllabus document first.");
+      return;
     }
-const normalizedData = resData.map((q: any) => ({
-      ...q,
-      status: String(q.status || "pending").toLowerCase() as QuestionStatus
-    }));
 
-    setQuestions((prev) => [...normalizedData, ...prev]);
-  } catch (error: any) {
-    console.error("Error generating questions:", error);
-    alert(error.message || "Failed to generate questions.");
-  } finally {
-    setGenerating(false);
-    setLoading(false);
-  }
-};
+    setGenerating(true);
+
+    try {
+      const activeDocId = config.docId === "all" ? docs[0].id : config.docId;
+
+      const response = await fetch("/api/rag/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          count: parseInt(config.count, 10),
+          difficulty: config.difficulty,
+          types: config.qtypes,
+          document_id: activeDocId,
+          category: "General", 
+        }),
+      });
+
+      const resData = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const errorMessage = resData?.detail || resData?.error || "Failed to generate questions.";
+        throw new Error(errorMessage);
+      }
+      
+      const normalizedData = (Array.isArray(resData) ? resData : resData.questions || []).map((q: any) => ({
+        ...q,
+        status: String(q.status || "pending").toLowerCase() as QuestionStatus
+      }));
+
+      setQuestions((prev) => [...normalizedData, ...prev]);
+    } catch (error: any) {
+      console.error("Error generating questions:", error);
+      alert(error.message || "Failed to generate questions.");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const filtered = statusFilter === "all" ? questions : questions.filter(q => q.status === statusFilter);
   const counts = {
     all: questions.length,
@@ -692,18 +648,12 @@ const normalizedData = resData.map((q: any) => ({
     approved: questions.filter(q => q.status === "approved").length,
     rejected: questions.filter(q => q.status === "rejected").length,
   };
-const handleDeleteDoc = async (id: number) => {
-    // 1. Remove the doc from the sidebar list
+
+  const handleDeleteDoc = async (id: number) => {
     setDocs(prev => prev.filter(d => d.id !== id));
-    
-    // 2. Keep questions from other docs, OR keep them if they are approved/pending.
-    // This ensures ONLY rejected questions tied to this deleted document disappear.
-    setQuestions(prev => prev.filter(q => 
-      q.docId !== id || q.status === "approved" || q.status === "pending"
-    ));
+    setQuestions(prev => prev.filter(q => q.docId !== id));
 
     try {
-      // 3. Delete doc in DB
       await fetch(`/api/rag/doc?id=${id}`, { 
         method: "DELETE" 
       });
@@ -712,14 +662,12 @@ const handleDeleteDoc = async (id: number) => {
     }
   };
 
-const handleStatusChange = async (questionId: number, newStatus: QuestionStatus) => {
-    // 1. Optimistic UI Update
+  const handleStatusChange = async (questionId: number, newStatus: QuestionStatus) => {
     setQuestions((prev) =>
       prev.map((q) => (q.id === questionId ? { ...q, status: newStatus } : q))
     );
 
     try {
-      // 2. Persist status update in Supabase (Send uppercase to DB if DB enum requires it, or pass newStatus)
       await fetch("/api/rag/status", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -736,19 +684,11 @@ const handleStatusChange = async (questionId: number, newStatus: QuestionStatus)
 
     const pendingIds = pendingQuestions.map(q => q.id);
 
-    // 1. Optimistic UI update
-    if (targetStatus === "rejected") {
-      // If rejecting, filter them out from local state
-      setQuestions(prev => prev.filter(q => q.status !== "pending"));
-    } else {
-      // If approving, change status to approved
-      setQuestions(prev =>
-        prev.map(q => (q.status === "pending" ? { ...q, status: targetStatus } : q))
-      );
-    }
+    setQuestions(prev =>
+      prev.map(q => (q.status === "pending" ? { ...q, status: targetStatus } : q))
+    );
 
     try {
-      // 2. Persist in Supabase
       await fetch("/api/rag/status/bulk", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -759,12 +699,25 @@ const handleStatusChange = async (questionId: number, newStatus: QuestionStatus)
     }
   };
 
+  const handleDeleteAllRejected = async () => {
+    const rejectedQuestions = questions.filter(q => q.status === "rejected");
+    if (rejectedQuestions.length === 0) return;
+
+    setQuestions(prev => prev.filter(q => q.status !== "rejected"));
+
+    try {
+      await fetch("/api/rag/status/bulk", {
+        method: "DELETE",
+      });
+    } catch (error) {
+      console.error("Failed to delete rejected questions:", error);
+    }
+  };
+
   const handleEditQuestion = async (id: number, data: Partial<GeneratedQuestion>) => {
-    // Optimistic UI Update
     setQuestions((prev) => prev.map(q => q.id === id ? { ...q, ...data } : q));
     
     try {
-      // NOTE: Ensure you have a backend endpoint (e.g. /api/rag/edit) to persist these changes in Supabase later.
       await fetch("/api/rag/edit", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -826,34 +779,34 @@ const handleStatusChange = async (questionId: number, newStatus: QuestionStatus)
                 </div>
                 <input ref={fileRef} type="file" accept=".pdf,.docx" onChange={handleUpload} style={{ display: "none" }} />
                 <button 
-  type="button" 
-  onClick={() => { if (!isUploading) fileRef.current?.click(); }} 
-  disabled={isUploading}
-  style={{ 
-    width: "100%", 
-    background: isUploading ? "rgba(91,61,246,0.5)" : C.indigo, 
-    border: "none", 
-    borderRadius: 11, 
-    padding: "9px 14px", 
-    fontFamily: "Manrope, sans-serif", 
-    fontSize: 13, 
-    fontWeight: 700, 
-    color: "#fff", 
-    cursor: isUploading ? "default" : "pointer", 
-    display: "flex", 
-    alignItems: "center", 
-    justifyContent: "center", 
-    gap: 7, 
-    boxShadow: isUploading ? "none" : "0 3px 10px rgba(91,61,246,0.25)",
-    transition: "all 0.2s ease"
-  }}
->
-  {isUploading ? (
-    <><Loader2 size={14} strokeWidth={2.5} style={{ animation: "spin 0.8s linear infinite" }} />Uploading...</>
-  ) : (
-    <><Upload size={14} strokeWidth={2.5} />Upload Syllabus</>
-  )}
-</button>
+                  type="button" 
+                  onClick={() => { if (!isUploading) fileRef.current?.click(); }} 
+                  disabled={isUploading}
+                  style={{ 
+                    width: "100%", 
+                    background: isUploading ? "rgba(91,61,246,0.5)" : C.indigo, 
+                    border: "none", 
+                    borderRadius: 11, 
+                    padding: "9px 14px", 
+                    fontFamily: "Manrope, sans-serif", 
+                    fontSize: 13, 
+                    fontWeight: 700, 
+                    color: "#fff", 
+                    cursor: isUploading ? "default" : "pointer", 
+                    display: "flex", 
+                    alignItems: "center", 
+                    justifyContent: "center", 
+                    gap: 7, 
+                    boxShadow: isUploading ? "none" : "0 3px 10px rgba(91,61,246,0.25)",
+                    transition: "all 0.2s ease"
+                  }}
+                >
+                  {isUploading ? (
+                    <><Loader2 size={14} strokeWidth={2.5} style={{ animation: "spin 0.8s linear infinite" }} />Uploading...</>
+                  ) : (
+                    <><Upload size={14} strokeWidth={2.5} />Upload Syllabus</>
+                  )}
+                </button>
                 <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted, margin: "7px 0 0", textAlign: "center" }}>
                   Accepts PDF files
                 </p>
@@ -861,24 +814,22 @@ const handleStatusChange = async (questionId: number, newStatus: QuestionStatus)
 
               <div style={{ flex: 1, overflowY: "auto", padding: "12px" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                 {docs.map(doc => (
-  <div key={doc.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", background: C.offWhite, border: `1px solid ${C.border}`, borderRadius: 10 }}>
-    {/* File details */}
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <FileText size={16} color={C.indigo} />
-      <span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{doc.filename}</span>
-    </div>
+                  {docs.map(doc => (
+                    <div key={doc.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", background: C.offWhite, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
+                        <FileText size={16} color={C.indigo} style={{ flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, fontWeight: 600, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.filename}</span>
+                      </div>
 
-    {/* Delete 'X' Button */}
-    <button 
-      type="button" 
-      onClick={() => handleDeleteDoc(doc.id)} 
-      style={{ background: "transparent", border: "none", cursor: "pointer", padding: 2, display: "flex", alignItems: "center" }}
-    >
-      <X size={14} color={C.muted} />
-    </button>
-  </div>
-))}
+                      <button 
+                        type="button" 
+                        onClick={() => handleDeleteDoc(doc.id)} 
+                        style={{ background: "transparent", border: "none", cursor: "pointer", padding: 2, display: "flex", alignItems: "center", flexShrink: 0 }}
+                      >
+                        <X size={14} color={C.muted} />
+                      </button>
+                    </div>
+                  ))}
                 </div>
 
                 <div style={{ marginTop: 16, background: C.indigoLight, border: `1.5px solid ${C.indigoBorder}`, borderRadius: 14, padding: "12px 14px" }}>
@@ -922,55 +873,82 @@ const handleStatusChange = async (questionId: number, newStatus: QuestionStatus)
                     );
                   })}
                 </div>
-               <div style={{ display: "flex", gap: 7 }}>
-  <button
-    type="button"
-    onClick={() => handleBulkStatusChange("approved")}
-    disabled={counts.pending === 0}
-    style={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 5,
-      background: C.greenLight,
-      border: `1.5px solid ${C.greenBorder}`,
-      borderRadius: 9,
-      padding: "6px 12px",
-      fontFamily: "Manrope, sans-serif",
-      fontSize: 12,
-      fontWeight: 700,
-      color: "#18A058",
-      cursor: counts.pending === 0 ? "default" : "pointer",
-      opacity: counts.pending === 0 ? 0.5 : 1,
-    }}
-  >
-    <CheckCircle2 size={13} strokeWidth={2.5} />
-    Approve All Pending ({counts.pending})
-  </button>
+                
+                {/* Unified Bulk Action Buttons Container */}
+                <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => handleBulkStatusChange("approved")}
+                    disabled={counts.pending === 0}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      background: C.greenLight,
+                      border: `1.5px solid ${C.greenBorder}`,
+                      borderRadius: 9,
+                      padding: "6px 12px",
+                      fontFamily: "Manrope, sans-serif",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: "#18A058",
+                      cursor: counts.pending === 0 ? "default" : "pointer",
+                      opacity: counts.pending === 0 ? 0.5 : 1,
+                    }}
+                  >
+                    <CheckCircle2 size={13} strokeWidth={2.5} />
+                    Approve All Pending ({counts.pending})
+                  </button>
 
-  <button
-    type="button"
-    onClick={() => handleBulkStatusChange("rejected")}
-    disabled={counts.pending === 0}
-    style={{
-      display: "inline-flex",
-      alignItems: "center",
-      gap: 5,
-      background: C.redLight,
-      border: `1.5px solid ${C.redBorder}`,
-      borderRadius: 9,
-      padding: "6px 12px",
-      fontFamily: "Manrope, sans-serif",
-      fontSize: 12,
-      fontWeight: 700,
-      color: C.red,
-      cursor: counts.pending === 0 ? "default" : "pointer",
-      opacity: counts.pending === 0 ? 0.5 : 1,
-    }}
-  >
-    <XCircle size={13} strokeWidth={2.5} />
-    Reject All Pending ({counts.pending})
-  </button>
-</div>
+                  <button
+                    type="button"
+                    onClick={() => handleBulkStatusChange("rejected")}
+                    disabled={counts.pending === 0}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      background: C.redLight,
+                      border: `1.5px solid ${C.redBorder}`,
+                      borderRadius: 9,
+                      padding: "6px 12px",
+                      fontFamily: "Manrope, sans-serif",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: C.red,
+                      cursor: counts.pending === 0 ? "default" : "pointer",
+                      opacity: counts.pending === 0 ? 0.5 : 1,
+                    }}
+                  >
+                    <XCircle size={13} strokeWidth={2.5} />
+                    Reject All Pending ({counts.pending})
+                  </button>
+
+                  {/* Clear Rejected Button */}
+                  <button
+                    type="button"
+                    onClick={handleDeleteAllRejected}
+                    disabled={counts.rejected === 0}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      background: C.inputBg,
+                      border: `1.5px solid ${C.border}`,
+                      borderRadius: 9,
+                      padding: "6px 12px",
+                      fontFamily: "Manrope, sans-serif",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: C.muted,
+                      cursor: counts.rejected === 0 ? "default" : "pointer",
+                      opacity: counts.rejected === 0 ? 0.5 : 1,
+                    }}
+                  >
+                    <X size={13} strokeWidth={2.5} />
+                    Clear Rejected ({counts.rejected})
+                  </button>
+                </div>
               </div>
 
               <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px" }}>
@@ -984,19 +962,19 @@ const handleStatusChange = async (questionId: number, newStatus: QuestionStatus)
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                   {filtered.map((q) => (
- <QuestionCard
-    key={q.id}
-    q={q}
-    onStatusChange={(id, s) => handleStatusChange(id, s)}
-    onEdit={handleEditQuestion} // <-- ADD THIS LINE
-    onFlag={(id, reason) =>
-      setQuestions((qs) =>
-        qs.map((x) => (x.id === id ? { ...x, flagged: true, flagReason: reason } : x))
-      )
-    }
-  />
-))}
+                    {filtered.map((q) => (
+                      <QuestionCard
+                        key={q.id}
+                        q={q}
+                        onStatusChange={(id, s) => handleStatusChange(id, s)}
+                        onEdit={handleEditQuestion} 
+                        onFlag={(id, reason) =>
+                          setQuestions((qs) =>
+                            qs.map((x) => (x.id === id ? { ...x, flagged: true, flagReason: reason } : x))
+                          )
+                        }
+                      />
+                    ))}
                   </div>
                 )}
               </div>

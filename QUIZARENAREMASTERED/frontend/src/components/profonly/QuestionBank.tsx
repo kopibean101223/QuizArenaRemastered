@@ -60,24 +60,6 @@ interface Question {
   createdAt: string;
 }
 
-const RAW_QUESTIONS: Question[] = [
-  {id:1, text:"What is the derivative of f(x) = 3x² + 2x − 5?",subject:"Mathematics",difficulty:"Medium",topic:"Calculus",type:"Multiple Choice",points:2,timeLimit:30,choices:["6x + 2","3x + 2","6x² + 2","6x − 5"],answer:"6x + 2",explanation:"Using the power rule: d/dx(3x²)=6x, d/dx(2x)=2, d/dx(−5)=0.",tags:["Calculus","Derivatives"],createdAt:"2026-07-10"},
-  {id:2, text:"Newton's First Law of Motion is also known as the Law of ___.",subject:"Physics",difficulty:"Easy",topic:"Mechanics",type:"Identification",points:1,timeLimit:20,choices:[],answer:"Inertia",explanation:"Newton's First Law states that an object remains at rest unless acted on by a net force.",tags:["Mechanics","Newton"],createdAt:"2026-07-09"},
-  {id:3, text:"Which data structure uses LIFO order?",subject:"Computer Science",difficulty:"Easy",topic:"Data Structures",type:"Multiple Choice",points:1,timeLimit:20,choices:["Queue","Stack","Linked List","Tree"],answer:"Stack",explanation:"Last In, First Out — the last element pushed is the first to be popped.",tags:["DSA","Stack"],createdAt:"2026-07-08"},
-  {id:4, text:"The Battle of Mactan took place in 1521. True or False?",subject:"History",difficulty:"Easy",topic:"Philippine History",type:"True / False",points:1,timeLimit:15,choices:["True","False"],answer:"True",explanation:"The Battle of Mactan occurred on April 27, 1521, where Lapulapu defeated Ferdinand Magellan.",tags:["Mactan","Philippines"],createdAt:"2026-07-07"},
-  {id:5, text:"Solve for x: 2x² − 8x + 6 = 0",subject:"Mathematics",difficulty:"Hard",topic:"Algebra",type:"Short Answer",points:3,timeLimit:60,choices:[],answer:"x = 1 or x = 3",explanation:"Factor: 2(x²−4x+3)=0 → 2(x−1)(x−3)=0 → x=1 or x=3.",tags:["Algebra","Quadratic"],createdAt:"2026-07-06"},
-  {id:6, text:"What is the process by which plants make food using sunlight?",subject:"Biology",difficulty:"Easy",topic:"Ecology",type:"Identification",points:1,timeLimit:20,choices:[],answer:"Photosynthesis",explanation:"Plants convert CO₂ + H₂O + light energy into glucose and oxygen.",tags:["Plants","Photosynthesis"],createdAt:"2026-07-05"},
-  {id:7, text:"In OOP, which principle restricts direct access to object components?",subject:"Computer Science",difficulty:"Medium",topic:"OOP",type:"Multiple Choice",points:2,timeLimit:25,choices:["Inheritance","Polymorphism","Encapsulation","Abstraction"],answer:"Encapsulation",explanation:"Encapsulation hides internal state and requires all interaction through methods.",tags:["OOP","Encapsulation"],createdAt:"2026-07-04"},
-  {id:8, text:"A thermodynamic process in which no heat is exchanged is called ___.",subject:"Physics",difficulty:"Medium",topic:"Thermodynamics",type:"Identification",points:2,timeLimit:25,choices:[],answer:"Adiabatic",explanation:"An adiabatic process is one where Q=0; the system is perfectly insulated.",tags:["Thermodynamics","Adiabatic"],createdAt:"2026-07-03"},
-  {id:9, text:"State the Fundamental Theorem of Calculus in your own words.",subject:"Mathematics",difficulty:"Hard",topic:"Calculus",type:"Short Answer",points:4,timeLimit:90,choices:[],answer:"Differentiation and integration are inverse operations.",explanation:"The FTC links the concept of the derivative of a function to the concept of the integral.",tags:["Calculus","FTC"],createdAt:"2026-07-02"},
-  {id:10,text:"World War II ended in 1945. True or False?",subject:"History",difficulty:"Easy",topic:"World Wars",type:"True / False",points:1,timeLimit:10,choices:["True","False"],answer:"True",explanation:"WWII ended on September 2, 1945, with Japan's formal surrender.",tags:["WWII","World History"],createdAt:"2026-07-01"},
-  {id:11,text:"What is the time complexity of binary search?",subject:"Computer Science",difficulty:"Medium",topic:"Algorithms",type:"Multiple Choice",points:2,timeLimit:25,choices:["O(n)","O(n²)","O(log n)","O(1)"],answer:"O(log n)",explanation:"Binary search halves the search space each step, giving O(log n) complexity.",tags:["Algorithms","Complexity"],createdAt:"2026-06-30"},
-  {id:12,text:"Describe Mendel's Law of Segregation.",subject:"Biology",difficulty:"Hard",topic:"Genetics",type:"Short Answer",points:3,timeLimit:60,choices:[],answer:"Alleles separate during gamete formation so each gamete carries one allele.",explanation:"During meiosis, the two alleles of each gene segregate from each other.",tags:["Genetics","Mendel"],createdAt:"2026-06-29"},
-  {id:13,text:"The speed of light in a vacuum is approximately ___ m/s.",subject:"Physics",difficulty:"Medium",topic:"Optics",type:"Identification",points:2,timeLimit:20,choices:[],answer:"3 × 10⁸",explanation:"c ≈ 299,792,458 m/s, commonly approximated as 3 × 10⁸ m/s.",tags:["Optics","Speed of Light"],createdAt:"2026-06-28"},
-  {id:14,text:"sin²θ + cos²θ = 1 is a Pythagorean identity. True or False?",subject:"Mathematics",difficulty:"Easy",topic:"Trigonometry",type:"True / False",points:1,timeLimit:15,choices:["True","False"],answer:"True",explanation:"This is the fundamental Pythagorean trigonometric identity.",tags:["Trigonometry","Identity"],createdAt:"2026-06-27"},
-  {id:15,text:"Which normal form eliminates transitive dependencies?",subject:"Computer Science",difficulty:"Hard",topic:"Databases",type:"Multiple Choice",points:3,timeLimit:30,choices:["1NF","2NF","3NF","BCNF"],answer:"3NF",explanation:"Third Normal Form removes transitive functional dependencies.",tags:["Databases","Normalization"],createdAt:"2026-06-26"},
-];
-
 const PAGE_SIZE = 8;
 
 // ─── Tiny helpers ──────────────────────────────────────────────────────────────
@@ -459,59 +441,13 @@ function QuestionModal({editing,onClose}:{editing?:Question;onClose:()=>void}) {
 }
 
 // ─── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar() { return <ProfSidebar />;
-  const [active,setActive]=useState("bank");
-  const items=[
-    {id:"dashboard",icon:<LayoutDashboard size={17} strokeWidth={2}/>,label:"Dashboard"},
-    {id:"sections", icon:<Layers size={17} strokeWidth={2}/>,         label:"My Sections"},
-    {id:"bank",     icon:<Library size={17} strokeWidth={2}/>,         label:"Question Bank"},
-    {id:"analytics",icon:<BarChart2 size={17} strokeWidth={2}/>,       label:"Analytics"},
-    {id:"settings", icon:<Settings size={17} strokeWidth={2}/>,        label:"Settings"},
-  ];
-  return (
-    <div style={{width:210,minWidth:210,background:C.navy,display:"flex",flexDirection:"column",
-      padding:"22px 12px",gap:3,height:"100vh",position:"sticky",top:0,flexShrink:0}}>
-      <div style={{display:"flex",alignItems:"center",gap:9,padding:"4px 8px",marginBottom:22}}>
-        <div style={{width:34,height:34,borderRadius:9,background:C.indigo,display:"flex",
-          alignItems:"center",justifyContent:"center"}}>
-          <Trophy fill={C.yellow} color="transparent" size={17}/>
-        </div>
-        <span style={{fontFamily:"Fredoka,sans-serif",fontSize:19,fontWeight:700,color:"#fff"}}>QuizArena</span>
-      </div>
-      <div style={{flex:1,display:"flex",flexDirection:"column",gap:2}}>
-        {items.map(item=>(
-          <button key={item.id} type="button" onClick={()=>setActive(item.id)} style={{
-            display:"flex",alignItems:"center",gap:9,padding:"9px 11px",borderRadius:11,
-            background:active===item.id?"rgba(91,61,246,0.85)":"transparent",border:"none",
-            cursor:"pointer",color:active===item.id?"#fff":"rgba(255,255,255,0.42)",
-            fontFamily:"Manrope,sans-serif",fontSize:13,fontWeight:active===item.id?700:500,
-            textAlign:"left",transition:"all 0.15s",width:"100%",
-          }}>
-            {item.icon}{item.label}
-          </button>
-        ))}
-      </div>
-      <div style={{borderTop:"1px solid rgba(255,255,255,0.07)",paddingTop:14,display:"flex",
-        alignItems:"center",gap:9,padding:"12px 8px 0"}}>
-        <div style={{width:32,height:32,borderRadius:"50%",background:C.indigo,display:"flex",
-          alignItems:"center",justifyContent:"center",fontFamily:"Manrope,sans-serif",
-          fontSize:11,fontWeight:800,color:"#fff",flexShrink:0}}>RD</div>
-        <div style={{flex:1,minWidth:0}}>
-          <p style={{fontFamily:"Manrope,sans-serif",fontSize:12,fontWeight:700,color:"#fff",margin:0,
-            overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Prof. R. Dela Cruz</p>
-          <p style={{fontFamily:"Manrope,sans-serif",fontSize:10,color:"rgba(255,255,255,0.38)",margin:0}}>Professor</p>
-        </div>
-        <button type="button" style={{background:"none",border:"none",cursor:"pointer",
-          color:"rgba(255,255,255,0.28)",padding:0,display:"flex"}}>
-          <LogOut size={14} strokeWidth={2}/>
-        </button>
-      </div>
-    </div>
-  );
+function Sidebar() { 
+  return <ProfSidebar />;
 }
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 export function QuestionBank() {
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [search,setSearch]=useState("");
   const [subjectF,setSubjectF]=useState("All Subjects");
   const [diffF,setDiffF]=useState("All Difficulties");
@@ -525,21 +461,81 @@ export function QuestionBank() {
   const [page,setPage]=useState(1);
   const [hoveredRow,setHoveredRow]=useState<number|null>(null);
   const [showFilterPanel,setShowFilterPanel]=useState(false);
-// --- DYNAMIC FILTER COMPUTATION ---
-  // 1. Get all unique subjects from the DB + defaults
+
+  // --- FETCH APPROVED QUESTIONS FROM API ENDPOINT ON MOUNT ---
+  useEffect(() => {
+    async function fetchApprovedQuestions() {
+      try {
+        const res = await fetch("/api/questions");
+        if (!res.ok) throw new Error("Failed to fetch questions");
+
+        const data = await res.json();
+
+        if (data && data.length > 0) {
+          const formattedQuestions: Question[] = data.map((q: any) => {
+            let parsedChoices: string[] = [];
+            try {
+              if (typeof q.choices === 'string') {
+                const parsed = JSON.parse(q.choices);
+                parsedChoices = Array.isArray(parsed) ? parsed.map((c: any) => typeof c === 'string' ? c : c.text) : [];
+              } else if (Array.isArray(q.choices)) {
+                parsedChoices = q.choices.map((c: any) => typeof c === 'string' ? c : c.text);
+              }
+            } catch (e) {
+              parsedChoices = [];
+            }
+
+            let parsedExplanation = "Generated via AI RAG pipeline.";
+            try {
+              if (q.citation && typeof q.citation === 'string') {
+                const cit = JSON.parse(q.citation);
+                if (cit.excerpt) parsedExplanation = cit.excerpt;
+              }
+            } catch (e) {}
+
+            return {
+              id: q.id,
+              text: q.text,
+              subject: q.topic || "General",
+              difficulty: q.difficulty || "Medium",
+              topic: q.topic || "General",
+              type: q.type || "Multiple Choice",
+              points: 2,
+              timeLimit: 30,
+              choices: parsedChoices,
+              answer: q.answer,
+              explanation: parsedExplanation,
+              tags: ["AI-Generated", q.topic || "General"],
+              createdAt: q.createdAt ? q.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]
+            };
+          });
+
+          setQuestions(formattedQuestions);
+        } else {
+          setQuestions([]);
+        }
+      } catch (err) {
+        console.error("Error loading user questions:", err);
+      }
+    }
+
+    fetchApprovedQuestions();
+  }, []);
+
+  // --- DYNAMIC FILTER COMPUTATION ---
   const uniqueDbSubjects = Array.from(new Set(questions.map(q => q.subject || "General")));
   const dynamicSubjects = ["All Subjects", ...Array.from(new Set([...SUBJECTS.slice(1), ...uniqueDbSubjects])).sort()];
 
-  // 2. Get topics only for the currently selected subject (or all if "All Subjects")
   const matchingQuestionsForTopic = subjectF === "All Subjects" ? questions : questions.filter(q => q.subject === subjectF);
   const uniqueDbTopics = Array.from(new Set(matchingQuestionsForTopic.map(q => q.topic || "General")));
   const defaultTopicsForSubject = subjectF === "All Subjects" ? ALL_TOPICS.slice(1) : (TOPICS[subjectF] || []);
   const dynamicTopics = ["All Topics", ...Array.from(new Set([...defaultTopicsForSubject, ...uniqueDbTopics])).sort()];
   // ----------------------------------
+
   // Active filter count
   const activeFilters=[subjectF,diffF,topicF,typeF].filter(v=>!v.startsWith("All")).length;
 
-  const filtered=RAW_QUESTIONS.filter(q=>{
+  const filtered=questions.filter(q=>{
     const s=search.toLowerCase();
     const matchSearch=!s||q.text.toLowerCase().includes(s)||q.subject.toLowerCase().includes(s)||
       q.topic.toLowerCase().includes(s)||q.tags.some(t=>t.toLowerCase().includes(s));
@@ -572,11 +568,11 @@ export function QuestionBank() {
     setSelected(s=>{const n=new Set(s);n.has(id)?n.delete(id):n.add(id);return n;});
   }
 
-  // Summary counts
+  // Summary counts mapped to state
   const totalByDiff={
-    Easy:RAW_QUESTIONS.filter(q=>q.difficulty==="Easy").length,
-    Medium:RAW_QUESTIONS.filter(q=>q.difficulty==="Medium").length,
-    Hard:RAW_QUESTIONS.filter(q=>q.difficulty==="Hard").length,
+    Easy:questions.filter(q=>q.difficulty==="Easy").length,
+    Medium:questions.filter(q=>q.difficulty==="Medium").length,
+    Hard:questions.filter(q=>q.difficulty==="Hard").length,
   };
 
   return (
@@ -630,22 +626,21 @@ export function QuestionBank() {
         </div>
 
         {/* ── Filter panel (dropdown) ── */}
-     {/* Filter panel */}
         {showFilterPanel && (
           <div style={{ background: C.white, borderBottom: `1.5px solid ${C.border}`, padding: "14px 24px", display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
             {[
               { 
                 label: "Subject", 
                 v: subjectF, 
-                set: (v: string) => { setSubjectF(v); setTopicF("All Topics"); setPage(1); }, // Resets topic when subject changes
-                opts: dynamicSubjects // Uses dynamic subjects
+                set: (v: string) => { setSubjectF(v); setTopicF("All Topics"); setPage(1); },
+                opts: dynamicSubjects 
               },
               { label: "Difficulty", v: diffF, set: (v: string) => { setDiffF(v); setPage(1); }, opts: DIFFICULTIES },
               { 
                 label: "Topic", 
                 v: topicF, 
                 set: (v: string) => { setTopicF(v); setPage(1); }, 
-                opts: dynamicTopics // Uses filtered dynamic topics
+                opts: dynamicTopics 
               },
               { label: "Question Type", v: typeF, set: (v: string) => { setTypeF(v); setPage(1); }, opts: QTYPES },
             ].map(f => (
@@ -664,7 +659,7 @@ export function QuestionBank() {
           {/* Summary strip */}
           <div style={{display:"flex",gap:12}}>
             {[
-              {label:"Total Questions",val:RAW_QUESTIONS.length,bg:C.indigoLight,color:C.indigo},
+              {label:"Total Questions",val:questions.length,bg:C.indigoLight,color:C.indigo},
               {label:"Easy",val:totalByDiff.Easy,  bg:C.greenLight, color:"#18A058"},
               {label:"Medium",val:totalByDiff.Medium,bg:C.yellowLight,color:"#9A6C00"},
               {label:"Hard",val:totalByDiff.Hard,  bg:C.coralLight, color:"#C8441E"},
@@ -782,12 +777,12 @@ export function QuestionBank() {
                       {q.text}
                     </p>
                     <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 4 }}>
-  {[q.topic, q.type].filter(Boolean).map(t => (
-    <span key={t} style={{ background: C.inputBg, borderRadius: 5, padding: "2px 7px", fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: C.muted }}>
-      #{t.replace(/\s+/g, '')}
-    </span>
-  ))}
-</div>
+                      {[q.topic, q.type].filter(Boolean).map(t => (
+                        <span key={t} style={{ background: C.inputBg, borderRadius: 5, padding: "2px 7px", fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: C.muted }}>
+                          #{t.replace(/\s+/g, '')}
+                        </span>
+                      ))}
+                    </div>
                   </div>
 
                   <SubjectBadge subject={q.subject}/>
