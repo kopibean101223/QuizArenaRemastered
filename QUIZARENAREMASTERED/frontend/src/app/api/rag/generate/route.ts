@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 const prisma = globalForPrisma.prisma || new PrismaClient();
@@ -9,24 +10,8 @@ if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 export async function POST(req: Request) {
   try {
-    // 1. Authenticate user using getUser() (fixes security warning)
-    const cookieStore = await cookies();
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll();
-          },
-          setAll(cookiesToSet) {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            );
-          },
-        },
-      }
-    );
+   
+   const supabase = await createServerSupabaseClient();
 
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
@@ -36,15 +21,14 @@ export async function POST(req: Request) {
 
     const userId = user.id;
 
-    // 2. Parse payload
-   // 2. Parse payload
-    const { count, difficulty, types, document_id, category } = await req.json(); // <-- Add category here  
+ 
+    const { count, difficulty, types, document_id, category } = await req.json();
 
     if (!document_id) {
       return NextResponse.json({ error: 'document_id is required' }, { status: 400 });
     }
 
-    // 3. Fetch syllabus doc from Supabase
+
     const doc = await prisma.syllabusDoc.findUnique({
       where: { id: Number(document_id) },
     });
@@ -53,7 +37,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Document not found in database' }, { status: 404 });
     }
 
-    // 4. Send request to Python FastAPI Engine
+  
     const fastapiUrl = process.env.FASTAPI_URL || 'http://127.0.0.1:8000';
     const pyRes = await fetch(`${fastapiUrl}/generate`, {
       method: 'POST',
@@ -78,17 +62,16 @@ export async function POST(req: Request) {
 
     const rawQuestions = Array.isArray(pyData) ? pyData : pyData.questions || [];
 
-    // 5. Save generated questions in Supabase with userId
     const savedQuestions = await Promise.all(
       rawQuestions.map((q: any) =>
         prisma.generatedQuestion.create({
           data: {
-            userId: userId, // <-- Solves "Argument userId is missing"
+            userId: userId, 
             docId: doc.id,
             text: q.text,
             type: q.type || 'Multiple Choice',
             difficulty: q.difficulty || difficulty || 'Medium',
-            topic: q.topic || 'General',
+            topic: category && category !== 'General' ? category : (doc.filename || 'General'),
             answer: q.answer || '',
             choices: q.choices || [],
             citation: q.citation || {},

@@ -5,10 +5,8 @@ const prisma = new PrismaClient();
 
 export async function PATCH(req: Request) {
   try {
-    const { questionId, status } = await req.json(); // status: 'APPROVED' | 'REJECTED' | 'PENDING'
-
+    const { questionId, status } = await req.json(); 
     if (status === 'REJECTED') {
-      // Delete rejected items directly to prevent database bloat
       await prisma.generatedQuestion.delete({
         where: { id: Number(questionId) },
       });

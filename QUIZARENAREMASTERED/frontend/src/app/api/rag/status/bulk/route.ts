@@ -5,14 +5,13 @@ const prisma = new PrismaClient();
 
 export async function PATCH(req: Request) {
   try {
-    const { ids, status } = await req.json(); // ids: number[], status: 'APPROVED' | 'REJECTED' | 'PENDING'
+    const { ids, status } = await req.json(); 
 
     if (!Array.isArray(ids) || ids.length === 0) {
       return NextResponse.json({ error: 'No question IDs provided' }, { status: 400 });
     }
 
-    // Update status instead of deleting when rejected
-    const updated = await prisma.generatedQuestion.updateMany({
+      const updated = await prisma.generatedQuestion.updateMany({
       where: { id: { in: ids } },
       data: { status },
     });
@@ -23,11 +22,11 @@ export async function PATCH(req: Request) {
   }
 }
 
-// Add a DELETE handler to clear out rejected questions completely
+
 export async function DELETE(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const userId = searchParams.get('userId'); // Optional filtering if needed
+    const userId = searchParams.get('userId'); 
 
     await prisma.generatedQuestion.deleteMany({
       where: { status: 'REJECTED' },

@@ -8,10 +8,13 @@ import {
   Download, ChevronDown, Info, AlertTriangle, Zap,
   ArrowRight, RefreshCw, Shield, TrendingUp, Clock, Copy, Check, Crown, User, Star, Database, Lock, Eye
 } from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Cell, ReferenceLine,
+} from "recharts";
 import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
 
-// ─── Tokens ────────────────────────────────────────────────────────────────────
 const C = {
   indigo: "#5B3DF6", indigoLight: "rgba(91,61,246,0.07)", indigoMid: "rgba(91,61,246,0.14)",
   indigoBorder: "rgba(91,61,246,0.18)", indigoTrack: "rgba(91,61,246,0.15)",
@@ -22,6 +25,21 @@ const C = {
   navy: "#1B1E2B", offWhite: "#FAFAFC", white: "#FFFFFF",
   muted: "#717182", border: "rgba(0,0,0,0.07)", inputBg: "#F3F3F7",
   indigoDeep: "#4228D4", yellowGlow: "rgba(255,201,60,0.5)",
+};
+
+const TEAM_PALETTE = [
+  { bg: "#5B3DF6", light: "rgba(91,61,246,0.1)",  text: "#5B3DF6",  label: "Team Alpha" },
+  { bg: "#FF6B4A", light: "rgba(255,107,74,0.1)", text: "#C8441E",  label: "Team Beta" },
+  { bg: "#2ED47A", light: "rgba(46,212,122,0.1)", text: "#18A058",  label: "Team Gamma" },
+  { bg: "#FFC93C", light: "rgba(255,201,60,0.13)",text: "#9A6C00",  label: "Team Delta" },
+  { bg: "#FF4757", light: "rgba(255,71,87,0.1)",  text: "#CC2030",  label: "Team Epsilon" },
+  { bg: "#5BC8F6", light: "rgba(91,200,246,0.13)",text: "#076E9A",  label: "Team Zeta" },
+];
+
+const PERF_STYLE = {
+  High:   { bg: C.greenLight,  text: "#18A058", border: C.greenBorder,          dot: "#2ED47A" },
+  Medium: { bg: C.yellowLight, text: "#9A6C00", border: C.yellowBorder,         dot: "#FFC93C" },
+  Low:    { bg: C.redLight,    text: "#CC2030", border: "rgba(255,71,87,0.22)", dot: "#FF4757" },
 };
 
 interface Student {
@@ -42,6 +60,12 @@ interface QuestionItem {
 const AVATAR_COLORS = ["#5B3DF6","#FF6B4A","#FFC93C","#2ED47A","#FF4757","#5BC8F6","#B06EF6","#FF9F40","#E040FB","#00BCD4"];
 const CAPACITY = 12;
 
+const MODES = [
+  { id: "individual", label: "Individual", emoji: "⚡", desc: "Go solo and climb the leaderboard on your own skills." },
+  { id: "team", label: "Team Battle", emoji: "🛡️", desc: "Join forces! Balanced teams compete for collective glory." },
+  { id: "royale", label: "Battle Royale", emoji: "👑", desc: "One question eliminates the weakest. Pure survival mode." },
+];
+
 function shuffleArray<T>(array: T[]): T[] {
   const arr = [...array];
   for (let i = arr.length - 1; i > 0; i--) {
@@ -49,6 +73,41 @@ function shuffleArray<T>(array: T[]): T[] {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
+}
+
+function assignTeams(students: Omit<Student,"team">[], teamSize: number, adaptive: boolean): Student[] {
+  if (!students || students.length === 0) return [];
+  if (!adaptive) {
+    return students.map((s, i) => ({ ...s, team: i % Math.ceil(students.length / teamSize) }));
+  }
+  const numTeams = Math.ceil(students.length / teamSize);
+  const sorted = [...students].sort((a, b) => b.score - a.score);
+  const teams: number[] = Array(students.length).fill(0);
+  const idxMap = new Map(sorted.map((s, i) => [s.id, i]));
+  sorted.forEach((s, i) => { teams[i] = i % numTeams; });
+  return students.map(s => ({ ...s, team: teams[idxMap.get(s.id)!] }));
+}
+
+function computeTeamStats(students: Student[], numTeams: number) {
+  return Array.from({ length: numTeams }, (_, t) => {
+    const members = students.filter(s => s.team === t);
+    const avg = members.length ? Math.round(members.reduce((a, s) => a + s.score, 0) / members.length) : 0;
+    return { team: t, name: TEAM_PALETTE[t]?.label ?? `Team ${t+1}`, avg, count: members.length };
+  }).filter(t => t.count > 0);
+}
+
+function fairnessScore(teamStats: ReturnType<typeof computeTeamStats>) {
+  if (!teamStats.length) return { score: 100, label: "Balanced", verdict: "balanced" as const };
+  const avgs = teamStats.map(t => t.avg);
+  const mean = avgs.reduce((a, b) => a + b, 0) / avgs.length;
+  const variance = avgs.reduce((a, b) => a + (b - mean) ** 2, 0) / avgs.length;
+  const stddev = Math.sqrt(variance);
+  const score = Math.max(0, Math.round(100 - stddev * 1.5));
+  return {
+    score,
+    label: score >= 80 ? "Balanced" : score >= 65 ? "Needs Review" : "Unbalanced",
+    verdict: (score >= 80 ? "balanced" : score >= 65 ? "review" : "unbalanced") as "balanced"|"review"|"unbalanced",
+  };
 }
 
 function ToggleSwitch({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
@@ -63,6 +122,43 @@ function ToggleSwitch({ on, onChange, disabled }: { on: boolean; onChange: (v: b
         boxShadow: "0 1px 4px rgba(0,0,0,0.2)", transition: "left 0.2s",
       }} />
     </button>
+  );
+}
+
+function FairnessSlider({ value, onChange, disabled }: { value: number; onChange: (v: number) => void; disabled?: boolean }) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const pct = ((value - 1) / 9) * 100;
+
+  function handlePointer(e: React.PointerEvent) {
+    if (disabled || !trackRef.current) return;
+    const rect = trackRef.current.getBoundingClientRect();
+    const raw = ((e.clientX - rect.left) / rect.width) * 9 + 1;
+    onChange(Math.max(1, Math.min(10, Math.round(raw))));
+  }
+
+  const getLabel = (v: number) => v <= 3 ? "Strict" : v <= 7 ? "Balanced" : "Lenient";
+  const getColor = (v: number) => v <= 3 ? C.green : v <= 7 ? C.indigo : C.coral;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, opacity: disabled ? 0.6 : 1, pointerEvents: disabled ? "none" : "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Fairness Tolerance</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ background: C.indigoMid, color: C.indigo, borderRadius: 8, padding: "3px 10px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800 }}>{value}</span>
+          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: getColor(value) }}>{getLabel(value)}</span>
+        </div>
+      </div>
+      <div ref={trackRef} onPointerDown={handlePointer} onPointerMove={e => { if (e.buttons) handlePointer(e); }}
+        style={{ height: 8, borderRadius: 50, background: C.inputBg, position: "relative", cursor: "pointer" }}>
+        <div style={{ position: "absolute", left: 0, top: 0, height: "100%", borderRadius: 50, width: `${pct}%`, background: `linear-gradient(90deg, ${C.green}, ${C.indigo} 55%, ${C.coral})`, transition: "width 0.1s" }} />
+        <div style={{ position: "absolute", top: "50%", left: `${pct}%`, transform: "translate(-50%, -50%)", width: 20, height: 20, borderRadius: "50%", background: C.white, border: `3px solid ${C.indigo}`, boxShadow: "0 2px 8px rgba(91,61,246,0.35)", transition: "left 0.1s", zIndex: 2 }} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        {["1","2","3","4","5","6","7","8","9","10"].map((n) => (
+          <span key={n} style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: Number(n) === value ? C.indigo : C.muted, lineHeight: 1, cursor: "pointer" }} onClick={() => onChange(Number(n))}>{n}</span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -97,59 +193,41 @@ function Dropdown({ value, options, onChange, width, disabled }:
   );
 }
 
-// ─── Student Avatar Chips ─────────────────
-function PlayerChip({ player, animate }: { player: Student; animate?: boolean }) {
+function FairnessRing({ score, verdict }: { score: number; verdict: "balanced"|"review"|"unbalanced" }) {
+  const r = 52, circ = 2 * Math.PI * r;
+  const fill = (score / 100) * circ;
+  const color = verdict === "balanced" ? C.green : verdict === "review" ? C.yellow : C.coral;
+  const bgColor = verdict === "balanced" ? C.greenLight : verdict === "review" ? C.yellowLight : C.coralLight;
+  const label = verdict === "balanced" ? "Balanced" : verdict === "review" ? "Needs Review" : "Unbalanced";
+  const Icon = verdict === "balanced" ? Shield : AlertTriangle;
+
   return (
-    <div style={{
-      display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-      animation: animate ? "popIn 0.35s cubic-bezier(0.34,1.56,0.64,1)" : undefined
-    }}>
-      <div style={{ position: "relative" }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: "50%",
-          background: `linear-gradient(145deg, ${player.avatarColor}, ${player.avatarColor}cc)`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontFamily: "Fredoka, sans-serif", fontSize: 20, fontWeight: 700, color: "#fff",
-          boxShadow: player.isReady
-            ? `0 0 0 3px ${C.green}, 0 4px 16px ${player.avatarColor}55`
-            : `0 0 0 3px rgba(255,255,255,0.15), 0 4px 12px rgba(0,0,0,0.3)`,
-          transition: "box-shadow 0.3s",
-        }}>
-          {player.initials}
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+      <div style={{ position: "relative", width: 140, height: 140 }}>
+        <svg width="140" height="140" viewBox="0 0 140 140" style={{ transform: "rotate(-90deg)" }}>
+          <circle cx="70" cy="70" r={r} fill="none" stroke={C.inputBg} strokeWidth="10" />
+          <circle cx="70" cy="70" r={r} fill="none" stroke={color} strokeWidth="10" strokeLinecap="round" strokeDasharray={`${fill} ${circ}`} />
+        </svg>
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
+          <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 34, fontWeight: 700, color: C.navy, lineHeight: 1 }}>{score}</span>
+          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>/ 100</span>
         </div>
-        {player.isHost && (
-          <div style={{ position: "absolute", top: -8, left: "50%", transform: "translateX(-50%)" }}>
-            <Crown size={16} fill={C.yellow} color={C.yellow} />
-          </div>
-        )}
-        <div style={{
-          position: "absolute", bottom: 1, right: 1, width: 14, height: 14,
-          borderRadius: "50%", background: player.isReady ? C.green : "rgba(255,255,255,0.2)",
-          border: "2px solid #1B1E2B", transition: "background 0.3s"
-        }} />
       </div>
-      <span style={{
-        fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-        color: "rgba(255,255,255,0.75)", textAlign: "center", maxWidth: 68,
-        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
-      }}>
-        {player.name}
-      </span>
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 7, background: bgColor, border: `2px solid ${color}`, borderRadius: 20, padding: "7px 16px" }}>
+        <Icon size={14} color={color} strokeWidth={2.5} />
+        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800, color }}>{label}</span>
+      </div>
     </div>
   );
 }
 
-function EmptySlot() {
+function CustomTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  const t = payload[0];
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-      <div style={{
-        width: 64, height: 64, borderRadius: "50%",
-        border: "2px dashed rgba(255,255,255,0.12)", display: "flex",
-        alignItems: "center", justifyContent: "center"
-      }}>
-        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 20, color: "rgba(255,255,255,0.1)", fontWeight: 700 }}>+</span>
-      </div>
-      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.18)" }}>waiting…</span>
+    <div style={{ background: C.navy, borderRadius: 12, padding: "10px 14px", boxShadow: "0 8px 24px rgba(0,0,0,0.2)" }}>
+      <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: "#fff", margin: "0 0 3px" }}>{label}</p>
+      <p style={{ fontFamily: "Fredoka, sans-serif", fontSize: 20, fontWeight: 700, color: t.fill, margin: 0 }}>{t.value}%</p>
     </div>
   );
 }
@@ -159,6 +237,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const supabase = createBrowserSupabaseClient();
   const [sectionsList, setSectionsList] = useState<{ id: string; name: string }[]>([]);
   const [selectedSection, setSelectedSection] = useState<{ id: string; name: string }>({ id: '', name: 'Loading...' });
+  const [rawStudents, setRawStudents] = useState<Omit<Student, "team">[]>([]);
   
   const [questionBanks, setQuestionBanks] = useState<{ id: string; name: string }[]>([]);
   const [selectedBank, setSelectedBank] = useState<{ id: string; name: string }>({ id: '', name: 'Select Question Bank...' });
@@ -167,30 +246,30 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [deadline, setDeadline] = useState('');
   const [adaptive, setAdaptive] = useState(true);
   const [teamSize, setTeamSize] = useState(3);
+  const [tolerance, setTolerance] = useState(5);
   const [previewed, setPreviewed] = useState(false);
   
   const [inLobby, setInLobby] = useState(false);
   const [activeSessionExists, setActiveSessionExists] = useState(false);
   const [roomCode, setRoomCode] = useState(() => Math.random().toString(36).substring(2, 8).toUpperCase());
-  
-  // Starting the professor grid empty, no mock players!
-  const [joinedStudents, setJoinedStudents] = useState<Student[]>([]);
-  
+  const [selectedMode, setSelectedMode] = useState("team");
+  const [lobbyPlayers, setLobbyPlayers] = useState<Student[]>([]);
   const [copied, setCopied] = useState(false);
   const [battleStarted, setBattleStarted] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [timeRemaining, setTimeRemaining] = useState(60);
   const [liveFeed, setLiveFeed] = useState<any[]>([]);
 
+  // Randomized Question State for Active Session
   const [randomizedQuestions, setRandomizedQuestions] = useState<QuestionItem[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Check Supabase on mount if an active live session already exists and restore room_code
+  // Check Supabase on mount if an active live session already exists
   useEffect(() => {
     const checkActiveSession = async () => {
       const { data } = await supabase
         .from('quiz_sessions')
-        .select('id, section_id, status, is_live, room_code') 
+        .select('id, section_id, status, is_live')
         .eq('status', 'ACTIVE')
         .eq('is_live', true)
         .limit(1);
@@ -198,15 +277,39 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       if (data && data.length > 0) {
         setActiveSessionExists(true);
         setInLobby(true);
-        setBattleStarted(false); 
-
-        if (data[0].room_code) {
-          setRoomCode(data[0].room_code);
-        }
       }
     };
     checkActiveSession();
   }, [supabase]);
+
+  // Network Shield & History Trap
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (inLobby) {
+        e.preventDefault();
+        e.returnValue = "Live WebSocket session is active. Session locked until quiz is ended!";
+        return e.returnValue;
+      }
+    };
+
+    const handlePopState = (e: PopStateEvent) => {
+      if (inLobby) {
+        window.history.pushState(null, "", window.location.href);
+        toast.error("Action blocked! End the active session before navigating away.");
+      }
+    };
+
+    if (inLobby) {
+      window.history.pushState(null, "", window.location.href);
+      window.addEventListener("popstate", handlePopState);
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [inLobby]);
 
   // Load Sections and Question Banks from API
   useEffect(() => {
@@ -243,7 +346,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     fetchSectionsAndBanks();
   }, [professorId, supabase]);
 
-  // Load and randomize ALL available questions for the selected bank/topic
+  // Fetch Questions for the chosen Bank and randomize them upon lobby start
   useEffect(() => {
     async function loadAndRandomizeQuestions() {
       try {
@@ -269,13 +372,14 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
               return { ...q, choices: parsedChoices };
             });
 
-      
+            // Filter strictly by chosen bank/topic
             const filtered = selectedBank.name && selectedBank.name !== 'Select Question Bank...'
-              ? formatted.filter((q: QuestionItem) => q.topic?.trim().toLowerCase() === selectedBank.name.trim().toLowerCase())
+              ? formatted.filter((q: QuestionItem) => q.topic?.toLowerCase() === selectedBank.name.toLowerCase() || selectedBank.name.includes(q.topic || ''))
               : formatted;
 
             const targetQuestions = filtered.length > 0 ? filtered : formatted;
 
+            // Fisher-Yates shuffle for questions and individual choices
             const shuffled = shuffleArray(targetQuestions);
             const fullyRandomized = shuffled.map((q: QuestionItem) => ({
               ...q,
@@ -289,106 +393,97 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
         console.error("Error loading randomized questions for session:", err);
       }
     }
-    loadAndRandomizeQuestions();
-  }, [selectedBank]);
+    if (inLobby) {
+      loadAndRandomizeQuestions();
+    }
+  }, [inLobby, selectedBank]);
 
-  // WebSocket Connection Handler with Live Joined Profile Sync
+  useEffect(() => {
+    if (!selectedSection.id || selectedSection.id === 'none') return;
+    const fetchStudents = async () => {
+      const { data } = await supabase
+        .from('section_students')
+        .select(`profiles:student_id (user_id, username)`)
+        .eq('section_id', selectedSection.id);
+
+      if (data) {
+        const mapped = data.map((item: any, idx: number) => {
+          const profile = item.profiles;
+          const score = Math.floor(Math.random() * 50) + 50; 
+          const perfLevel = score >= 85 ? "High" : score >= 65 ? "Medium" : "Low";
+          const initials = profile?.username ? profile.username.substring(0, 2).toUpperCase() : `S${idx}`;
+
+          return {
+            id: profile?.user_id || `s-${idx}`,
+            name: profile?.username || `Student ${idx + 1}`,
+            initials,
+            perfLevel: perfLevel as "High" | "Medium" | "Low",
+            score,
+            avatarColor: AVATAR_COLORS[idx % AVATAR_COLORS.length],
+            isReady: true,
+            isHost: idx === 0
+          };
+        });
+        setRawStudents(mapped);
+      }
+    };
+    fetchStudents();
+  }, [selectedSection, supabase]);
+
+  const students: Student[] = assignTeams(rawStudents, teamSize, adaptive);
+  const numTeams = Math.ceil((rawStudents.length || 1) / teamSize);
+  const teamStats = computeTeamStats(students, numTeams);
+  const { score, verdict } = fairnessScore(teamStats);
+  const mean = teamStats.reduce((a, t) => a + t.avg, 0) / (teamStats.length || 1);
+
+  // WebSocket Connection Handler for Synchronized Multiplayer State
   useEffect(() => {
     if (!inLobby) return;
-    
-    let ws: WebSocket | null = null;
-    let isMounted = true;
+    const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
 
-    function connectWs() {
-      if (!isMounted) return;
-      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
-      ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        ws?.send(JSON.stringify({
-          type: 'JOIN_BATTLE',
-          battleId: selectedSection.id,
-          totalQuestions: randomizedQuestions.length || 37,
-          timeLimit: 60,
-          sender: 'Professor'
-        }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED') {
-            if (typeof data.currentIndex === 'number') {
-              setCurrentIndex(data.currentIndex);
-            }
-            if (data.history) setLiveFeed(data.history);
-          } 
-          else if (data.type === 'BATTLE_ACTION') {
-            // ALWAYS log the feed message
-            setLiveFeed(prev => [data, ...prev]);
-            
-            // IF IT IS A JOIN EVENT -> Add to Avatar Grid
-            if (data.isJoinEvent || (data.message && data.message.includes('joined'))) {
-              if (data.sender && data.sender !== 'Professor') {
-                setJoinedStudents(prev => {
-                  const uniqueId = data.userId || data.sender;
-                  // Strict duplicate check
-                  if (prev.some(s => s.id === uniqueId || s.name === data.sender)) return prev;
-                  
-                  return [...prev, {
-                    id: uniqueId,
-                    name: data.sender,
-                    initials: data.sender.substring(0, 2).toUpperCase(),
-                    perfLevel: 'Medium',
-                    score: 0,
-                    team: 0,
-                    avatarColor: AVATAR_COLORS[prev.length % AVATAR_COLORS.length],
-                    isReady: true
-                  }];
-                });
-              }
-            } 
-            // IF IT IS AN ANSWER SCORE EVENT -> Update Rankings
-            else if (data.userId && data.scoreIncrement !== undefined) {
-              setJoinedStudents(prev => prev.map(p => p.id === data.userId ? { ...p, score: p.score + data.scoreIncrement } : p));
-            }
-          }
-        } catch (err) {
-          console.error("WS message parse error:", err);
-        }
-      };
-
-      ws.onclose = () => {
-        if (isMounted && inLobby) {
-          setTimeout(connectWs, 2000);
-        }
-      };
-    }
-
-    connectWs();
-
-    return () => {
-      isMounted = false;
-      if (ws) ws.close();
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        type: 'JOIN_BATTLE',
+        battleId: selectedSection.id,
+        totalQuestions: randomizedQuestions.length || 10,
+        timeLimit: 60,
+        sender: 'Professor'
+      }));
     };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED') {
+          if (typeof data.currentIndex === 'number') {
+            setCurrentIndex(data.currentIndex);
+          }
+          if (data.status === 'active') setBattleStarted(true);
+          if (data.history) setLiveFeed(data.history);
+        } else if (data.type === 'BATTLE_ACTION') {
+          setLiveFeed(prev => [data, ...prev]);
+          if (data.userId && data.scoreIncrement) {
+            setLobbyPlayers(prev => prev.map(p => p.id === data.userId ? { ...p, score: p.score + data.scoreIncrement } : p));
+          }
+        }
+      } catch (err) {
+        console.error("WS message parse error:", err);
+      }
+    };
+
+    return () => ws.close();
   }, [inLobby, selectedSection.id, randomizedQuestions.length]);
 
   useEffect(() => {
     if (!battleStarted) return;
     const timer = setInterval(() => {
-      setTimeRemaining(prev => {
-        if (prev <= 1) {
-          handleNextQuestion();
-          return 60; 
-        }
-        return prev - 1;
-      });
+      setTimeRemaining(prev => (prev > 0 ? prev - 1 : 0));
     }, 1000);
     return () => clearInterval(timer);
-  }, [battleStarted, currentIndex, randomizedQuestions.length]);
-   
+  }, [battleStarted, currentIndex]);
+
   async function handleConfirmAndDeploy() {
     if (activeSessionExists) {
       return toast.error("A live quiz session is currently active. You must end it before deploying a new one.");
@@ -401,7 +496,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       .from('quiz_sessions')
       .insert([{
         section_id: selectedSection.id,
-        room_code: roomCode, 
         is_live: isLive,
         status: isLive ? 'ACTIVE' : 'PENDING',
         deadline: isLive ? null : deadline || null
@@ -414,24 +508,21 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
 
     if (isLive) {
       setActiveSessionExists(true);
+      setLobbyPlayers(students);
       setInLobby(true);
-      setJoinedStudents([]); // clear old state on new launch
       toast.success(`Live Match Session initialized using bank: ${selectedBank.name}! Session Locked.`);
     } else {
       toast.success("Own-pace session successfully deployed!");
     }
   }
 
-const handleStartBattle = () => {
+  const handleStartBattle = () => {
     setBattleStarted(true);
-    setCurrentIndex(0);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'PROF_START_BATTLE',
         battleId: selectedSection.id,
-        bankId: selectedBank.id,
-        forceReset: true,
-        questions: randomizedQuestions 
+        bankId: selectedBank.id
       }));
     }
   };
@@ -475,25 +566,25 @@ const handleStartBattle = () => {
       setInLobby(false);
       setActiveSessionExists(false);
       setBattleStarted(false);
-      setJoinedStudents([]);
       setCurrentIndex(0);
       toast.success("Live session ended successfully. Configuration unlocked.");
     }
   };
 
-  const sortedRankings = [...joinedStudents].sort((a, b) => b.score - a.score);
+  const sortedRankings = [...lobbyPlayers].sort((a, b) => b.score - a.score);
   const currentActiveQuestion = randomizedQuestions[currentIndex];
   const totalQCount = randomizedQuestions.length > 0 ? randomizedQuestions.length : 1;
 
+  // Fully Synchronized Active Session View with Inspection Card
   if (inLobby) {
     return (
       <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", background: C.navy, overflow: "hidden" }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflowY: "auto", padding: 32, color: "#fff" }}>
           
           <div style={{ background: "rgba(255,71,87,0.2)", border: "1px solid rgba(255,71,87,0.4)", borderRadius: 12, padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-            <span style={{ fontSize: 12, fontFamily: "Manrope, sans-serif", color: C.yellow, fontWeight: 700 }}>🔒 STRICT SESSION LOCK: Redis & WebSocket state auto-synced across clients.</span>
+            <span style={{ fontSize: 12, fontFamily: "Manrope, sans-serif", color: C.yellow, fontWeight: 700 }}>🔒 STRICT SESSION LOCK: Redis & WebSocket state auto-synced. Navigation is locked until session completion.</span>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Bank: {selectedBank.name} ({randomizedQuestions.length} Total Loaded)</span>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Bank: {selectedBank.name} ({randomizedQuestions.length} Questions)</span>
               <button type="button" onClick={handleEndSession} style={{ background: C.red, border: "none", borderRadius: 8, padding: "5px 12px", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                 End Session & Unlock
               </button>
@@ -502,11 +593,6 @@ const handleStartBattle = () => {
 
           {!battleStarted ? (
             <div style={{ maxWidth: 900, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 24 }}>
-              <style>{`
-                @keyframes popIn { 0%{opacity:0;transform:scale(0.4)} 100%{opacity:1;transform:scale(1)} }
-                @keyframes dotPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.35;transform:scale(0.75)} }
-              `}</style>
-
               <div style={{ textAlign: "center" }}>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,201,60,0.15)", border: "1.5px solid rgba(255,201,60,0.3)", borderRadius: 20, padding: "5px 16px", marginBottom: 12 }}>
                   <Zap size={13} fill={C.yellow} color="transparent" />
@@ -515,9 +601,8 @@ const handleStartBattle = () => {
                 <h1 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 42, fontWeight: 700, margin: 0 }}>{selectedSection.name} - Waiting Room</h1>
               </div>
 
-              {/* Room Code Card */}
               <div style={{ background: "rgba(255,255,255,0.05)", border: "1.5px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "22px 24px" }}>
-                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.45)", textAlign: "center", textTransform: "uppercase", marginBottom: 10, letterSpacing: "0.1em" }}>External Student Room Code</p>
+                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.45)", textAlign: "center", textTransform: "uppercase", marginBottom: 10 }}>External Student Room Code</p>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
                   <div style={{ background: "rgba(255,255,255,0.06)", border: "2px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: "10px 24px" }}>
                     <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 36, fontWeight: 700, color: C.yellow, letterSpacing: "0.15em" }}>{roomCode}</span>
@@ -525,39 +610,6 @@ const handleStartBattle = () => {
                   <button type="button" onClick={() => { navigator.clipboard.writeText(roomCode); setCopied(true); setTimeout(() => setCopied(false), 2000); }} style={{ width: 48, height: 48, borderRadius: 14, background: copied ? "rgba(46,212,122,0.2)" : "rgba(255,255,255,0.08)", border: `2px solid ${copied ? C.green : "rgba(255,255,255,0.12)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: copied ? C.green : "#fff" }}>
                     {copied ? <Check size={18} /> : <Copy size={18} />}
                   </button>
-                </div>
-              </div>
-
-              {/* Joined Student Profiles Grid */}
-              <div style={{ width: "100%" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <Users size={14} color="rgba(255,255,255,0.5)" strokeWidth={2} />
-                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                      Joined Participants ({joinedStudents.length}/{CAPACITY})
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.yellow, animation: "dotPulse 1.2s ease-in-out infinite" }} />
-                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.4)" }}>
-                      Waiting for students to join…
-                    </span>
-                  </div>
-                </div>
-
-                <div style={{ background: "rgba(255,255,255,0.04)", border: "1.5px solid rgba(255,255,255,0.08)", borderRadius: 22, padding: "22px 18px" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: "18px 12px" }}>
-                    {joinedStudents.map((student) => (
-                      <PlayerChip
-                        key={student.id}
-                        player={student}
-                        animate={true}
-                      />
-                    ))}
-                    {Array.from({ length: Math.max(0, CAPACITY - joinedStudents.length) }).map((_, i) => (
-                      <EmptySlot key={`empty-${i}`} />
-                    ))}
-                  </div>
                 </div>
               </div>
 
@@ -569,7 +621,7 @@ const handleStartBattle = () => {
             <div style={{ maxWidth: 1000, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.05)", padding: "20px 24px", borderRadius: 20, border: "1px solid rgba(255,255,255,0.1)" }}>
                 <div>
-                  <p style={{ color: C.yellow, fontSize: 12, textTransform: "uppercase", fontWeight: 700, margin: 0 }}>Active Bank: {selectedBank.name}</p>
+                  <p style={{ color: C.yellow, fontSize: 12, textTransform: "uppercase", fontWeight: 700, margin: 0 }}>Live Session Active · Bank: {selectedBank.name}</p>
                   <h2 style={{ color: "#fff", fontSize: 26, fontFamily: "Fredoka, sans-serif", margin: "4px 0 0" }}>Question {currentIndex + 1} of {totalQCount}</h2>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
@@ -583,12 +635,12 @@ const handleStartBattle = () => {
                 </div>
               </div>
 
-              {/* LIVE INSPECTION CARD WITH FULL DATABASE QUESTION & CHOICES */}
+              {/* ACTIVE INSPECTION CARD FOR TESTING PURPOSES */}
               <div style={{ background: "rgba(91,61,246,0.15)", border: `2px solid ${C.indigo}`, borderRadius: 20, padding: "24px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
                   <Eye size={18} color={C.yellow} />
                   <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800, color: C.yellow, textTransform: "uppercase" }}>
-                    Professor Testing Panel (Synchronized Live Item)
+                    Professor Testing Panel (Synced Live Question)
                   </span>
                 </div>
 
@@ -671,6 +723,7 @@ const handleStartBattle = () => {
     );
   }
 
+  // Normal Matchmaking Config Render
   return (
     <div style={{ display: "flex", height: "100vh", background: C.offWhite, overflow: "hidden", position: "relative" }}>
       {activeSessionExists && (

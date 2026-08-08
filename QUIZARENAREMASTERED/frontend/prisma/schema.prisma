@@ -35,7 +35,7 @@ model SyllabusDoc {
 
 model GeneratedQuestion {
   id              Int            @id @default(autoincrement())
-  userId          String         @db.Uuid // <-- ADDED @db.Uuid
+  userId          String         @db.Uuid
   docId           Int?
   doc             SyllabusDoc?   @relation(fields: [docId], references: [id], onDelete: SetNull)
   text            String
@@ -46,6 +46,8 @@ model GeneratedQuestion {
   choices         Json
   citation        Json?
   status          QuestionStatus @default(PENDING)
+  timeLimit       Int            @default(60)
+  testCases       Json?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @default(now()) @updatedAt
   profiles        profiles?      @relation(fields: [profilesUser_id], references: [user_id])
@@ -54,6 +56,15 @@ model GeneratedQuestion {
   @@schema("public")
 }
 
+model documents {
+  id        String                 @id @db.Uuid 
+  content   String?
+  metadata  Json?
+  embedding Unsupported("vector")?
+
+  @@ignore
+  @@schema("public")
+}
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model audit_log_entries {

@@ -41,7 +41,7 @@ if (error || !user) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
-    // 3. Create document record in Supabase with userId
+  
     const docRecord = await prisma.syllabusDoc.create({
       data: {
         userId: userId,
@@ -49,7 +49,6 @@ if (error || !user) {
       },
     });
 
-    // 4. Send to FastAPI for parsing
     const pythonFormData = new FormData();
     pythonFormData.append("file", file);
     pythonFormData.append("docId", String(docRecord.id));
@@ -68,7 +67,6 @@ if (error || !user) {
 
     const pyData = await pyRes.json();
 
-    // 5. Update document with extracted chunks (REMOVED status: "ready")
     const updatedDoc = await prisma.syllabusDoc.update({
       where: { id: docRecord.id },
       data: {

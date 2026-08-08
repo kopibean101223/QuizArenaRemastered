@@ -51,6 +51,7 @@ class LiveBattleHandler {
     const hKey = historyKey(battleId);
 
     // ── ACTION A: JOIN A SPECIFIC BATTLE ROOM & SYNC STATE ──
+    // ── ACTION A: JOIN A SPECIFIC BATTLE ROOM & SYNC STATE ──
     if (type === 'JOIN_BATTLE') {
       if (!this.activeRooms.has(battleId)) {
         this.activeRooms.set(battleId, new Set());
@@ -65,17 +66,18 @@ class LiveBattleHandler {
 
       let roomState = await redisPublisher.hgetall(sKey);
 
-      if (!roomState || !roomState.currentIndex || roomState.status === 'completed') {
+      // 🔥 FIX: If the room was completed OR if this is a fresh initialization, force a reset to 0
+      if (!roomState || !roomState.currentIndex || roomState.status === 'completed' || payload.forceReset) {
         roomState = {
           currentIndex: '0',
           startedAt: String(Date.now()),
           status: 'active',
-          totalQuestions: String(totalQuestions || 0),
-          timeLimit: String(timeLimit || 15),
+          totalQuestions: String(totalQuestions || 10),
+          timeLimit: String(timeLimit || 60),
         };
         await redisPublisher.hset(sKey, roomState);
         await redisPublisher.persist(sKey).catch(() => {});
-        await redisPublisher.del(hKey);
+        await redisPublisher.del(hKey); // Clear old chat/action history
       }
 
       const history = await redisPublisher.lrange(hKey, 0, -1);
@@ -86,7 +88,7 @@ class LiveBattleHandler {
           battleId,
           currentIndex: parseInt(roomState.currentIndex, 10),
           startedAt: parseInt(roomState.startedAt, 10),
-          timeLimit: parseInt(roomState.timeLimit || '15', 10),
+          timeLimit: parseInt(roomState.timeLimit || '60', 10),
           status: roomState.status || 'active',
           history: history.map((item) => JSON.parse(item)),
         })
@@ -96,6 +98,45 @@ class LiveBattleHandler {
       return;
     }
 
+ 
+  
+   // ── ACTION: PROFESSOR STARTS THE BATTLE ──
+    if (type === 'PROF_START_BATTLE') {
+      const startedAt = Date.now();
+      
+      if (payload.forceReset) {
+        await redisPublisher.hset(sKey, {
+          currentIndex: '0',
+          status: 'active',
+          startedAt: String(startedAt)
+        });
+        await redisPublisher.del(hKey);
+      }
+
+
+      if (payload.questions && Array.isArray(payload.questions)) {
+        await redisPublisher.set(`battle:${battleId}:questions`, JSON.stringify(payload.questions));
+      }
+
+      // Fetch stored questions to guarantee propagation
+      const rawQuestions = await redisPublisher.get(`battle:${battleId}:questions`);
+      const parsedQuestions = rawQuestions ? JSON.parse(rawQuestions) : [];
+
+ 
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({ 
+          type: 'PROF_START_BATTLE', 
+          battleId,
+          currentIndex: 0,
+          startedAt,
+          questions: parsedQuestions 
+        })
+      );
+      
+      console.log(`Professor started Battle Room ${battleId} with ${parsedQuestions.length} synchronized questions.`);
+      return;
+    }
     // ── ACTION B: ADVANCE QUESTION INDEX ──
     if (type === 'ADVANCE_QUESTION') {
       const nextIndex = await redisPublisher.hincrby(sKey, 'currentIndex', 1);

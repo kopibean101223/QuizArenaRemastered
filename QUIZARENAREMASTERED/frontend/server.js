@@ -1,14 +1,21 @@
+
 const { WebSocketServer } = require('ws');
+
 const Redis = require('ioredis');
 
 const liveBattleHandler = require('./handlers/LiveBattle');
-const selfPacedBattleHandler = require('./handlers/SelfPacedBattle');
+const selfPacedBattleHandler = require('./handlers/OwnPace');
 
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocketServer({ port: PORT });
+const redisConfig = process.env.REDIS_URL 
+  ? process.env.REDIS_URL 
+  : { host: process.env.REDIS_HOST || '127.0.0.1', port: process.env.REDIS_PORT || 6379 };
 
-const redisPublisher = new Redis({ host: process.env.REDIS_HOST || '127.0.0.1', port: process.env.REDIS_PORT || 6379 });
-const redisSubscriber = new Redis({ host: process.env.REDIS_HOST || '127.0.0.1', port: process.env.REDIS_PORT || 6379 });
+const redisPublisher = new Redis(redisConfig);
+const redisSubscriber = new Redis(redisConfig);
+//const redisPublisher = new Redis({ host: process.env.REDIS_HOST || '127.0.0.1', port: process.env.REDIS_PORT || 6379 });
+//const redisSubscriber = new Redis({ host: process.env.REDIS_HOST || '127.0.0.1', port: process.env.REDIS_PORT || 6379 });
 
 // Initialize subscriber listeners for both handlers
 liveBattleHandler.initSubscriber(redisSubscriber);
