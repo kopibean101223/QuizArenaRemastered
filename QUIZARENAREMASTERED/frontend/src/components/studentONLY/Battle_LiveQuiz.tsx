@@ -1,4 +1,3 @@
-//try live battle sync with prof
 'use client';
 
 import React, { useState, useEffect, useRef } from "react";
@@ -10,7 +9,7 @@ import {
 } from "lucide-react";
 
 import {
-  C, OPTION_COLORS, AVATAR_COLORS, REACTIONS, QuestionData,
+  C, OPTION_COLORS, AVATAR_COLORS, QuestionData,
   INIT_CHAT, Player, ChatMsg, Vote,
 } from "./LiveBattleCOMPONENTONLY/Constants";
 import { CountdownBar } from "./LiveBattleCOMPONENTONLY/CountdownBar";
@@ -33,8 +32,7 @@ export function LiveBattle({ battleId }: { battleId: string }) {
   const [myVote, setMyVote] = useState<number | null>(null);
   const [votes, setVotes] = useState<Vote[]>([]);
 
-  // 🔥 FIX: Start empty, NO MOCK PLAYERS
-  const [players, setPlayers] = useState<Player[]>([]); 
+  const [players, setPlayers] = useState<Player[]>([]);
   const [chat, setChat] = useState<ChatMsg[]>(INIT_CHAT);
   const [chatInput, setChatInput] = useState("");
   const [mode, setMode] = useState<"solo" | "discussion">("discussion");
@@ -42,7 +40,8 @@ export function LiveBattle({ battleId }: { battleId: string }) {
   const [reactionBursts, setReactionBursts] = useState<{ id: number; emoji: string; x: number; y: number }[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const isLeader = players.find((p) => p.isMe)?.isLeader || false;
+  const studentName = user?.username || user?.user_metadata?.full_name || user?.email?.split('@')[0] || "Student";
+  const currentUserId = user?.id || "local-me";
 
   const computeTimeLeft = (limit: number, startTs: number | null) => {
     if (!startTs) return limit;
@@ -50,58 +49,58 @@ export function LiveBattle({ battleId }: { battleId: string }) {
     return Math.max(limit - elapsedSeconds, 0);
   };
 
-
-  useEffect(() => {
-    async function loadSyncedQuestions() {
-      // 1. If questions are already loaded in state, do nothing
-      if (questions.length > 0) return;
-
+  // Helper to format incoming raw question objects into QuestionData format
+  const formatQuestions = (rawQuestions: any[]): QuestionData[] => {
+    return rawQuestions.map((q: any, idx: number) => {
+      let parsedChoices: string[] = [];
       try {
-        // 2. Fallback fetch to pull the exact same questions from the API if WS payload hasn't arrived
+        let rawChoices = q.choices || q.options;
+        if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
+        if (Array.isArray(rawChoices)) {
+          parsedChoices = rawChoices.map((c: any) => String(typeof c === 'object' && c !== null ? c.text || c.label || String(c) : c));
+        }
+      } catch (e) {
+        parsedChoices = [];
+      }
+      const correctIdx = parsedChoices.findIndex(c => c === q.answer);
+
+      return {
+        id: q.id || idx,
+        number: idx + 1,
+        total: rawQuestions.length,
+        subject: q.topic || q.subject || "General Knowledge",
+        text: q.text || q.question,
+        options: parsedChoices,
+        correct: correctIdx !== -1 ? correctIdx : (Number(q.correct) || 0),
+        points: Number(q.points) || 10,
+        timeLimit: Number(q.timeLimit) || 60
+      };
+    });
+  };
+
+  // 1. Fallback Questions Loader
+  useEffect(() => {
+    async function loadFallbackQuestions() {
+      if (questions.length > 0) return;
+      try {
         const res = await fetch('/api/questions');
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data) && data.length > 0) {
-            const formatted: QuestionData[] = data.map((q: any, idx: number) => {
-              let parsedChoices: string[] = [];
-              try {
-                let rawChoices = q.choices;
-                if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
-                if (Array.isArray(rawChoices)) {
-                  parsedChoices = rawChoices.map((c: any) => String(typeof c === 'object' && c !== null ? c.text || c.label || String(c) : c));
-                }
-              } catch (e) {
-                parsedChoices = [];
-              }
-              const correctIdx = parsedChoices.findIndex(c => c === q.answer);
-              return { 
-                id: q.id || idx, 
-                number: idx + 1, 
-                total: data.length, 
-                subject: q.topic || "General Knowledge",
-                text: q.text, 
-                options: parsedChoices, 
-                correct: correctIdx !== -1 ? correctIdx : 0,
-                points: Number(q.points) || 10,
-                timeLimit: Number(q.timeLimit) || 60
-              };
-            });
-            setQuestions(formatted);
+            setQuestions(formatQuestions(data));
           }
         }
       } catch (err) {
         console.error("Failed to load fallback questions:", err);
       }
     }
-
-    loadSyncedQuestions();
+    loadFallbackQuestions();
   }, [questions.length]);
 
+  // 2. WebSocket Sync Connection
   useEffect(() => {
     let socket: WebSocket | null = null;
     let isMounted = true;
-
-    const studentName = user?.username || user?.user_metadata?.full_name || user?.email?.split('@')[0] || "Unknown Student";
 
     function connectWs() {
       if (!isMounted) return;
@@ -111,78 +110,102 @@ export function LiveBattle({ battleId }: { battleId: string }) {
 
       socket.onopen = () => {
         socket?.send(JSON.stringify({
-          type: "JOIN_BATTLE", battleId: battleId || "room_101", userId: user?.id, sender: studentName
+          type: "JOIN_BATTLE",
+          battleId: battleId || "room_101",
+          userId: currentUserId,
+          sender: studentName
         }));
-
-        setPlayers([{
-          id: user?.id || "local-me", name: studentName, initials: studentName.substring(0, 2).toUpperCase(),
-          color: AVATAR_COLORS[0], score: 0, streak: 0, isMe: true, isLeader: true 
-        }]);
       };
 
-     socket.onmessage = (event) => {
+      socket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-// 🔥 Synchronize questions strictly from the broadcasted deck
-          if (data.questions && Array.isArray(data.questions)) {
-            const formatted: QuestionData[] = data.questions.map((q: any, idx: number) => {
-              let parsedChoices: string[] = Array.isArray(q.choices) ? q.choices : [];
-              const correctIdx = parsedChoices.findIndex((c: string) => c === q.answer);
-              return { 
-                id: q.id || idx, 
-                number: idx + 1, 
-                total: data.questions.length, 
-                subject: q.topic || "General Knowledge",
-                text: q.text, 
-                options: parsedChoices, 
-                correct: correctIdx !== -1 ? correctIdx : 0,
-                points: Number(q.points) || 10,       
-                timeLimit: Number(q.timeLimit) || 60   
-              };
-            });
-            setQuestions(formatted);
+
+          // Extract questions from room sync or payload
+          const rawQuestions = data.questions || data.roomState?.questions || data.payload?.questions;
+          if (Array.isArray(rawQuestions) && rawQuestions.length > 0) {
+            setQuestions(formatQuestions(rawQuestions));
           }
 
-          if (data.type === "ROOM_STATE_SYNC" || data.type === "QUESTION_ADVANCED") {
+          // State synchronization events
+          if (data.type === "ROOM_STATE_SYNC" || data.type === "QUESTION_ADVANCED" || data.type === "PROF_START_BATTLE") {
             if (typeof data.currentIndex === "number") {
               setCurrentIndex(data.currentIndex);
             }
-            setStartedAt(data.startedAt || Date.now()); 
+            if (data.startedAt) {
+              setStartedAt(data.startedAt);
+            }
+          }
+
+          // Live Leaderboard / Score Sync
+          if (data.type === "SCORE_UPDATED" || data.type === "LEADERBOARD_UPDATE") {
+            if (Array.isArray(data.leaderboard)) {
+              const formattedPlayers: Player[] = data.leaderboard.map((item: any, idx: number) => ({
+                id: item.id || item.userId,
+                name: item.name || item.sender || `Player ${idx + 1}`,
+                initials: (item.name || "P").substring(0, 2).toUpperCase(),
+                color: AVATAR_COLORS[idx % AVATAR_COLORS.length],
+                score: item.score || 0,
+                streak: item.streak || 0,
+                isMe: (item.id || item.userId) === currentUserId,
+                isLeader: idx === 0
+              }));
+              setPlayers(formattedPlayers);
+            }
+          }
+
+          // Chat sync
+          if (data.type === "CHAT_MESSAGE" || (data.type === "BATTLE_ACTION" && data.message)) {
+            setChat((prev) => [
+              ...prev,
+              {
+                id: Date.now() + Math.random(),
+                player: data.sender || "Student",
+                initials: (data.sender || "ST").substring(0, 2).toUpperCase(),
+                color: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
+                text: data.message,
+                ts: "just now"
+              }
+            ]);
           }
 
           if (data.type === "QUIZ_COMPLETED") {
             navigate("results");
           }
         } catch (err) {
-          console.error("WS error:", err);
+          console.error("WS message parse error:", err);
         }
       };
 
-      socket.onclose = () => { if (isMounted) setTimeout(connectWs, 2000); };
+      socket.onclose = () => {
+        if (isMounted) setTimeout(connectWs, 2000);
+      };
     }
 
     connectWs();
-    return () => { isMounted = false; if (socket) socket.close(); socketRef.current = null; };
-  }, [battleId, user, navigate]);
+    return () => {
+      isMounted = false;
+      if (socket) socket.close();
+      socketRef.current = null;
+    };
+  }, [battleId, user, navigate, currentUserId, studentName]);
 
+  // Reset state on question change
   useEffect(() => {
     if (!currentQuestion) return;
     setSelected(null);
     setRevealed(false);
     setMyVote(null);
     setVotes([]);
-    
-    // 🔥 FIX: Safety catch in case websocket fires out of order
-    if (!startedAt) setStartedAt(Date.now());
   }, [currentIndex, currentQuestion]);
 
+  // Timer Countdown Effect
   useEffect(() => {
     if (!currentQuestion) return;
     const limit = currentQuestion.timeLimit || 60;
-    const activeStart = startedAt || Date.now(); // 🔥 FIX: Fallback applied to interval math
+    const activeStart = startedAt || Date.now();
 
     setTimeLeft(computeTimeLeft(limit, activeStart));
-
     if (revealed) return;
 
     const interval = setInterval(() => {
@@ -203,7 +226,7 @@ export function LiveBattle({ battleId }: { battleId: string }) {
   function handleSelect(i: number) {
     if (revealed || selected !== null) return;
     setSelected(i);
-    if (mode === "solo") setTimeout(() => processAnswer(i), 1200);
+    if (mode === "solo") setTimeout(() => processAnswer(i), 1000);
   }
 
   function handleVote(i: number) {
@@ -224,43 +247,54 @@ export function LiveBattle({ battleId }: { battleId: string }) {
   function processAnswer(userChoice: number) {
     setRevealed(true);
     const isCorrect = userChoice === currentQuestion?.correct;
-    
-    if (isCorrect) {
-      setPlayers((prev) => prev.map((p) => p.isMe ? { ...p, score: p.score + (currentQuestion.points || 10), streak: p.streak + 1 } : p));
-    } else {
-      setPlayers((prev) => prev.map((p) => p.isMe ? { ...p, streak: 0 } : p));
-    }
+    const scoreAdd = isCorrect ? (currentQuestion.points || 10) : 0;
 
+    // Update local state temporarily
+    setPlayers((prev) => {
+      if (prev.length === 0) {
+        return [{
+          id: currentUserId,
+          name: studentName,
+          initials: studentName.substring(0, 2).toUpperCase(),
+          color: AVATAR_COLORS[0],
+          score: scoreAdd,
+          streak: isCorrect ? 1 : 0,
+          isMe: true,
+          isLeader: true
+        }];
+      }
+      return prev.map((p) => p.isMe ? { ...p, score: p.score + scoreAdd, streak: isCorrect ? p.streak + 1 : 0 } : p);
+    });
+
+    // Send score to server so Redis & Supabase update
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
-        type: "BATTLE_ACTION", battleId: battleId || "room_101", userId: user?.id,
-        sender: user?.username || user?.user_metadata?.full_name || "Student",
-        scoreIncrement: isCorrect ? (currentQuestion.points || 10) : 0, message: `submitted an answer.`
+        type: "SUBMIT_SCORE",
+        battleId: battleId || "room_101",
+        playerData: {
+          id: currentUserId,
+          name: studentName,
+          score: (players.find(p => p.isMe)?.score || 0) + scoreAdd,
+          correctCount: isCorrect ? 1 : 0
+        }
       }));
-    }
-  }
-
-  function handleNextQuestion() {
-    const isLastQuestion = currentIndex >= questions.length - 1;
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: "ADVANCE_QUESTION", battleId: battleId || "room_101", isLastQuestion }));
-    } else if (!isLastQuestion) {
-      setCurrentIndex((prev) => prev + 1);
-      setStartedAt(Date.now());
-    } else {
-      navigate("results");
     }
   }
 
   function sendChat() {
     if (!chatInput.trim()) return;
+    const msgText = chatInput.trim();
+
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
-        type: "BATTLE_ACTION", battleId: battleId || "room_101", userId: user?.id,
-        sender: user?.username || user?.user_metadata?.full_name || "You", message: chatInput.trim(),
+        type: "CHAT_MESSAGE",
+        battleId: battleId || "room_101",
+        userId: currentUserId,
+        sender: studentName,
+        message: msgText,
       }));
     } else {
-      setChat((c) => [...c, { id: Date.now(), player: "You", initials: "ME", color: AVATAR_COLORS[0], text: chatInput.trim(), ts: "now" }]);
+      setChat((c) => [...c, { id: Date.now(), player: "You", initials: "ME", color: AVATAR_COLORS[0], text: msgText, ts: "now" }]);
     }
     setChatInput("");
   }
@@ -268,7 +302,13 @@ export function LiveBattle({ battleId }: { battleId: string }) {
   const totalVotes = votes.reduce((a, v) => a + v.count, 0);
   function voteFor(i: number) { const v = votes.find((x) => x.option === i); return totalVotes ? ((v?.count ?? 0) / totalVotes) * 100 : 0; }
 
-  if (!currentQuestion) return <div style={{ color: "white", padding: 40, textAlign: "center", minHeight: "100vh", background: C.navy, display: "flex", alignItems: "center", justifyContent: "center" }}>Waiting for Professor to initialize questions...</div>;
+  if (!currentQuestion) {
+    return (
+      <div style={{ color: "white", padding: 40, textAlign: "center", minHeight: "100vh", background: C.navy, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        Waiting for Professor to initialize questions...
+      </div>
+    );
+  }
 
   return (
     <>
@@ -305,11 +345,6 @@ export function LiveBattle({ battleId }: { battleId: string }) {
             <div style={{ display: "flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,0.06)", border: "1.5px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: "5px 12px" }}>
               <Star size={12} fill={C.yellow} color="transparent" />
               <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 14, fontWeight: 700, color: "#fff" }}>{currentQuestion.points || 10} pts</span>
-            </div>
-            <div style={{ display: "flex", background: "rgba(255,255,255,0.07)", borderRadius: 20, padding: "3px 4px", gap: 3 }}>
-              {(["solo", "discussion"] as const).map((v) => (
-                <button key={v} type="button" onClick={() => setMode(v)} style={{ background: mode === v ? C.indigo : "transparent", border: "none", borderRadius: 16, padding: "4px 10px", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: mode === v ? "#fff" : "rgba(255,255,255,0.4)", cursor: "pointer" }}>{v === "solo" ? "⚡ Solo" : "👥 Team"}</button>
-              ))}
             </div>
           </div>
         </div>
@@ -365,7 +400,7 @@ export function LiveBattle({ battleId }: { battleId: string }) {
               </div>
             </div>
             <div style={{ width: 220, padding: "16px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
-              {isLeader && !revealed && (
+              {!revealed && (
                 <button type="button" onClick={handleConfirmLeader} disabled={myVote === null} style={{ width: "100%", background: myVote !== null ? C.green : "rgba(255,255,255,0.1)", border: "none", borderRadius: 12, padding: "10px", color: "#fff", fontWeight: 700, cursor: myVote !== null ? "pointer" : "default" }}>Confirm Choice</button>
               )}
             </div>
@@ -375,4 +410,3 @@ export function LiveBattle({ battleId }: { battleId: string }) {
     </>
   );
 }
-//nasa livebatlle.txt orig code mo miguel

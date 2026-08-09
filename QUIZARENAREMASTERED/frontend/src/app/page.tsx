@@ -5,13 +5,15 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { AppProvider, useApp } from "@/context/AppContext";
 import { AuthScreen } from "@/components/AuthScreen";
 import { BattleLobby } from "@/components/studentONLY/BattleLobby";
-import { SelfPacedBattle} from "@/components/studentONLY/LiveBattle_OwnPace";
+import { SelfPacedBattle } from "@/components/studentONLY/Battle_OwnPace";
+// Ensure this import matches the exported component name in Battle_LiveQuiz.tsx
+import { LiveBattle } from "@/components/studentONLY/Battle_LiveQuiz"; 
 import { BattleResults } from "@/components/studentONLY/BattleResults";
 import { ProfessorDashboard } from "@/components/profonly/ProfessorDashboard";
-import  SectionsDashboard  from "@/components/profonly/SectionsDashboard";
+import SectionsDashboard from "@/components/profonly/SectionsDashboard";
 import { QuestionBank } from "@/components/profonly/QuestionBank";
 import { AIQuestionGenerator } from "@/components/profonly/AIQuestionGenerator";
-import  Matchmaking  from "@/components/Matchmaking";
+import Matchmaking from "@/components/Matchmaking";
 import { SolutionAnalyzer } from "@/components/profonly/SolutionAnalyzer";
 import ChooseRole from "@/components/chooserole";
 
@@ -25,17 +27,19 @@ function LoadingSpinner() {
 }
 
 function RouterContent() {
-  const { page, setPage, user, isLoading } = useApp();
+  // Grab current active section/battle ID from AppContext or query params
+  const { page, setPage, user, isLoading, activeSectionId } = useApp();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
 
-  // 1. Mark component as client-mounted
+  // Fallback to URL search param if AppContext section ID isn't set
+  const battleId = activeSectionId || searchParams.get("battleId") || "";
+
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  // 2. Sync URL search param into AppContext on parameter change
   useEffect(() => {
     if (!isMounted || isLoading) return;
     const urlPage = searchParams.get("page");
@@ -44,7 +48,6 @@ function RouterContent() {
     }
   }, [searchParams, isMounted, isLoading]);
 
-  // 3. Keep URL parameter updated whenever AppContext 'page' state changes
   useEffect(() => {
     if (!isMounted || !page || isLoading) return;
     const currentParam = searchParams.get("page");
@@ -53,7 +56,6 @@ function RouterContent() {
     }
   }, [page, isLoading, isMounted, searchParams, router]);
 
-  // 4. FIX FOR BUG 2: Side-effect moved inside useEffect (never run navigation during render pass)
   useEffect(() => {
     if (isMounted && !isLoading && user && page === "login") {
       const targetRoute = user.role === "professor" ? "dashboard" : "lobby";
@@ -61,17 +63,19 @@ function RouterContent() {
     }
   }, [isMounted, isLoading, user, page, setPage]);
 
-  // 5. Hydration Protection: Block UI rendering until client mount completes
   if (!isMounted || isLoading) {
     return <LoadingSpinner />;
   }
 
-  // 6. Router Switch
+  // Router Switch
   switch (page) {
     case "lobby":
       return <BattleLobby />;
-    case "battle":
-      return <LiveBattle />;
+    case "battle_selfpaced":
+      return <SelfPacedBattle battleId={battleId} />;
+    case "battle_livequiz":
+      // Pass the required battleId prop here
+      return <LiveBattle battleId={battleId} />;
     case "results":
       return <BattleResults />;
     case "dashboard":

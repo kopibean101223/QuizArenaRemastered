@@ -1,29 +1,48 @@
-const { WebSocket } = require('ws');
+import { WebSocket } from 'ws';
+import Redis from 'ioredis';
 
 const MAX_HISTORY_LIMIT = 100;
 const COMPLETED_ROOM_TTL_SECONDS = 300;
 
-function roomChannel(battleId) {
+function roomChannel(battleId: string): string {
   return `battle:${battleId}`;
 }
-function stateKey(battleId) {
+function stateKey(battleId: string): string {
   return `battle:${battleId}:state`;
 }
-function playerKey(battleId, playerId) {
+function playerKey(battleId: string, playerId: string): string {
   return `battle:${battleId}:player:${playerId}`;
 }
-function historyKey(battleId) {
+function historyKey(battleId: string): string {
   return `battle:${battleId}:history`;
 }
 
+export interface SelfPacedPayload {
+  type: string;
+  battleId: string;
+  playerId: string;
+  message?: string;
+  sender?: string;
+  score?: number;
+  currentIndex?: number;
+}
+
+export interface ClientData {
+  battleId: string;
+  playerId: string;
+}
+
 class SelfPacedBattleHandler {
+  private activeRooms: Map<string, Set<WebSocket>>;
+  private clientRoomMap: Map<WebSocket, ClientData>;
+
   constructor() {
-    this.activeRooms = new Map();   // Map<battleId, Set<WebSocket>>
-    this.clientRoomMap = new Map(); // Map<WebSocket, { battleId, playerId }>
+    this.activeRooms = new Map<string, Set<WebSocket>>();
+    this.clientRoomMap = new Map<WebSocket, ClientData>();
   }
 
-  initSubscriber(redisSubscriber) {
-    redisSubscriber.on('message', (channel, message) => {
+  public initSubscriber(redisSubscriber: Redis): void {
+    redisSubscriber.on('message', (channel: string, message: string) => {
       const battleId = channel.replace('battle:', '');
       const clientsInRoom = this.activeRooms.get(battleId);
 
@@ -37,7 +56,12 @@ class SelfPacedBattleHandler {
     });
   }
 
-  async handleMessage(ws, payload, redisPublisher, redisSubscriber) {
+  public async handleMessage(
+    ws: WebSocket,
+    payload: SelfPacedPayload,
+    redisPublisher: Redis,
+    redisSubscriber: Redis
+  ): Promise<void> {
     const { type, battleId, playerId, message, sender, score, currentIndex } = payload;
 
     if (!battleId || !playerId) {
@@ -53,11 +77,11 @@ class SelfPacedBattleHandler {
     // ── ACTION A: JOIN SELF-PACED BATTLE ──
     if (type === 'JOIN_SELF_PACED_BATTLE') {
       if (!this.activeRooms.has(battleId)) {
-        this.activeRooms.set(battleId, new Set());
+        this.activeRooms.set(battleId, new Set<WebSocket>());
         redisSubscriber.subscribe(channel);
       }
 
-      this.activeRooms.get(battleId).add(ws);
+      this.activeRooms.get(battleId)!.add(ws);
       this.clientRoomMap.set(ws, { battleId, playerId });
 
       // Fetch or initialize player state
@@ -142,7 +166,7 @@ class SelfPacedBattleHandler {
     }
   }
 
-  handleLeave(ws, redisSubscriber) {
+  public handleLeave(ws: WebSocket, redisSubscriber: Redis): void {
     const clientData = this.clientRoomMap.get(ws);
     if (!clientData) return;
 
@@ -161,4 +185,4 @@ class SelfPacedBattleHandler {
   }
 }
 
-module.exports = new SelfPacedBattleHandler();
+export default new SelfPacedBattleHandler();

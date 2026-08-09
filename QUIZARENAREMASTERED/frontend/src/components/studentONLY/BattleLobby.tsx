@@ -1,17 +1,15 @@
-//try live server db bound
-
 'use client';
 
 import { useState, useEffect, useRef } from "react";
 import { useApp } from "../../context/AppContext";
 import { StudentTopBar } from "../shared/StudentTopBar";
 import {
-  User, Users, Zap, Copy, Check, Trophy, Star,
-  Crown, Shield, Sword, LogOut, Sparkles,
+  User, Users, Zap, Check, Trophy, Crown
 } from "lucide-react";
 import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
-import { LiveBattle } from "./LiveBattle_LiveQuiz";
+import { LiveBattle } from "./Battle_LiveQuiz";
+import { SelfPacedBattle } from "./Battle_OwnPace";
 
 // ─── Palette ────────────────────────────────────────────────────────────────────
 const C = {
@@ -33,12 +31,6 @@ interface Player {
 }
 
 const CAPACITY = 12;
-
-const MODES = [
-  { id: "individual", label: "Individual", sub: "Every player for themselves", emoji: "⚡", icon: <User size={28} strokeWidth={2} />, bg: "linear-gradient(145deg,#1B1E2B,#2D2F45)", accent: C.indigo, desc: "Go solo and climb the leaderboard on your own skills." },
-  { id: "team", label: "Team Battle", sub: "Compete as a squad", emoji: "🛡️", icon: <Users size={28} strokeWidth={2} />, bg: "linear-gradient(145deg,#1A2E1A,#243324)", accent: C.green, desc: "Join forces! Balanced teams compete for collective glory." },
-  { id: "royale", label: "Battle Royale", sub: "Last one standing wins", emoji: "👑", icon: <Crown size={28} strokeWidth={2} />, bg: "linear-gradient(145deg,#2E1A0E,#3D2510)", accent: C.coral, desc: "One question eliminates the weakest. Pure survival mode." },
-];
 
 function CountdownDisplay({ count }: { count: number }) {
   const color = count <= 1 ? C.coral : count <= 2 ? C.yellow : C.green;
@@ -88,30 +80,6 @@ function EmptySlot() {
   );
 }
 
-function ModeCard({ mode, selected, onClick }: { mode: typeof MODES[0]; selected: boolean; onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} style={{
-      flex: 1, minWidth: 0, background: mode.bg, borderRadius: 24, padding: "24px 18px 20px",
-      border: selected ? `2.5px solid ${C.yellow}` : "2.5px solid rgba(255,255,255,0.07)",
-      cursor: "pointer", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
-      boxShadow: selected ? `0 0 0 4px ${C.yellowGlow}, 0 8px 32px rgba(0,0,0,0.4)` : "0 4px 20px rgba(0,0,0,0.3)",
-      transform: selected ? "scale(1.03) translateY(-2px)" : "scale(1)", transition: "all 0.2s"
-    }}>
-      <span style={{ fontSize: 42, lineHeight: 1 }}>{mode.emoji}</span>
-      <div>
-        <p style={{ fontFamily: "Fredoka, sans-serif", fontSize: 22, fontWeight: 700, color: selected ? C.yellow : "#fff", margin: 0 }}>{mode.label}</p>
-        <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.45)", margin: "4px 0 0" }}>{mode.desc}</p>
-      </div>
-      {selected && (
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: C.yellow, borderRadius: 20, padding: "4px 12px" }}>
-          <Check size={11} strokeWidth={3} color={C.navy} />
-          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 800, color: C.navy }}>Selected</span>
-        </div>
-      )}
-    </button>
-  );
-}
-
 export function BattleLobby() {
   const { user } = useApp();
   const supabase = createBrowserSupabaseClient();
@@ -122,11 +90,13 @@ export function BattleLobby() {
   const [roomCode, setRoomCode] = useState("");
   const [actualSectionId, setActualSectionId] = useState("");
   
-  const [selectedMode, setSelectedMode] = useState("team");
   const [players, setPlayers] = useState<Player[]>([]);
   
   const [countdown, setCountdown] = useState<number | null>(null);
   const [battleStarted, setBattleStarted] = useState(false);
+  
+  // DYNAMIC BATTLE MODE: Tracks "LIVE" vs "SELF_PACED" from Professor/Server
+  const [battleMode, setBattleMode] = useState<"LIVE" | "SELF_PACED">("LIVE");
 
   const handleJoinClick = async () => {
     if (!inputCode.trim()) {
@@ -188,12 +158,12 @@ export function BattleLobby() {
       setTimeout(() => {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({
-            type: "BATTLE_ACTION", // <--- Changed back to BATTLE_ACTION
+            type: "BATTLE_ACTION",
             battleId: actualSectionId,
             userId: user?.id || `user_${Math.random()}`,
             sender: studentName,
             message: "has joined the live lobby! ✅",
-            isJoinEvent: true // <--- Added special flag for the professor to read
+            isJoinEvent: true
           }));
         }
       }, 500);
@@ -208,28 +178,41 @@ export function BattleLobby() {
       }]);
     };
 
-socket.onmessage = (event) => {
+    socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         
-        // Trigger countdown when professor starts the battle or state sync marks active
-        if (data.type === "PROF_START_BATTLE" || (data.type === "ROOM_STATE_SYNC" && data.status === "active" && data.currentIndex === 0)) {
+        // Handle Start event from Professor & capture selected mode
+        if (
+          data.type === "PROF_START_BATTLE" || 
+          data.type === "BATTLE_STARTED" || 
+          data.type === "START_BATTLE"
+        ) {
+          const mode = (data.mode || data.battleMode || "LIVE").toUpperCase();
+          setBattleMode(mode === "SELF_PACED" || mode === "SELFPACED" ? "SELF_PACED" : "LIVE");
           setCountdown((prev) => (prev === null ? 3 : prev));
+        }
+
+        // Late-joining student mid-game bypasses lobby countdown
+        if (data.type === "ROOM_STATE_SYNC" && data.status === "active") {
+          const mode = (data.mode || data.battleMode || "LIVE").toUpperCase();
+          setBattleMode(mode === "SELF_PACED" || mode === "SELFPACED" ? "SELF_PACED" : "LIVE");
+          setBattleStarted(true);
         }
 
         // Handle incoming student peers joining the lobby
         if (data.type === "PLAYER_JOINED" || (data.type === "BATTLE_ACTION" && data.isJoinEvent)) {
-           setPlayers(prev => {
-             if (prev.some(s => s.id === data.userId || s.name === data.sender)) return prev;
-             return [...prev, {
-               id: data.userId || `peer_${Math.random()}`,
-               name: data.sender || 'Peer',
-               initials: (data.sender || 'PR').substring(0, 2).toUpperCase(),
-               color: AVATAR_COLORS[prev.length % AVATAR_COLORS.length],
-               isHost: false,
-               isReady: true
-             }];
-           });
+          setPlayers(prev => {
+            if (prev.some(s => s.id === data.userId || s.name === data.sender)) return prev;
+            return [...prev, {
+              id: data.userId || `peer_${Math.random()}`,
+              name: data.sender || 'Peer',
+              initials: (data.sender || 'PR').substring(0, 2).toUpperCase(),
+              color: AVATAR_COLORS[prev.length % AVATAR_COLORS.length],
+              isHost: false,
+              isReady: true
+            }];
+          });
         }
       } catch (err) {
         console.error("WS error:", err);
@@ -242,7 +225,7 @@ socket.onmessage = (event) => {
     if (countdown === null) return;
     if (countdown === 0) {
       setTimeout(() => {
-         setBattleStarted(true); 
+        setBattleStarted(true); 
       }, 1500); 
       setCountdown(null);
       return;
@@ -253,8 +236,11 @@ socket.onmessage = (event) => {
 
   const emptySlots = Math.max(0, CAPACITY - players.length);
 
+  // ROUTE DYNAMICALLY BASED ON PROFESSOR'S CHOSEN MODE
   if (battleStarted) {
-    // Pass the actualSectionId (the shared WebSocket room) to LiveBattle
+    if (battleMode === "SELF_PACED") {
+      return <SelfPacedBattle battleId={actualSectionId} />;
+    }
     return <LiveBattle battleId={actualSectionId} />;
   }
 
@@ -317,20 +303,6 @@ socket.onmessage = (event) => {
           {hasJoined && (
             <>
               <div style={{ width: "100%", maxWidth: 900 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                  <Sparkles size={14} color={C.yellow} strokeWidth={2} />
-                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                    Battle Mode
-                  </span>
-                </div>
-                <div style={{ display: "flex", gap: 14 }}>
-                  {MODES.map(mode => (
-                    <ModeCard key={mode.id} mode={mode} selected={selectedMode === mode.id} onClick={() => setSelectedMode(mode.id)} />
-                  ))}
-                </div>
-              </div>
-
-              <div style={{ width: "100%", maxWidth: 900 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <Users size={14} color="rgba(255,255,255,0.5)" strokeWidth={2} />
@@ -375,4 +347,3 @@ socket.onmessage = (event) => {
     </>
   );
 }
-//nasa btlelobbt.txt orig code mo miguel
