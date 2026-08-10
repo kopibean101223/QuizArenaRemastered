@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import {
   LayoutDashboard, Layers, Library, Sparkles,
   Swords, FlaskConical, LogOut, Trophy,
@@ -25,8 +24,8 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export function ProfSidebar() {
-  const router = useRouter();
-  const { user, page, logout } = useApp();
+  // Use 'navigate' or 'setPage' from AppContext instead of router.push
+  const { user, page, navigate, logout } = useApp();
 
   return (
     <aside style={{
@@ -58,7 +57,7 @@ export function ProfSidebar() {
         {NAV_ITEMS.map(item => {
           const active = page === item.id;
           return (
-            <button key={item.id} type="button" onClick={() => router.push(`/?page=${item.id}`)}
+            <button key={item.id} type="button" onClick={() => navigate(item.id)}
               style={{
                 display: "flex", alignItems: "center", gap: 9,
                 padding: "9px 11px", borderRadius: 9, cursor: "pointer",

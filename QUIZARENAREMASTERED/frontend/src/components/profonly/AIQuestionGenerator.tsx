@@ -1,12 +1,15 @@
-import { useState, useRef } from "react";
+"use client";
+
+import { useState, useRef, useEffect } from "react";
 import { ProfSidebar } from "../shared/ProfSidebar";
+
+import { CheckSquare } from "lucide-react"; 
 import {
   Upload, X, FileText, CheckCircle2, Clock, Loader2,
   ChevronDown, ChevronUp, BookOpen, Sparkles, RefreshCw,
   Pencil, Check, XCircle, Flag, Trophy, LayoutDashboard,
   Library, BarChart2, Settings, Layers, LogOut,
-  AlertTriangle, Zap, Plus, Trash2, ChevronRight,
-  CircleDot, AlignLeft, Hash, Circle,
+  AlertTriangle, Zap, CircleDot, AlignLeft, Hash, Circle, Plus,
 } from "lucide-react";
 
 // ─── Tokens ────────────────────────────────────────────────────────────────────
@@ -39,134 +42,50 @@ const C = {
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type DocStatus = "uploading" | "processing" | "ready";
-type QuestionStatus = "pending" | "approved" | "rejected";
-type Confidence = "strong" | "low";
+export type QuestionStatus = "pending" | "approved" | "rejected";
+export type Confidence = "strong" | "medium" | "weak";
 
-interface SyllabusDoc {
+export interface SyllabusDoc {
   id: number;
   filename: string;
-  uploadDate: string;
-  size: string;
-  status: DocStatus;
-  pages: number;
-  subject: string;
+  chunks?: any;
+  createdAt?: string;
+  uploadDate?: string;
+  size?: string;
+  status?: DocStatus;
+  pages?: number;
+  subject?: string;
+}
+export interface Choice {
+  label: string;
+  text: string;
+  isCorrect: boolean;
 }
 
-interface Choice { label: string; text: string; isCorrect: boolean; }
-
-interface Citation {
+export interface Citation {
   docId: number;
   docName: string;
   topic: string;
   section: string;
   pageRange: string;
+  paragraph?: string;
   confidence: Confidence;
   excerpt: string;
 }
-
-interface GeneratedQuestion {
+export interface GeneratedQuestion {
   id: number;
+  docId: number; 
   text: string;
-  type: "Multiple Choice" | "True / False" | "Identification" | "Short Answer";
+  type: string;
   choices?: Choice[];
   answer: string;
-  difficulty: "Easy" | "Medium" | "Hard";
+  difficulty: string;
   topic: string;
-  status: QuestionStatus;
+  status: QuestionStatus; 
   citation: Citation;
-  flagged: boolean;
+  flagged?: boolean;
   flagReason?: string;
 }
-
-// ─── Mock data ─────────────────────────────────────────────────────────────────
-const INIT_DOCS: SyllabusDoc[] = [
-  { id: 1, filename: "MATH301_Syllabus_2025.pdf",     uploadDate: "Jul 22, 2026", size: "1.2 MB", status: "ready",      pages: 18, subject: "Mathematics" },
-  { id: 2, filename: "CS301_CourseOutline_2025.pdf",  uploadDate: "Jul 23, 2026", size: "2.4 MB", status: "ready",      pages: 24, subject: "Computer Science" },
-  { id: 3, filename: "PHY101_Syllabus.pdf",           uploadDate: "Jul 24, 2026", size: "980 KB", status: "processing", pages: 14, subject: "Physics" },
-  { id: 4, filename: "BIO201_ModuleGuide.pdf",        uploadDate: "Jul 25, 2026", size: "3.1 MB", status: "uploading",  pages: 0,  subject: "Biology" },
-];
-
-const INIT_QUESTIONS: GeneratedQuestion[] = [
-  {
-    id: 1, status: "pending", difficulty: "Medium", type: "Multiple Choice", topic: "Calculus",
-    text: "Which of the following best describes the Fundamental Theorem of Calculus?",
-    choices: [
-      { label: "A", text: "It links differentiation and integration as inverse operations.", isCorrect: true },
-      { label: "B", text: "It states that every continuous function has an antiderivative.", isCorrect: false },
-      { label: "C", text: "It defines the limit of a function as x approaches infinity.", isCorrect: false },
-      { label: "D", text: "It proves that all polynomials are integrable over any interval.", isCorrect: false },
-    ],
-    answer: "A — It links differentiation and integration as inverse operations.",
-    flagged: false,
-    citation: {
-      docId: 1, docName: "MATH301_Syllabus_2025.pdf", topic: "Integral Calculus",
-      section: "Chapter 3 — The Fundamental Theorem", pageRange: "pp. 34–36",
-      confidence: "strong",
-      excerpt: "\"The Fundamental Theorem of Calculus establishes the relationship between differentiation and integration, showing they are inverse processes. Students should be able to state and apply both parts of the theorem...\"",
-    },
-  },
-  {
-    id: 2, status: "approved", difficulty: "Easy", type: "True / False", topic: "Data Structures",
-    text: "A stack data structure follows the Last-In, First-Out (LIFO) principle.",
-    choices: [
-      { label: "A", text: "True", isCorrect: true },
-      { label: "B", text: "False", isCorrect: false },
-    ],
-    answer: "True",
-    flagged: false,
-    citation: {
-      docId: 2, docName: "CS301_CourseOutline_2025.pdf", topic: "Linear Data Structures",
-      section: "Module 2 — Stacks & Queues", pageRange: "p. 12",
-      confidence: "strong",
-      excerpt: "\"Students are expected to differentiate between stack (LIFO) and queue (FIFO) structures, implement both using arrays and linked lists, and apply them to solve algorithmic problems such as expression evaluation...\"",
-    },
-  },
-  {
-    id: 3, status: "rejected", difficulty: "Hard", type: "Short Answer", topic: "Algorithms",
-    text: "Explain why Dijkstra's algorithm fails on graphs with negative edge weights, and name one algorithm that handles this case.",
-    choices: undefined,
-    answer: "Dijkstra's assumes non-negative weights; Bellman-Ford handles negative edges.",
-    flagged: false,
-    citation: {
-      docId: 2, docName: "CS301_CourseOutline_2025.pdf", topic: "Graph Algorithms",
-      section: "Module 5 — Shortest Path Algorithms", pageRange: "pp. 58–61",
-      confidence: "low",
-      excerpt: "\"Graph traversal and shortest-path algorithms including BFS, DFS, and Dijkstra's algorithm are covered. Students will analyze time complexities and implement solutions...\"",
-    },
-  },
-  {
-    id: 4, status: "pending", difficulty: "Medium", type: "Identification", topic: "Trigonometry",
-    text: "What term describes a triangle that has no equal sides and no equal angles?",
-    choices: undefined,
-    answer: "Scalene triangle",
-    flagged: true,
-    flagReason: "Page reference appears incorrect — scalene triangles are covered in Module 1, not Chapter 4.",
-    citation: {
-      docId: 1, docName: "MATH301_Syllabus_2025.pdf", topic: "Triangle Geometry",
-      section: "Chapter 4 — Trigonometric Identities", pageRange: "p. 48",
-      confidence: "low",
-      excerpt: "\"Trigonometric identities and their applications, including the law of sines and cosines, are introduced. Students will solve problems involving oblique triangles...\"",
-    },
-  },
-  {
-    id: 5, status: "pending", difficulty: "Easy", type: "Multiple Choice", topic: "Integral Calculus",
-    text: "What is the integral of f(x) = 4x³ with respect to x?",
-    choices: [
-      { label: "A", text: "x⁴ + C", isCorrect: true },
-      { label: "B", text: "12x² + C", isCorrect: false },
-      { label: "C", text: "4x⁴ + C", isCorrect: false },
-      { label: "D", text: "x⁴", isCorrect: false },
-    ],
-    answer: "A — x⁴ + C",
-    flagged: false,
-    citation: {
-      docId: 1, docName: "MATH301_Syllabus_2025.pdf", topic: "Integration Techniques",
-      section: "Chapter 3 — Basic Integration Rules", pageRange: "pp. 31–33",
-      confidence: "strong",
-      excerpt: "\"The power rule of integration states that ∫xⁿ dx = xⁿ⁺¹/(n+1) + C for n ≠ −1. Students will apply this rule to polynomial, exponential, and trigonometric functions...\"",
-    },
-  },
-];
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 const DIFF_STYLE: Record<string, { bg: string; text: string; border: string }> = {
@@ -189,626 +108,625 @@ const DOC_STATUS: Record<DocStatus, { icon: React.ReactNode; text: string; bg: s
 
 const QTYPE_ICON: Record<string, React.ReactNode> = {
   "Multiple Choice": <Circle size={10} strokeWidth={2.5} />,
+  "Checkbox":        <CheckSquare size={10} strokeWidth={2.5} />,
   "True / False":    <CircleDot size={10} strokeWidth={2.5} />,
   "Identification":  <Hash size={10} strokeWidth={2.5} />,
   "Short Answer":    <AlignLeft size={10} strokeWidth={2.5} />,
+  "Coding":          <Layers size={10} strokeWidth={2.5} />,
+  "Mathematics":     <Hash size={10} strokeWidth={2.5} />,
 };
 
-// ─── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar() { return <ProfSidebar />;
-  const [active, setActive] = useState("ai");
-  const items = [
-    { id: "dashboard", icon: <LayoutDashboard size={17} strokeWidth={2} />, label: "Dashboard" },
-    { id: "sections",  icon: <Layers size={17} strokeWidth={2} />,          label: "My Sections" },
-    { id: "bank",      icon: <Library size={17} strokeWidth={2} />,          label: "Question Bank" },
-    { id: "ai",        icon: <Sparkles size={17} strokeWidth={2} />,         label: "AI Generator" },
-    { id: "analytics", icon: <BarChart2 size={17} strokeWidth={2} />,        label: "Analytics" },
-    { id: "settings",  icon: <Settings size={17} strokeWidth={2} />,         label: "Settings" },
-  ];
-  return (
-    <div style={{ width: 210, minWidth: 210, background: C.navy, display: "flex", flexDirection: "column",
-      padding: "22px 12px", gap: 3, height: "100vh", position: "sticky", top: 0, flexShrink: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "4px 8px", marginBottom: 22 }}>
-        <div style={{ width: 34, height: 34, borderRadius: 9, background: C.indigo, display: "flex",
-          alignItems: "center", justifyContent: "center" }}>
-          <Trophy fill={C.yellow} color="transparent" size={17} />
-        </div>
-        <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 19, fontWeight: 700, color: "#fff" }}>QuizArena</span>
-      </div>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-        {items.map(item => (
-          <button key={item.id} type="button" onClick={() => setActive(item.id)} style={{
-            display: "flex", alignItems: "center", gap: 9, padding: "9px 11px", borderRadius: 11,
-            background: active === item.id ? "rgba(91,61,246,0.85)" : "transparent", border: "none",
-            cursor: "pointer", color: active === item.id ? "#fff" : "rgba(255,255,255,0.42)",
-            fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: active === item.id ? 700 : 500,
-            textAlign: "left", transition: "all 0.15s", width: "100%",
-          }}>
-            {item.icon}{item.label}
-          </button>
-        ))}
-      </div>
-      <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center",
-        gap: 9, padding: "14px 8px 0" }}>
-        <div style={{ width: 32, height: 32, borderRadius: "50%", background: C.indigo, display: "flex",
-          alignItems: "center", justifyContent: "center", fontFamily: "Manrope, sans-serif",
-          fontSize: 11, fontWeight: 800, color: "#fff", flexShrink: 0 }}>RD</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: "#fff",
-            margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Prof. R. Dela Cruz</p>
-          <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, color: "rgba(255,255,255,0.38)", margin: 0 }}>Professor</p>
-        </div>
-        <button type="button" style={{ background: "none", border: "none", cursor: "pointer",
-          color: "rgba(255,255,255,0.28)", padding: 0, display: "flex" }}>
-          <LogOut size={14} strokeWidth={2} />
-        </button>
-      </div>
-    </div>
-  );
+function Sidebar() { 
+  return <ProfSidebar />; 
 }
 
 // ─── Citation Panel ────────────────────────────────────────────────────────────
 function CitationPanel({ citation, flagged, flagReason, onFlag }:
-  { citation: Citation; flagged: boolean; flagReason?: string; onFlag: () => void }) {
+  { citation: Citation; flagged: boolean; flagReason?: string; onFlag: (reason: string) => void }) {
   const [expanded, setExpanded] = useState(false);
-  const [flagOpen, setFlagOpen] = useState(false);
-  const [flagText, setFlagText] = useState(flagReason ?? "");
-  const isStrong = citation.confidence === "strong";
+  const isStrong = citation?.confidence === "strong";
 
   return (
-    <div style={{
-      background: C.citationBg,
-      border: `1.5px solid ${flagged ? "rgba(255,71,87,0.22)" : C.citationBorder}`,
-      borderRadius: 14,
-      overflow: "hidden",
-    }}>
-      {/* Citation header row */}
+    <div style={{ background: C.citationBg, border: `1.5px solid ${flagged ? "rgba(255,71,87,0.22)" : C.citationBorder}`, borderRadius: 14, overflow: "hidden" }}>
       <div style={{ padding: "11px 14px", display: "flex", alignItems: "flex-start", gap: 10 }}>
-        {/* Document icon */}
-        <div style={{ width: 32, height: 32, borderRadius: 9, background: C.indigoMid,
-          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 9, background: C.indigoMid, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
           <FileText size={15} color={C.indigo} strokeWidth={2} />
         </div>
 
-        {/* Source info */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 800,
-              color: C.indigo, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 800, color: C.indigo, letterSpacing: "0.06em", textTransform: "uppercase" }}>
               Source Citation
             </span>
-            {/* Confidence badge */}
-            <span style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              background: isStrong ? C.greenLight : C.yellowLight,
-              color: isStrong ? "#18A058" : "#9A6C00",
-              border: `1.5px solid ${isStrong ? C.greenBorder : C.yellowBorder}`,
-              borderRadius: 20, padding: "2px 8px",
-              fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 800,
-            }}>
-              <span style={{ width: 5, height: 5, borderRadius: "50%",
-                background: isStrong ? "#18A058" : "#9A6C00" }} />
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: isStrong ? C.greenLight : C.yellowLight, color: isStrong ? "#18A058" : "#9A6C00", border: `1.5px solid ${isStrong ? C.greenBorder : C.yellowBorder}`, borderRadius: 20, padding: "2px 8px", fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 800 }}>
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: isStrong ? "#18A058" : "#9A6C00" }} />
               {isStrong ? "Strong Match" : "Low Confidence"}
             </span>
-            {flagged && (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
-                background: C.redLight, color: C.red, border: `1.5px solid ${C.redBorder}`,
-                borderRadius: 20, padding: "2px 8px",
-                fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 800 }}>
-                <AlertTriangle size={9} strokeWidth={2.5} />Flagged
-              </span>
-            )}
           </div>
 
-          {/* Doc name */}
-          <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700,
-            color: C.navy, margin: 0, lineHeight: 1.4,
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {citation.docName}
+          <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.navy, margin: 0, lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {citation?.docName || "Syllabus Document"}
           </p>
 
-          {/* Topic + section + page */}
           <div style={{ display: "flex", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
-            {[
-              { icon: <BookOpen size={10} strokeWidth={2} />, text: citation.topic },
-              { icon: <ChevronRight size={10} strokeWidth={2.5} />, text: citation.section },
-              { icon: <Hash size={10} strokeWidth={2} />, text: citation.pageRange },
-            ].map((m, i) => (
-              <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 3,
-                fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 500, color: C.muted }}>
-                {m.icon}{m.text}
-              </span>
-            ))}
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 500, color: C.muted }}>
+              <BookOpen size={10} strokeWidth={2} />{citation?.topic || "General"}
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600, color: C.indigo }}>
+              <Hash size={10} strokeWidth={2} />{citation?.pageRange || "Page 1"} {citation?.paragraph ? `· ${citation.paragraph}` : ""}
+            </span>
           </div>
         </div>
 
-        {/* Expand toggle */}
-        <button type="button" onClick={() => setExpanded(v => !v)} style={{
-          background: "transparent", border: "none", cursor: "pointer", color: C.muted,
-          display: "flex", alignItems: "center", gap: 4, padding: "2px 4px",
-          fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600,
-          flexShrink: 0, marginTop: 2,
-        }}>
+        <button type="button" onClick={() => setExpanded(v => !v)} style={{ background: "transparent", border: "none", cursor: "pointer", color: C.muted, display: "flex", alignItems: "center", gap: 4, padding: "2px 4px", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600, flexShrink: 0, marginTop: 2 }}>
           {expanded ? <ChevronUp size={13} strokeWidth={2.5} /> : <ChevronDown size={13} strokeWidth={2.5} />}
         </button>
       </div>
 
-      {/* Excerpt (expanded) */}
       {expanded && (
         <div style={{ padding: "0 14px 12px" }}>
-          <div style={{ background: "rgba(255,255,255,0.7)", border: `1px solid ${C.indigoBorder}`,
-            borderRadius: 10, padding: "10px 13px" }}>
-            <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 500,
-              color: "#3D3D5C", margin: 0, lineHeight: 1.65, fontStyle: "italic" }}>
-              {citation.excerpt}
+          <div style={{ background: "rgba(255,255,255,0.7)", border: `1.5px solid ${C.indigoBorder}`, borderRadius: 10, padding: "10px 13px" }}>
+            <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 500, color: "#3D3D5C", margin: 0, lineHeight: 1.65, fontStyle: "italic" }}>
+              "{citation?.excerpt || "No context provided."}"
             </p>
           </div>
         </div>
       )}
-
-      {/* Flag row */}
-      <div style={{ padding: "0 14px 11px", display: "flex", alignItems: "center", gap: 8 }}>
-        {!flagOpen ? (
-          <button type="button" onClick={() => setFlagOpen(true)} style={{
-            display: "inline-flex", alignItems: "center", gap: 5,
-            background: "transparent",
-            border: `1.5px solid ${flagged ? C.redBorder : C.indigoBorderStrong}`,
-            borderRadius: 8, padding: "4px 10px", cursor: "pointer",
-            fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-            color: flagged ? C.red : C.indigo, transition: "all 0.15s",
-          }}>
-            <Flag size={10} strokeWidth={2.5} />
-            {flagged ? "View Flag Reason" : "Flag Incorrect Citation"}
-          </button>
-        ) : (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-            <textarea value={flagText} onChange={e => setFlagText(e.target.value)}
-              placeholder="Describe why this citation is incorrect…"
-              rows={2} style={{ width: "100%", background: "rgba(255,255,255,0.8)",
-                border: `1.5px solid ${C.redBorder}`, borderRadius: 9, padding: "8px 10px",
-                fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 500, color: C.navy,
-                outline: "none", resize: "none", boxSizing: "border-box" }} />
-            <div style={{ display: "flex", gap: 6 }}>
-              <button type="button" onClick={() => { onFlag(); setFlagOpen(false); }} style={{
-                background: C.redLight, border: `1.5px solid ${C.redBorder}`, borderRadius: 8,
-                padding: "5px 12px", fontFamily: "Manrope, sans-serif", fontSize: 11,
-                fontWeight: 700, color: C.red, cursor: "pointer",
-                display: "flex", alignItems: "center", gap: 5,
-              }}>
-                <Flag size={10} strokeWidth={2.5} />Submit Flag
-              </button>
-              <button type="button" onClick={() => setFlagOpen(false)} style={{
-                background: "transparent", border: `1.5px solid ${C.border}`, borderRadius: 8,
-                padding: "5px 10px", fontFamily: "Manrope, sans-serif", fontSize: 11,
-                fontWeight: 600, color: C.muted, cursor: "pointer",
-              }}>Cancel</button>
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
 
 // ─── Question Card ─────────────────────────────────────────────────────────────
-function QuestionCard({ q, onStatusChange, onFlag, onRegenerate }:
-  { q: GeneratedQuestion; onStatusChange: (id: number, s: QuestionStatus) => void;
-    onFlag: (id: number) => void; onRegenerate: (id: number) => void; }) {
+function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
+  { q: GeneratedQuestion; onStatusChange: (id: number, s: QuestionStatus) => void; onFlag: (id: number, reason: string) => void; onEdit: (id: number, data: Partial<GeneratedQuestion>) => void; }) {
   const [expanded, setExpanded] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const statusS = STATUS_STYLE[q.status];
-  const diffS = DIFF_STYLE[q.difficulty];
+  const [isEditing, setIsEditing] = useState(false);
+  const [editState, setEditState] = useState({ text: q.text, answer: q.answer, choices: q.choices || [] });
 
-  function handleRegen() {
-    setGenerating(true);
-    setTimeout(() => setGenerating(false), 1800);
-    onRegenerate(q.id);
-  }
+  const statusS = STATUS_STYLE[q.status] || STATUS_STYLE.pending;
+  const diffS = DIFF_STYLE[q.difficulty] || DIFF_STYLE.Medium;
+  const labels = ["A", "B", "C", "D", "E", "F"];
+
+  const handleSaveEdit = () => {
+    onEdit(q.id, editState);
+    setIsEditing(false);
+  };
+
+  const updateChoice = (idx: number, text: string) => {
+    const newChoices = [...editState.choices];
+    newChoices[idx].text = text;
+    setEditState({ ...editState, choices: newChoices });
+  };
+
+  const toggleCorrectChoice = (idx: number) => {
+    const newChoices = [...editState.choices];
+    if (q.type !== "Checkbox") {
+      newChoices.forEach((c, i) => (c.isCorrect = i === idx));
+    } else {
+      newChoices[idx].isCorrect = !newChoices[idx].isCorrect;
+    }
+    setEditState({ ...editState, choices: newChoices });
+  };
+
+  const addChoice = () => {
+    if (editState.choices.length >= labels.length) return;
+    const newLabel = labels[editState.choices.length];
+    setEditState({ ...editState, choices: [...editState.choices, { label: newLabel, text: "", isCorrect: false }] });
+  };
+
+  const removeChoice = (idx: number) => {
+    const newChoices = editState.choices.filter((_, i) => i !== idx).map((c, i) => ({ ...c, label: labels[i] }));
+    setEditState({ ...editState, choices: newChoices });
+  };
 
   return (
-    <div style={{
-      background: C.white,
-      borderRadius: 20,
-      border: `1.5px solid ${q.status === "approved" ? C.greenBorder : q.status === "rejected" ? C.redBorder : C.border}`,
-      boxShadow: "0 2px 14px rgba(0,0,0,0.05)",
-      overflow: "hidden",
-      opacity: q.status === "rejected" ? 0.72 : 1,
-      transition: "all 0.18s",
-    }}>
-      {/* Card header */}
+    <div style={{ background: C.white, borderRadius: 20, border: `1.5px solid ${q.status === "approved" ? C.greenBorder : q.status === "rejected" ? C.redBorder : C.border}`, boxShadow: "0 2px 14px rgba(0,0,0,0.05)", overflow: "hidden", opacity: q.status === "rejected" ? 0.72 : 1, transition: "all 0.18s" }}>
       <div style={{ padding: "16px 18px 14px", display: "flex", alignItems: "flex-start", gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Badge row */}
           <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {/* Status */}
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
-              background: statusS.bg, color: statusS.text, border: `1.5px solid ${statusS.border}`,
-              borderRadius: 20, padding: "2px 9px",
-              fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 800 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: statusS.bg, color: statusS.text, border: `1.5px solid ${statusS.border}`, borderRadius: 20, padding: "2px 9px", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 800 }}>
               <span style={{ width: 5, height: 5, borderRadius: "50%", background: statusS.text }} />
               {statusS.label}
             </span>
-            {/* Difficulty */}
-            <span style={{ background: diffS.bg, color: diffS.text, border: `1.5px solid ${diffS.border}`,
-              borderRadius: 7, padding: "2px 8px",
-              fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700 }}>
+            <span style={{ background: diffS.bg, color: diffS.text, border: `1.5px solid ${diffS.border}`, borderRadius: 7, padding: "2px 8px", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700 }}>
               {q.difficulty}
             </span>
-            {/* Type */}
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
-              background: C.inputBg, color: C.muted, borderRadius: 7, padding: "2px 8px",
-              fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600 }}>
-              {QTYPE_ICON[q.type]}{q.type}
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: C.inputBg, color: C.muted, borderRadius: 7, padding: "2px 8px", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600 }}>
+              {QTYPE_ICON[q.type] || <Circle size={10} strokeWidth={2.5} />}{q.type}
             </span>
-            {/* Topic */}
-            <span style={{ background: C.indigoLight, color: C.indigo, borderRadius: 7, padding: "2px 8px",
-              fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700 }}>
+            <span style={{ background: C.indigoLight, color: C.indigo, borderRadius: 7, padding: "2px 8px", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700 }}>
               {q.topic}
             </span>
           </div>
-          {/* Question text */}
-          <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 700,
-            color: C.navy, margin: 0, lineHeight: 1.55 }}>
-            {generating ? (
-              <span style={{ display: "flex", alignItems: "center", gap: 8, color: C.muted }}>
-                <Loader2 size={14} strokeWidth={2.5} style={{ animation: "spin 0.8s linear infinite" }} />
-                Regenerating question…
-              </span>
-            ) : q.text}
-          </p>
+          {isEditing ? (
+            <textarea
+              value={editState.text}
+              onChange={(e) => setEditState({ ...editState, text: e.target.value })}
+              style={{ width: "100%", padding: "10px", borderRadius: "10px", border: `1px solid ${C.indigoBorder}`, fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 600, color: C.navy, minHeight: "60px", resize: "vertical" }}
+            />
+          ) : (
+            <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 700, color: C.navy, margin: 0, lineHeight: 1.55 }}>
+              {q.text}
+            </p>
+          )}
         </div>
-        {/* Collapse toggle */}
-        <button type="button" onClick={() => setExpanded(v => !v)} style={{
-          background: C.inputBg, border: "none", borderRadius: 9, padding: 7,
-          cursor: "pointer", color: C.muted, display: "flex", flexShrink: 0,
-        }}>
-          {expanded ? <ChevronUp size={14} strokeWidth={2.5} /> : <ChevronDown size={14} strokeWidth={2.5} />}
-        </button>
+        {!isEditing && (
+          <button type="button" onClick={() => setExpanded(v => !v)} style={{ background: C.inputBg, border: "none", borderRadius: 9, padding: 7, cursor: "pointer", color: C.muted, display: "flex", flexShrink: 0 }}>
+            {expanded ? <ChevronUp size={14} strokeWidth={2.5} /> : <ChevronDown size={14} strokeWidth={2.5} />}
+          </button>
+        )}
       </div>
 
-      {expanded && !generating && (
+      {(expanded || isEditing) && (
         <>
-          {/* Choices */}
-          {q.choices && q.choices.length > 0 && (
+          {(q.choices && q.choices.length > 0) || isEditing ? (
             <div style={{ padding: "0 18px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-              {q.choices.map(ch => (
-                <div key={ch.label} style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  background: ch.isCorrect ? C.greenLight : C.offWhite,
-                  border: `1.5px solid ${ch.isCorrect ? C.greenBorder : C.border}`,
-                  borderRadius: 11, padding: "8px 12px",
-                }}>
-                  <span style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
-                    background: ch.isCorrect ? C.green : "rgba(0,0,0,0.06)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 800,
-                    color: ch.isCorrect ? "#fff" : C.muted }}>
-                    {ch.label}
-                  </span>
-                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: ch.isCorrect ? 700 : 500,
-                    color: ch.isCorrect ? "#18A058" : C.navy }}>
-                    {ch.text}
-                  </span>
-                  {ch.isCorrect && <CheckCircle2 size={14} color="#18A058" style={{ marginLeft: "auto" }} />}
+              {editState.choices.map((ch, idx) => (
+                <div 
+                  key={idx} 
+                  style={{ display: "flex", alignItems: "center", gap: 10, background: isEditing ? C.offWhite : ch.isCorrect ? C.greenLight : C.offWhite, border: `1.5px solid ${isEditing ? C.border : ch.isCorrect ? C.greenBorder : C.border}`, borderRadius: 11, padding: "8px 12px" }}
+                >
+                  {isEditing ? (
+                    <input 
+                      type={q.type === "Checkbox" ? "checkbox" : "radio"} 
+                      checked={ch.isCorrect} 
+                      onChange={() => toggleCorrectChoice(idx)}
+                      style={{ cursor: "pointer", width: 16, height: 16 }}
+                    />
+                  ) : (
+                    q.type === "Checkbox" ? (
+                      <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${ch.isCorrect ? "#18A058" : C.muted}`, background: ch.isCorrect ? "#18A058" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        {ch.isCorrect && <Check size={12} color="#fff" strokeWidth={3} />}
+                      </div>
+                    ) : (
+                      <span style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, background: ch.isCorrect ? C.green : "rgba(0,0,0,0.06)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 800, color: ch.isCorrect ? "#fff" : C.muted }}>
+                        {ch.label}
+                      </span>
+                    )
+                  )}
+
+                  {isEditing ? (
+                    <input 
+                      type="text" 
+                      value={ch.text} 
+                      onChange={(e) => updateChoice(idx, e.target.value)} 
+                      style={{ flex: 1, border: `1px solid ${C.border}`, borderRadius: "6px", padding: "6px 10px", fontFamily: "Manrope, sans-serif", fontSize: 13, background: "#fff" }}
+                    />
+                  ) : (
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: ch.isCorrect ? 700 : 500, color: ch.isCorrect ? "#18A058" : C.navy }}>{ch.text}</span>
+                  )}
+                  
+                  {isEditing && (
+                    <button type="button" onClick={() => removeChoice(idx)} style={{ background: "transparent", border: "none", cursor: "pointer", color: C.red }}><X size={16} /></button>
+                  )}
+                  {!isEditing && ch.isCorrect && <CheckCircle2 size={14} color="#18A058" style={{ marginLeft: "auto" }} />}
                 </div>
               ))}
+              
+              {isEditing && (editState.choices.length > 0 || q.type === "Multiple Choice" || q.type === "Checkbox") && editState.choices.length < 6 && (
+                <button type="button" onClick={addChoice} style={{ background: C.indigoLight, color: C.indigo, border: `1px dashed ${C.indigo}`, borderRadius: "8px", padding: "8px", display: "flex", justifyContent: "center", alignItems: "center", gap: 5, cursor: "pointer", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700 }}>
+                  <Plus size={14} /> Add Choice
+                </button>
+              )}
             </div>
-          )}
+          ) : null}
 
-          {/* Non-MC answer */}
-          {(!q.choices || q.choices.length === 0) && (
+          {(!editState.choices || editState.choices.length === 0) && (
             <div style={{ padding: "0 18px 14px" }}>
-              <div style={{ background: C.greenLight, border: `1.5px solid ${C.greenBorder}`,
-                borderRadius: 11, padding: "9px 13px" }}>
-                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-                  color: "#18A058", margin: "0 0 3px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                  Answer
-                </p>
-                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600,
-                  color: "#18A058", margin: 0, lineHeight: 1.5 }}>
-                  {q.answer}
-                </p>
+              <div style={{ background: C.greenLight, border: `1.5px solid ${C.greenBorder}`, borderRadius: 11, padding: "9px 13px" }}>
+                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: "#18A058", margin: "0 0 3px", textTransform: "uppercase", letterSpacing: "0.06em" }}>Answer</p>
+                {isEditing ? (
+                  <textarea 
+                    value={editState.answer} 
+                    onChange={(e) => setEditState({ ...editState, answer: e.target.value })} 
+                    style={{ width: "100%", padding: "8px", borderRadius: "8px", border: `1px solid ${C.greenBorder}`, fontFamily: "Manrope, sans-serif", fontSize: 13, minHeight: "50px", resize: "vertical" }}
+                  />
+                ) : (
+                  <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600, color: "#18A058", margin: 0, lineHeight: 1.5 }}>{q.answer}</p>
+                )}
               </div>
             </div>
           )}
 
-          {/* ── Source Citation panel ── */}
-          <div style={{ padding: "0 18px 14px" }}>
-            <CitationPanel
-              citation={q.citation}
-              flagged={q.flagged}
-              flagReason={q.flagReason}
-              onFlag={() => onFlag(q.id)}
-            />
-          </div>
+          {!isEditing && (
+            <div style={{ padding: "0 18px 14px" }}>
+              <CitationPanel citation={q.citation} flagged={q.flagged} flagReason={q.flagReason} onFlag={(reason) => onFlag(q.id, reason)} />
+            </div>
+          )}
         </>
       )}
 
-      {/* Action footer */}
-      <div style={{ borderTop: `1.5px solid ${C.border}`, padding: "11px 18px",
-        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-        background: "#FAFAFC" }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          <ActionBtn icon={<RefreshCw size={13} strokeWidth={2.5} />} label="Regenerate"
-            bg={C.indigoLight} color={C.indigo} onClick={handleRegen} loading={generating} />
-          <ActionBtn icon={<Pencil size={13} strokeWidth={2} />} label="Edit"
-            bg={C.yellowLight} color="#9A6C00" onClick={() => {}} />
-        </div>
-        {q.status !== "approved" && q.status !== "rejected" ? (
-          <div style={{ display: "flex", gap: 6 }}>
-            <ActionBtn icon={<Check size={13} strokeWidth={2.5} />} label="Approve"
-              bg={C.greenLight} color="#18A058" border={C.greenBorder}
-              onClick={() => onStatusChange(q.id, "approved")} />
-            <ActionBtn icon={<XCircle size={13} strokeWidth={2.5} />} label="Reject"
-              bg={C.redLight} color={C.red} border={C.redBorder}
-              onClick={() => onStatusChange(q.id, "rejected")} />
+      <div style={{ borderTop: `1.5px solid ${C.border}`, padding: "11px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "#FAFAFC" }}>
+        {isEditing ? (
+          <div style={{ display: "flex", gap: 6, width: "100%", justifyContent: "flex-end" }}>
+            <ActionBtn icon={<Check size={13} strokeWidth={2.5} />} label="Save Changes" bg={C.greenLight} color="#18A058" border={C.greenBorder} onClick={handleSaveEdit} />
+            <ActionBtn icon={<X size={13} strokeWidth={2.5} />} label="Cancel" bg={C.redLight} color={C.red} border={C.redBorder} onClick={() => { setIsEditing(false); setEditState({ text: q.text, answer: q.answer, choices: q.choices || [] }); }} />
           </div>
         ) : (
-          <button type="button" onClick={() => onStatusChange(q.id, "pending")} style={{
-            background: "transparent", border: `1.5px solid ${C.border}`, borderRadius: 9,
-            padding: "6px 12px", fontFamily: "Manrope, sans-serif", fontSize: 12,
-            fontWeight: 700, color: C.muted, cursor: "pointer",
-          }}>
-            Reset to Pending
-          </button>
+          <>
+            <div style={{ display: "flex", gap: 6 }}>
+              <ActionBtn icon={<Pencil size={13} strokeWidth={2} />} label="Edit" bg={C.yellowLight} color="#9A6C00" onClick={() => setIsEditing(true)} />
+            </div>
+            {q.status !== "approved" && q.status !== "rejected" ? (
+              <div style={{ display: "flex", gap: 6 }}>
+                <ActionBtn icon={<Check size={13} strokeWidth={2.5} />} label="Approve" bg={C.greenLight} color="#18A058" border={C.greenBorder} onClick={() => onStatusChange(q.id, "approved")} />
+                <ActionBtn icon={<XCircle size={13} strokeWidth={2.5} />} label="Reject" bg={C.redLight} color={C.red} border={C.redBorder} onClick={() => onStatusChange(q.id, "rejected")} />
+              </div>
+            ) : (
+              <button type="button" onClick={() => onStatusChange(q.id, "pending")} style={{ background: "transparent", border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "6px 12px", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, cursor: "pointer" }}>Reset to Pending</button>
+            )}
+          </>
         )}
       </div>
     </div>
   );
 }
 
-function ActionBtn({ icon, label, bg, color, border, onClick, loading }:
-  { icon: React.ReactNode; label: string; bg: string; color: string;
-    border?: string; onClick: () => void; loading?: boolean }) {
+function ActionBtn({ icon, label, bg, color, border, onClick }: { icon: React.ReactNode; label: string; bg: string; color: string; border?: string; onClick: () => void; }) {
   return (
-    <button type="button" onClick={onClick} disabled={loading} style={{
-      display: "inline-flex", alignItems: "center", gap: 5,
-      background: bg, border: `1.5px solid ${border ?? "transparent"}`,
-      borderRadius: 9, padding: "6px 12px", cursor: loading ? "default" : "pointer",
-      fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color,
-      transition: "opacity 0.15s", opacity: loading ? 0.6 : 1,
-    }}>
-      {loading ? <Loader2 size={13} strokeWidth={2.5} style={{ animation: "spin 0.8s linear infinite" }} /> : icon}
-      {label}
+    <button type="button" onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: bg, border: `1.5px solid ${border ?? "transparent"}`, borderRadius: 9, padding: "6px 12px", cursor: "pointer", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color }}>
+      {icon}{label}
     </button>
   );
 }
 
-// ─── Syllabus Document Row ─────────────────────────────────────────────────────
-function DocRow({ doc, onRemove }: { doc: SyllabusDoc; onRemove: (id: number) => void }) {
-  const ds = DOC_STATUS[doc.status];
-  return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px",
-      background: C.white, borderRadius: 14, border: `1.5px solid ${C.border}`,
-      boxShadow: "0 1px 6px rgba(0,0,0,0.04)" }}>
-      {/* Icon */}
-      <div style={{ width: 36, height: 36, borderRadius: 10, background: C.indigoLight,
-        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <FileText size={17} color={C.indigo} strokeWidth={2} />
-      </div>
-      {/* Info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: C.navy,
-          margin: 0, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {doc.filename}
-        </p>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 500, color: C.muted }}>
-            {doc.uploadDate}
-          </span>
-          {doc.status === "ready" && (
-            <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 500, color: C.muted }}>
-              {doc.pages}p · {doc.size}
-            </span>
-          )}
-          {/* Status badge */}
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
-            background: ds.bg, color: ds.color, borderRadius: 20, padding: "2px 8px",
-            fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 800 }}>
-            {ds.icon}{ds.text}
-          </span>
-        </div>
-        {/* Progress bar for uploading */}
-        {doc.status === "uploading" && (
-          <div style={{ marginTop: 7, height: 4, borderRadius: 50, background: C.inputBg, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: "45%", borderRadius: 50,
-              background: C.indigo, animation: "progressPulse 1.4s ease-in-out infinite" }} />
-          </div>
-        )}
-      </div>
-      {/* Remove */}
-      {doc.status === "ready" && (
-        <button type="button" onClick={() => onRemove(doc.id)} style={{
-          background: "transparent", border: "none", cursor: "pointer", color: C.muted,
-          display: "flex", padding: "2px", borderRadius: 7, flexShrink: 0,
-          transition: "color 0.15s",
-        }}>
-          <X size={14} strokeWidth={2.5} />
-        </button>
-      )}
-    </div>
-  );
-}
-
 // ─── Generate Config Panel ─────────────────────────────────────────────────────
-function GeneratePanel({ docs, onGenerate }:
-  { docs: SyllabusDoc[]; onGenerate: () => void }) {
+function GeneratePanel({ 
+  docs, 
+  onGenerate, 
+  generating 
+}: { 
+  docs: SyllabusDoc[]; 
+  onGenerate: (config: { count: string; difficulty: string; qtypes: string[]; docId: number | "all" }) => void; 
+  generating: boolean;
+}) {
   const [count, setCount] = useState("5");
-  const [difficulty, setDifficulty] = useState("Mixed");
-  const [qtype, setQtype] = useState("Mixed");
+  const [difficulty, setDifficulty] = useState("Medium");
+  const [selectedQtypes, setSelectedQtypes] = useState<string[]>(["Multiple Choice"]);
   const [selectedDoc, setSelectedDoc] = useState<number | "all">("all");
-  const [generating, setGenerating] = useState(false);
+  
   const readyDocs = docs.filter(d => d.status === "ready");
 
-  function handleGenerate() {
-    if (!readyDocs.length) return;
-    setGenerating(true);
-    setTimeout(() => { setGenerating(false); onGenerate(); }, 2200);
-  }
+  const toggleQtype = (type: string) => {
+    setSelectedQtypes(prev => {
+      if (prev.includes(type)) {
+        if (prev.length === 1) return prev; 
+        return prev.filter(t => t !== type);
+      } else {
+        return [...prev, type];
+      }
+    });
+  };
 
   return (
-    <div style={{ background: C.white, borderRadius: 16, border: `1.5px solid ${C.border}`,
-      padding: "16px", display: "flex", flexDirection: "column", gap: 14 }}>
+    <div style={{ background: C.white, borderRadius: 16, border: `1.5px solid ${C.border}`, padding: "16px", display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <Sparkles size={15} color={C.indigo} strokeWidth={2} />
-        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800, color: C.navy }}>
-          Generate Settings
-        </span>
+        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800, color: C.navy }}>Generate Settings</span>
       </div>
 
-      {/* Source doc */}
+      {/* Source Document */}
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-          color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Source Document</label>
+        <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Source Document</label>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <button type="button" onClick={() => setSelectedDoc("all")} style={{
-            background: selectedDoc === "all" ? C.indigoLight : C.offWhite,
-            border: `1.5px solid ${selectedDoc === "all" ? C.indigo : C.border}`,
-            borderRadius: 10, padding: "7px 12px", cursor: "pointer", textAlign: "left",
-            fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700,
-            color: selectedDoc === "all" ? C.indigo : C.muted,
-          }}>All ready documents ({readyDocs.length})</button>
+          <button type="button" onClick={() => setSelectedDoc("all")} style={{ background: selectedDoc === "all" ? C.indigoLight : C.offWhite, border: `1.5px solid ${selectedDoc === "all" ? C.indigo : C.border}`, borderRadius: 10, padding: "7px 12px", cursor: "pointer", textAlign: "left", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: selectedDoc === "all" ? C.indigo : C.muted }}>
+            All ready documents ({readyDocs.length})
+          </button>
           {readyDocs.map(d => (
-            <button key={d.id} type="button" onClick={() => setSelectedDoc(d.id)} style={{
-              background: selectedDoc === d.id ? C.indigoLight : "transparent",
-              border: `1.5px solid ${selectedDoc === d.id ? C.indigo : C.border}`,
-              borderRadius: 10, padding: "7px 12px", cursor: "pointer", textAlign: "left",
-              fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600,
-              color: selectedDoc === d.id ? C.indigo : C.navy,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }}>{d.filename}</button>
+            <button key={d.id} type="button" onClick={() => setSelectedDoc(d.id)} style={{ background: selectedDoc === d.id ? C.indigoLight : "transparent", border: `1.5px solid ${selectedDoc === d.id ? C.indigo : C.border}`, borderRadius: 10, padding: "7px 12px", cursor: "pointer", textAlign: "left", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600, color: selectedDoc === d.id ? C.indigo : C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {d.filename}
+            </button>
           ))}
         </div>
       </div>
 
-      {/* Count */}
+      {/* Questions Count */}
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-          color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Questions to Generate</label>
+        <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Questions to Generate</label>
         <div style={{ display: "flex", gap: 6 }}>
           {["3", "5", "10", "15"].map(n => (
-            <button key={n} type="button" onClick={() => setCount(n)} style={{
-              flex: 1, background: count === n ? C.indigo : C.offWhite,
-              border: `1.5px solid ${count === n ? C.indigo : C.border}`,
-              borderRadius: 9, padding: "7px 0",
-              fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700,
-              color: count === n ? "#fff" : C.navy, cursor: "pointer",
-            }}>{n}</button>
+            <button key={n} type="button" onClick={() => setCount(n)} style={{ flex: 1, background: count === n ? C.indigo : C.offWhite, border: `1.5px solid ${count === n ? C.indigo : C.border}`, borderRadius: 9, padding: "7px 0", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: count === n ? "#fff" : C.navy, cursor: "pointer" }}>
+              {n}
+            </button>
           ))}
         </div>
       </div>
 
       {/* Difficulty */}
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-          color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Difficulty</label>
+        <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Difficulty</label>
         <div style={{ display: "flex", gap: 5 }}>
-          {["Mixed", "Easy", "Medium", "Hard"].map(d => (
-            <button key={d} type="button" onClick={() => setDifficulty(d)} style={{
-              flex: 1, background: difficulty === d ? C.indigoLight : C.offWhite,
-              border: `1.5px solid ${difficulty === d ? C.indigo : C.border}`,
-              borderRadius: 8, padding: "6px 0",
-              fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-              color: difficulty === d ? C.indigo : C.muted, cursor: "pointer",
-            }}>{d}</button>
+          {["Easy", "Medium", "Hard"].map(d => (
+            <button key={d} type="button" onClick={() => setDifficulty(d)} style={{ flex: 1, background: difficulty === d ? C.indigoLight : C.offWhite, border: `1.5px solid ${difficulty === d ? C.indigo : C.border}`, borderRadius: 8, padding: "6px 0", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: difficulty === d ? C.indigo : C.muted, cursor: "pointer" }}>
+              {d}
+            </button>
           ))}
         </div>
       </div>
 
-      {/* Question type */}
+      {/* Multi-Select Question Types (Now includes Coding & Mathematics) */}
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-          color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Question Type</label>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Question Types</label>
+          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: C.indigo }}>Multi-select</span>
+        </div>
         <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-          {["Mixed", "MC", "T/F", "ID", "SA"].map(t => (
-            <button key={t} type="button" onClick={() => setQtype(t)} style={{
-              background: qtype === t ? C.indigoLight : C.offWhite,
-              border: `1.5px solid ${qtype === t ? C.indigo : C.border}`,
-              borderRadius: 8, padding: "6px 10px",
-              fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-              color: qtype === t ? C.indigo : C.muted, cursor: "pointer",
-            }}>{t}</button>
-          ))}
+          {["Multiple Choice", "True / False", "Identification", "Short Answer", "Coding", "Mathematics"].map(t => {
+            const isSelected = selectedQtypes.includes(t);
+            return (
+              <button 
+                key={t} 
+                type="button" 
+                onClick={() => toggleQtype(t)} 
+                style={{ 
+                  background: isSelected ? C.indigoLight : C.offWhite, 
+                  border: `1.5px solid ${isSelected ? C.indigo : C.border}`, 
+                  borderRadius: 8, 
+                  padding: "6px 10px", 
+                  fontFamily: "Manrope, sans-serif", 
+                  fontSize: 11, 
+                  fontWeight: 700, 
+                  color: isSelected ? C.indigo : C.muted, 
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 5
+                }}
+              >
+                {isSelected && <span style={{ width: 5, height: 5, borderRadius: "50%", background: C.indigo }} />}
+                {t}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Generate button */}
-      <button type="button" onClick={handleGenerate}
-        disabled={generating || readyDocs.length === 0}
-        style={{
-          width: "100%", background: generating || !readyDocs.length
-            ? "rgba(91,61,246,0.4)" : C.indigo,
-          border: "none", borderRadius: 12, padding: "12px",
-          fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 700,
-          color: "#fff", cursor: generating || !readyDocs.length ? "default" : "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-          boxShadow: generating ? "none" : "0 4px 14px rgba(91,61,246,0.3)",
-          transition: "all 0.15s",
-        }}>
-        {generating
-          ? <><Loader2 size={16} strokeWidth={2.5} style={{ animation: "spin 0.8s linear infinite" }} />Generating…</>
-          : <><Sparkles size={16} strokeWidth={2.5} />Generate Questions</>}
+      {/* Action Button */}
+      <button 
+        type="button" 
+        onClick={() => onGenerate({ count, difficulty, qtypes: selectedQtypes, docId: selectedDoc })}
+        disabled={generating || readyDocs.length === 0 || selectedQtypes.length === 0} 
+        style={{ 
+          width: "100%", 
+          background: generating || !readyDocs.length || !selectedQtypes.length ? "rgba(91,61,246,0.4)" : C.indigo, 
+          border: "none", 
+          borderRadius: 12, 
+          padding: "12px", 
+          fontFamily: "Manrope, sans-serif", 
+          fontSize: 14, 
+          fontWeight: 700, 
+          color: "#fff", 
+          cursor: generating || !readyDocs.length || !selectedQtypes.length ? "default" : "pointer", 
+          display: "flex", 
+          alignItems: "center", 
+          justifyContent: "center", 
+          gap: 8, 
+          boxShadow: generating ? "none" : "0 4px 14px rgba(91,61,246,0.3)", 
+          transition: "all 0.15s" 
+        }}
+      >
+        {generating ? <><Loader2 size={16} strokeWidth={2.5} style={{ animation: "spin 0.8s linear infinite" }} />Generating…</> : <><Sparkles size={16} strokeWidth={2.5} />Generate Questions</>}
       </button>
-      {!readyDocs.length && (
-        <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted,
-          margin: 0, textAlign: "center" }}>
-          Upload and process a syllabus document first.
-        </p>
-      )}
     </div>
   );
 }
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 export function AIQuestionGenerator() {
-  const [docs, setDocs] = useState<SyllabusDoc[]>(INIT_DOCS);
-  const [questions, setQuestions] = useState<GeneratedQuestion[]>(INIT_QUESTIONS);
+  const [docs, setDocs] = useState<SyllabusDoc[]>([]);
+  const [questions, setQuestions] = useState<GeneratedQuestion[]>([]);
   const [statusFilter, setStatusFilter] = useState<"all" | QuestionStatus>("all");
+  const [generating, setGenerating] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
-  function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  useEffect(() => {
+    async function fetchInitialData() {
+      try {
+        const response = await fetch("/api/rag/data");
+        if (response.ok) {
+          const data = await response.json();
+          setDocs(data.docs || []);
+          const normalizedQuestions = (data.questions || []).map((q: any) => ({
+            ...q,
+            status: String(q.status || "pending").toLowerCase() as QuestionStatus
+          }));
+          setQuestions(normalizedQuestions);
+        }
+      } catch (error) {
+        console.error("Failed to fetch initial database state", error);
+      }
+    }
+    fetchInitialData();
+  }, []);
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const newDoc: SyllabusDoc = {
-      id: Date.now(), filename: file.name, uploadDate: "Jul 26, 2026",
+
+    if (docs.length >= 5) {
+      alert("Document limit reached! You can upload a maximum of 5 syllabus files.");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      alert("File too large! Please upload a PDF smaller than 10 MB.");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+
+    setIsUploading(true);
+
+    const tempId = Date.now();
+    const tempDoc: SyllabusDoc = {
+      id: tempId,
+      filename: file.name,
+      uploadDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
-      status: "uploading", pages: 0, subject: "Unknown",
+      status: "processing",
+      pages: 0,
+      subject: "General",
     };
-    setDocs(d => [...d, newDoc]);
-    setTimeout(() => setDocs(d => d.map(x => x.id === newDoc.id ? { ...x, status: "processing" } : x)), 1500);
-    setTimeout(() => setDocs(d => d.map(x => x.id === newDoc.id ? { ...x, status: "ready", pages: 12 } : x)), 3500);
-    e.target.value = "";
+    
+    setDocs(d => [tempDoc, ...d]);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const response = await fetch("/api/rag/upload", { method: "POST", body: formData });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Upload processing failed");
+      }
+      const savedDoc = await response.json();
+
+      setDocs(d => d.map(x => x.id === tempId ? { ...x, id: savedDoc.id, status: "ready", pages: savedDoc.pages } : x));
+    } catch (error: any) {
+      alert(error?.message || "Upload failed");
+      setDocs(d => d.filter(x => x.id !== tempId));
+    } finally {
+      if (fileRef.current) fileRef.current.value = "";
+      setIsUploading(false);
+    }
   }
 
-  function handleGenerate() {
-    // simulate adding one new pending question
-    const newQ: GeneratedQuestion = {
-      id: Date.now(), status: "pending", difficulty: "Medium", type: "Multiple Choice",
-      topic: "Generated Topic",
-      text: "This is a newly AI-generated question based on your syllabus content.",
-      choices: [
-        { label: "A", text: "The correct generated answer.", isCorrect: true },
-        { label: "B", text: "A plausible distractor.", isCorrect: false },
-        { label: "C", text: "Another distractor.", isCorrect: false },
-        { label: "D", text: "A final distractor.", isCorrect: false },
-      ],
-      answer: "A — The correct generated answer.",
-      flagged: false,
-      citation: {
-        docId: docs.find(d => d.status === "ready")?.id ?? 1,
-        docName: docs.find(d => d.status === "ready")?.filename ?? "Unknown",
-        topic: "Course Overview", section: "Chapter 1 — Introduction", pageRange: "pp. 1–5",
-        confidence: "strong",
-        excerpt: "\"This excerpt is pulled directly from the uploaded syllabus document to support the generated question with a source citation...\"",
-      },
-    };
-    setQuestions(q => [newQ, ...q]);
-  }
+  const handleGenerate = async (config: {
+    count: string;
+    difficulty: string;
+    qtypes: string[];
+    docId: number | "all";
+  }) => {
+    if (docs.length === 0) {
+      alert("Please upload at least one syllabus document first.");
+      return;
+    }
+
+    setGenerating(true);
+
+    try {
+      const activeDocId = config.docId === "all" ? docs[0].id : config.docId;
+
+      const response = await fetch("/api/rag/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          count: parseInt(config.count, 10),
+          difficulty: config.difficulty,
+          types: config.qtypes,
+          document_id: activeDocId,
+          category: "General", 
+        }),
+      });
+
+      const resData = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const errorMessage = resData?.detail || resData?.error || "Failed to generate questions.";
+        throw new Error(errorMessage);
+      }
+      
+      const normalizedData = (Array.isArray(resData) ? resData : resData.questions || []).map((q: any) => ({
+        ...q,
+        status: String(q.status || "pending").toLowerCase() as QuestionStatus
+      }));
+
+      setQuestions((prev) => [...normalizedData, ...prev]);
+    } catch (error: any) {
+      console.error("Error generating questions:", error);
+      alert(error.message || "Failed to generate questions.");
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const filtered = statusFilter === "all" ? questions : questions.filter(q => q.status === statusFilter);
-  const counts = { all: questions.length, pending: questions.filter(q => q.status === "pending").length,
+  const counts = {
+    all: questions.length,
+    pending: questions.filter(q => q.status === "pending").length,
     approved: questions.filter(q => q.status === "approved").length,
-    rejected: questions.filter(q => q.status === "rejected").length };
+    rejected: questions.filter(q => q.status === "rejected").length,
+  };
+
+  const handleDeleteDoc = async (id: number) => {
+    setDocs(prev => prev.filter(d => d.id !== id));
+    setQuestions(prev => prev.filter(q => q.docId !== id));
+
+    try {
+      await fetch(`/api/rag/doc?id=${id}`, { 
+        method: "DELETE" 
+      });
+    } catch (error) {
+      console.error("Error deleting document:", error);
+    }
+  };
+
+  const handleStatusChange = async (questionId: number, newStatus: QuestionStatus) => {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === questionId ? { ...q, status: newStatus } : q))
+    );
+
+    try {
+      await fetch("/api/rag/status", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questionId, status: newStatus.toUpperCase() }),
+      });
+    } catch (error) {
+      console.error("Failed to update status:", error);
+    }
+  };
+
+  const handleBulkStatusChange = async (targetStatus: QuestionStatus) => {
+    const pendingQuestions = questions.filter(q => q.status === "pending");
+    if (pendingQuestions.length === 0) return;
+
+    const pendingIds = pendingQuestions.map(q => q.id);
+
+    setQuestions(prev =>
+      prev.map(q => (q.status === "pending" ? { ...q, status: targetStatus } : q))
+    );
+
+    try {
+      await fetch("/api/rag/status/bulk", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: pendingIds, status: targetStatus.toUpperCase() }),
+      });
+    } catch (error) {
+      console.error("Failed to execute bulk status change:", error);
+    }
+  };
+
+  const handleDeleteAllRejected = async () => {
+    const rejectedQuestions = questions.filter(q => q.status === "rejected");
+    if (rejectedQuestions.length === 0) return;
+
+    setQuestions(prev => prev.filter(q => q.status !== "rejected"));
+
+    try {
+      await fetch("/api/rag/status/bulk", {
+        method: "DELETE",
+      });
+    } catch (error) {
+      console.error("Failed to delete rejected questions:", error);
+    }
+  };
+
+  const handleEditQuestion = async (id: number, data: Partial<GeneratedQuestion>) => {
+    setQuestions((prev) => prev.map(q => q.id === id ? { ...q, ...data } : q));
+    
+    try {
+      await fetch("/api/rag/edit", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, ...data }),
+      });
+    } catch (error) {
+      console.error("Failed to update question data:", error);
+    }
+  };
 
   return (
     <>
@@ -819,37 +737,27 @@ export function AIQuestionGenerator() {
       <div style={{ display: "flex", height: "100vh", background: C.offWhite, overflow: "hidden" }}>
         <Sidebar />
 
-        {/* ── Main area ── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
-
-          {/* Top bar */}
-          <div style={{ background: C.white, borderBottom: `1.5px solid ${C.border}`,
-            padding: "0 24px", height: 62, display: "flex", alignItems: "center",
-            justifyContent: "space-between", flexShrink: 0, gap: 12 }}>
+          <div style={{ background: C.white, borderBottom: `1.5px solid ${C.border}`, padding: "0 24px", height: 62, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, gap: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 34, height: 34, borderRadius: 10, background: C.indigoLight,
-                display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ width: 34, height: 34, borderRadius: 10, background: C.indigoLight, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <Sparkles size={17} color={C.indigo} strokeWidth={2} />
               </div>
               <div>
-                <h1 style={{ fontFamily: "Manrope, sans-serif", fontSize: 18, fontWeight: 800,
-                  color: C.navy, margin: 0, lineHeight: 1.2 }}>AI Question Generator</h1>
-                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600,
-                  color: C.muted, margin: 0 }}>
+                <h1 style={{ fontFamily: "Manrope, sans-serif", fontSize: 18, fontWeight: 800, color: C.navy, margin: 0, lineHeight: 1.2 }}>AI Question Generator</h1>
+                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600, color: C.muted, margin: 0 }}>
                   Powered by your syllabus · every question cites its source
                 </p>
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 5, background: C.greenLight,
-                border: `1.5px solid ${C.greenBorder}`, borderRadius: 20, padding: "5px 12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, background: C.greenLight, border: `1.5px solid ${C.greenBorder}`, borderRadius: 20, padding: "5px 12px" }}>
                 <CheckCircle2 size={12} color="#18A058" strokeWidth={2.5} />
                 <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: "#18A058" }}>
                   {counts.approved} Approved
                 </span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 5, background: C.yellowLight,
-                border: `1.5px solid ${C.yellowBorder}`, borderRadius: 20, padding: "5px 12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, background: C.yellowLight, border: `1.5px solid ${C.yellowBorder}`, borderRadius: 20, padding: "5px 12px" }}>
                 <Clock size={12} color="#9A6C00" strokeWidth={2.5} />
                 <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: "#9A6C00" }}>
                   {counts.pending} Pending
@@ -858,88 +766,94 @@ export function AIQuestionGenerator() {
             </div>
           </div>
 
-          {/* Two-column body */}
           <div style={{ flex: 1, display: "flex", gap: 0, overflow: "hidden" }}>
-
-            {/* ── LEFT PANEL ── */}
-            <div style={{ width: 300, minWidth: 300, borderRight: `1.5px solid ${C.border}`,
-              display: "flex", flexDirection: "column", overflow: "hidden",
-              background: "#F5F5FA" }}>
-
-              {/* Panel header */}
-              <div style={{ padding: "18px 16px 14px", borderBottom: `1.5px solid ${C.border}`,
-                background: C.white }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-                  marginBottom: 12 }}>
+            <div style={{ width: 300, minWidth: 300, borderRight: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden", background: "#F5F5FA" }}>
+              <div style={{ padding: "18px 16px 14px", borderBottom: `1.5px solid ${C.border}`, background: C.white }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                   <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800, color: C.navy }}>
                     Syllabus Documents
                   </span>
-                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-                    color: C.muted, background: C.inputBg, borderRadius: 20, padding: "2px 8px" }}>
+                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, background: C.inputBg, borderRadius: 20, padding: "2px 8px" }}>
                     {docs.length} files
                   </span>
                 </div>
-                {/* Upload button */}
-                <input ref={fileRef} type="file" accept=".pdf,.docx" onChange={handleUpload}
-                  style={{ display: "none" }} />
-                <button type="button" onClick={() => fileRef.current?.click()} style={{
-                  width: "100%", background: C.indigo, border: "none", borderRadius: 11,
-                  padding: "9px 14px", fontFamily: "Manrope, sans-serif", fontSize: 13,
-                  fontWeight: 700, color: "#fff", cursor: "pointer",
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
-                  boxShadow: "0 3px 10px rgba(91,61,246,0.25)",
-                }}>
-                  <Upload size={14} strokeWidth={2.5} />Upload Syllabus
+                <input ref={fileRef} type="file" accept=".pdf,.docx" onChange={handleUpload} style={{ display: "none" }} />
+                <button 
+                  type="button" 
+                  onClick={() => { if (!isUploading) fileRef.current?.click(); }} 
+                  disabled={isUploading}
+                  style={{ 
+                    width: "100%", 
+                    background: isUploading ? "rgba(91,61,246,0.5)" : C.indigo, 
+                    border: "none", 
+                    borderRadius: 11, 
+                    padding: "9px 14px", 
+                    fontFamily: "Manrope, sans-serif", 
+                    fontSize: 13, 
+                    fontWeight: 700, 
+                    color: "#fff", 
+                    cursor: isUploading ? "default" : "pointer", 
+                    display: "flex", 
+                    alignItems: "center", 
+                    justifyContent: "center", 
+                    gap: 7, 
+                    boxShadow: isUploading ? "none" : "0 3px 10px rgba(91,61,246,0.25)",
+                    transition: "all 0.2s ease"
+                  }}
+                >
+                  {isUploading ? (
+                    <><Loader2 size={14} strokeWidth={2.5} style={{ animation: "spin 0.8s linear infinite" }} />Uploading...</>
+                  ) : (
+                    <><Upload size={14} strokeWidth={2.5} />Upload Syllabus</>
+                  )}
                 </button>
-                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted,
-                  margin: "7px 0 0", textAlign: "center" }}>
-                  Accepts PDF or DOCX files
+                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted, margin: "7px 0 0", textAlign: "center" }}>
+                  Accepts PDF files
                 </p>
               </div>
 
-              {/* Doc list */}
               <div style={{ flex: 1, overflowY: "auto", padding: "12px" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {docs.map(doc => (
-                    <DocRow key={doc.id} doc={doc}
-                      onRemove={id => setDocs(d => d.filter(x => x.id !== id))} />
+                    <div key={doc.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", background: C.offWhite, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
+                        <FileText size={16} color={C.indigo} style={{ flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, fontWeight: 600, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.filename}</span>
+                      </div>
+
+                      <button 
+                        type="button" 
+                        onClick={() => handleDeleteDoc(doc.id)} 
+                        style={{ background: "transparent", border: "none", cursor: "pointer", padding: 2, display: "flex", alignItems: "center", flexShrink: 0 }}
+                      >
+                        <X size={14} color={C.muted} />
+                      </button>
+                    </div>
                   ))}
                 </div>
 
-                {/* Transparency note */}
-                <div style={{ marginTop: 16, background: C.indigoLight,
-                  border: `1.5px solid ${C.indigoBorder}`, borderRadius: 14, padding: "12px 14px" }}>
+                <div style={{ marginTop: 16, background: C.indigoLight, border: `1.5px solid ${C.indigoBorder}`, borderRadius: 14, padding: "12px 14px" }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 8, background: C.indigoMid,
-                      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 8, background: C.indigoMid, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       <Zap size={13} color={C.indigo} fill={C.indigo} />
                     </div>
                     <div>
-                      <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800,
-                        color: C.indigo, margin: 0 }}>Transparency Feature</p>
-                      <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 500,
-                        color: C.indigo, margin: "3px 0 0", lineHeight: 1.55, opacity: 0.8 }}>
-                        Every AI-generated question is traced to a specific page and section from
-                        your uploaded documents. Flag any citation you believe is incorrect.
+                      <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: C.indigo, margin: 0 }}>Transparency Feature</p>
+                      <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 500, color: C.indigo, margin: "3px 0 0", lineHeight: 1.55, opacity: 0.8 }}>
+                        Every AI-generated question is traced to a specific page and section from your uploaded documents.
                       </p>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Generate config panel */}
               <div style={{ padding: "12px", borderTop: `1.5px solid ${C.border}` }}>
-                <GeneratePanel docs={docs} onGenerate={handleGenerate} />
+                <GeneratePanel docs={docs} onGenerate={handleGenerate} generating={generating} />
               </div>
             </div>
 
-            {/* ── RIGHT PANEL ── */}
             <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
-
-              {/* Feed header / filter bar */}
-              <div style={{ background: C.white, borderBottom: `1.5px solid ${C.border}`,
-                padding: "12px 20px", display: "flex", alignItems: "center",
-                justifyContent: "space-between", gap: 12, flexShrink: 0 }}>
+              <div style={{ background: C.white, borderBottom: `1.5px solid ${C.border}`, padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexShrink: 0 }}>
                 <div style={{ display: "flex", gap: 6 }}>
                   {(["all", "pending", "approved", "rejected"] as const).map(f => {
                     const labels = { all: "All", pending: "Pending", approved: "Approved", rejected: "Rejected" };
@@ -950,59 +864,115 @@ export function AIQuestionGenerator() {
                       rejected: { bg: statusFilter === "rejected" ? C.redLight   : C.inputBg,   text: statusFilter === "rejected" ? C.red     : C.muted },
                     };
                     return (
-                      <button key={f} type="button" onClick={() => setStatusFilter(f)} style={{
-                        background: colors[f].bg,
-                        border: `1.5px solid ${statusFilter === f ? "transparent" : C.border}`,
-                        borderRadius: 20, padding: "5px 13px",
-                        fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700,
-                        color: colors[f].text, cursor: "pointer",
-                        display: "inline-flex", alignItems: "center", gap: 5,
-                      }}>
+                      <button key={f} type="button" onClick={() => setStatusFilter(f)} style={{ background: colors[f].bg, border: `1.5px solid ${statusFilter === f ? "transparent" : C.border}`, borderRadius: 20, padding: "5px 13px", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: colors[f].text, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
                         {labels[f]}
-                        <span style={{ background: "rgba(0,0,0,0.08)", borderRadius: 20,
-                          padding: "0px 6px", fontSize: 10 }}>
+                        <span style={{ background: "rgba(0,0,0,0.08)", borderRadius: 20, padding: "0px 6px", fontSize: 10 }}>
                           {counts[f]}
                         </span>
                       </button>
                     );
                   })}
                 </div>
-                <div style={{ display: "flex", gap: 7 }}>
-                  <button type="button" onClick={() => setQuestions(q => q.map(x =>
-                    x.status === "pending" ? { ...x, status: "approved" } : x))} style={{
-                    display: "inline-flex", alignItems: "center", gap: 5,
-                    background: C.greenLight, border: `1.5px solid ${C.greenBorder}`,
-                    borderRadius: 9, padding: "6px 12px",
-                    fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700,
-                    color: "#18A058", cursor: "pointer",
-                  }}>
-                    <CheckCircle2 size={13} strokeWidth={2.5} />Approve All Pending
+                
+                {/* Unified Bulk Action Buttons Container */}
+                <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => handleBulkStatusChange("approved")}
+                    disabled={counts.pending === 0}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      background: C.greenLight,
+                      border: `1.5px solid ${C.greenBorder}`,
+                      borderRadius: 9,
+                      padding: "6px 12px",
+                      fontFamily: "Manrope, sans-serif",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: "#18A058",
+                      cursor: counts.pending === 0 ? "default" : "pointer",
+                      opacity: counts.pending === 0 ? 0.5 : 1,
+                    }}
+                  >
+                    <CheckCircle2 size={13} strokeWidth={2.5} />
+                    Approve All Pending ({counts.pending})
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleBulkStatusChange("rejected")}
+                    disabled={counts.pending === 0}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      background: C.redLight,
+                      border: `1.5px solid ${C.redBorder}`,
+                      borderRadius: 9,
+                      padding: "6px 12px",
+                      fontFamily: "Manrope, sans-serif",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: C.red,
+                      cursor: counts.pending === 0 ? "default" : "pointer",
+                      opacity: counts.pending === 0 ? 0.5 : 1,
+                    }}
+                  >
+                    <XCircle size={13} strokeWidth={2.5} />
+                    Reject All Pending ({counts.pending})
+                  </button>
+
+                  {/* Clear Rejected Button */}
+                  <button
+                    type="button"
+                    onClick={handleDeleteAllRejected}
+                    disabled={counts.rejected === 0}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      background: C.inputBg,
+                      border: `1.5px solid ${C.border}`,
+                      borderRadius: 9,
+                      padding: "6px 12px",
+                      fontFamily: "Manrope, sans-serif",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: C.muted,
+                      cursor: counts.rejected === 0 ? "default" : "pointer",
+                      opacity: counts.rejected === 0 ? 0.5 : 1,
+                    }}
+                  >
+                    <X size={13} strokeWidth={2.5} />
+                    Clear Rejected ({counts.rejected})
                   </button>
                 </div>
               </div>
 
-              {/* Cards feed */}
               <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px" }}>
                 {filtered.length === 0 ? (
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center",
-                    gap: 12, padding: "80px 24px", textAlign: "center" }}>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "80px 24px", textAlign: "center" }}>
                     <Sparkles size={40} color={C.muted} strokeWidth={1.5} />
-                    <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 15, fontWeight: 700,
-                      color: C.navy, margin: 0 }}>No questions here yet</p>
-                    <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, color: C.muted,
-                      margin: 0, maxWidth: 320 }}>
+                    <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 15, fontWeight: 700, color: C.navy, margin: 0 }}>No questions here yet</p>
+                    <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, color: C.muted, margin: 0, maxWidth: 320 }}>
                       Upload a syllabus document and click "Generate Questions" to get started.
                     </p>
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                    {filtered.map(q => (
-                      <QuestionCard key={q.id} q={q}
-                        onStatusChange={(id, s) =>
-                          setQuestions(qs => qs.map(x => x.id === id ? { ...x, status: s } : x))}
-                        onFlag={id =>
-                          setQuestions(qs => qs.map(x => x.id === id ? { ...x, flagged: true } : x))}
-                        onRegenerate={() => {}}
+                    {filtered.map((q) => (
+                      <QuestionCard
+                        key={q.id}
+                        q={q}
+                        onStatusChange={(id, s) => handleStatusChange(id, s)}
+                        onEdit={handleEditQuestion} 
+                        onFlag={(id, reason) =>
+                          setQuestions((qs) =>
+                            qs.map((x) => (x.id === id ? { ...x, flagged: true, flagReason: reason } : x))
+                          )
+                        }
                       />
                     ))}
                   </div>

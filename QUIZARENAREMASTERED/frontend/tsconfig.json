@@ -36,7 +36,7 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
-, "src/components/student only/LiveBattleCOMPONENTONLY"  ],
+, "src/components/student only/LiveBattleCOMPONENTONLY", "src/lib/student/battle/battleSync.ts"  ],
   "exclude": [
     "node_modules"
   ]
