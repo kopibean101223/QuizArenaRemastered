@@ -40,7 +40,7 @@ interface QuestionItem {
   type?: string;
 }
 
-
+// Cryptographically secure random room code generator
 function generateSecureRoomCode(length = 6) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let result = '';
@@ -51,6 +51,7 @@ function generateSecureRoomCode(length = 6) {
   }
   return result;
 }
+
 const AVATAR_COLORS = ["#5B3DF6","#FF6B4A","#FFC93C","#2ED47A","#FF4757","#5BC8F6","#B06EF6","#FF9F40","#E040FB","#00BCD4"];
 const CAPACITY = 40;
 
@@ -177,10 +178,12 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   
   const [inLobby, setInLobby] = useState(false);
   const [activeSessionExists, setActiveSessionExists] = useState(false);
+  
+  // State for globally unique session routing
+  const [sessionId, setSessionId] = useState<string>('');
   const [roomCode, setRoomCode] = useState(() => generateSecureRoomCode());
   
   const [joinedStudents, setJoinedStudents] = useState<Student[]>([]);
-  
   const [copied, setCopied] = useState(false);
   const [battleStarted, setBattleStarted] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -190,30 +193,37 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [randomizedQuestions, setRandomizedQuestions] = useState<QuestionItem[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Hook handles bots entering channels, voting, chatting and answering dynamically
-  const { spawnBots, cleanupBots } = useBotSimulator(selectedSection.id, roomCode, randomizedQuestions, 'LIVE', teamSize);
+  // Use sessionId here instead of selectedSection.id to ensure isolated routing
+  const { spawnBots, cleanupBots } = useBotSimulator(sessionId, roomCode, randomizedQuestions, 'LIVE', teamSize);
 
+  // 1. Fetch active session scoped exclusively to THIS professor
   useEffect(() => {
     const checkActiveSession = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      const currentProfId = professorId || user?.id;
+      
+      if (!currentProfId) return;
+
       const { data } = await supabase
         .from('quiz_sessions')
         .select('id, section_id, status, is_live, room_code') 
         .eq('status', 'ACTIVE')
         .eq('is_live', true)
+        .eq('professor_id', currentProfId) // Prevents overlapping views
         .limit(1);
 
       if (data && data.length > 0) {
+        setSessionId(data[0].id); // Grab the exact session UUID
+        setRoomCode(data[0].room_code);
         setActiveSessionExists(true);
         setInLobby(true);
         setBattleStarted(false); 
-        if (data[0].room_code) {
-          setRoomCode(data[0].room_code);
-        }
       }
     };
     checkActiveSession();
-  }, [supabase]);
+  }, [supabase, professorId]);
 
+  // Load Sections and Question Banks from API
   useEffect(() => {
     const fetchSectionsAndBanks = async () => {
       let query = supabase.from('sections').select('id, name');
@@ -248,6 +258,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     fetchSectionsAndBanks();
   }, [professorId, supabase]);
 
+  // Load and randomize questions
   useEffect(() => {
     async function loadAndRandomizeQuestions() {
       try {
@@ -296,7 +307,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
 
   // WebSocket Connection Handler
   useEffect(() => {
-    if (!inLobby) return;
+    // We strictly wait until we have a sessionId mapped before connecting
+    if (!inLobby || !sessionId) return;
     
     let ws: WebSocket | null = null;
     let isMounted = true;
@@ -310,7 +322,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       ws.onopen = () => {
         ws?.send(JSON.stringify({
           type: 'JOIN_BATTLE',
-          battleId: selectedSection.id,
+          battleId: sessionId, // Isolated session channel
           totalQuestions: randomizedQuestions.length || 37,
           timeLimit: 60,
           sender: 'Professor'
@@ -325,7 +337,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
             if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
             if (data.history) setLiveFeed(data.history);
             
-            // Sync initial state if available
             if (data.leaderboard && Array.isArray(data.leaderboard)) {
                setJoinedStudents(prev => {
                  const updated = [...prev];
@@ -337,7 +348,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                });
             }
           } 
-          // Handle Points Update to Update Ranking Leaderboard
           else if (data.type === 'SCORE_UPDATED') {
             if (data.leaderboard && Array.isArray(data.leaderboard)) {
               setJoinedStudents(prev => {
@@ -355,7 +365,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
           else if (data.type === 'BATTLE_ACTION') {
             setLiveFeed(prev => [data, ...prev]);
             
-            // Extract the Team Property
             if (data.isJoinEvent || (data.message && data.message.includes('joined'))) {
               if (data.sender && data.sender !== 'Professor') {
                 setJoinedStudents(prev => {
@@ -395,7 +404,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       isMounted = false;
       if (ws) ws.close();
     };
-  }, [inLobby, selectedSection.id, randomizedQuestions.length]);
+  }, [inLobby, sessionId, randomizedQuestions.length]);
 
   useEffect(() => {
     if (!battleStarted) return;
@@ -419,26 +428,45 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       return toast.error("Please select a valid section.");
     }
 
-    // 1. Fetch the authenticated user to ensure we have the correct professor ID
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
     const currentProfId = professorId || user?.id;
 
     if (!currentProfId || authError) {
       return toast.error("Authentication error: Could not verify your professor identity.");
     }
 
-    // 2. Include professor_id in the payload
-    const { error: sessionError } = await supabase
+    // Collision Check Algorithm
+    let finalRoomCode = roomCode;
+    let isCodeUnique = false;
+
+    while (!isCodeUnique) {
+      const { data: existingSession } = await supabase
+        .from('quiz_sessions')
+        .select('id')
+        .eq('room_code', finalRoomCode)
+        .maybeSingle();
+
+      if (existingSession) {
+        finalRoomCode = generateSecureRoomCode();
+      } else {
+        isCodeUnique = true;
+      }
+    }
+    setRoomCode(finalRoomCode); 
+
+    // Insert and fetch returning session ID
+    const { data: sessionData, error: sessionError } = await supabase
       .from('quiz_sessions')
       .insert([{
         section_id: selectedSection.id,
-        professor_id: currentProfId, 
-        room_code: roomCode, 
+        professor_id: currentProfId, // Establish ownership
+        room_code: finalRoomCode, 
         is_live: isLive,
         status: isLive ? 'ACTIVE' : 'PENDING',
         deadline: isLive ? null : deadline || null
-      }]);
+      }])
+      .select('id')
+      .single();
 
     if (sessionError) {
       toast.error("Failed to save match session to database.");
@@ -446,7 +474,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       return;
     }
 
-    if (isLive) {
+    if (isLive && sessionData) {
+      setSessionId(sessionData.id); // Isolate the WebSocket with this UUID
       setActiveSessionExists(true);
       setInLobby(true);
       setJoinedStudents([]); 
@@ -462,7 +491,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'PROF_START_BATTLE',
-        battleId: selectedSection.id,
+        battleId: sessionId, // Use UUID
         bankId: selectedBank.id,
         forceReset: true,
         questions: randomizedQuestions 
@@ -479,7 +508,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: 'ADVANCE_QUESTION',
-          battleId: selectedSection.id,
+          battleId: sessionId, // Use UUID
           currentIndex: nextIdx,
           nextTimeLimit: 60,
           isLastQuestion: false
@@ -489,7 +518,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: 'ADVANCE_QUESTION',
-          battleId: selectedSection.id,
+          battleId: sessionId, // Use UUID
           currentIndex: currentIndex,
           isLastQuestion: true
         }));
@@ -505,20 +534,20 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
  const handleEndSession = async () => {
     if (window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
       if (wsRef.current) wsRef.current.close();
-      cleanupBots(); // Destroy bots when leaving
+      cleanupBots(); 
       
       await supabase
         .from('quiz_sessions')
         .update({ status: 'COMPLETED' })
-        .eq('section_id', selectedSection.id);
+        .eq('id', sessionId); // Cleanly update by UUID
 
       setInLobby(false);
       setActiveSessionExists(false);
       setBattleStarted(false);
       setJoinedStudents([]);
       setCurrentIndex(0);
+      setSessionId(''); // Clear UUID
       
-      // ✅ FIX: Immediately generate a fresh room code for the next session
       setRoomCode(generateSecureRoomCode());
       
       toast.success("Live session ended successfully. Configuration unlocked.");
@@ -528,7 +557,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const currentActiveQuestion = randomizedQuestions[currentIndex];
   const totalQCount = randomizedQuestions.length > 0 ? randomizedQuestions.length : 1;
 
-  // Group Students by Team for displaying them clustered
   const studentsByTeam = joinedStudents.reduce((acc, student) => {
     const t = student.team || 'Unassigned';
     if (!acc[t]) acc[t] = [];
@@ -536,7 +564,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     return acc;
   }, {} as Record<string, Student[]>);
 
-  // Calculate Cumulative Team Scores for Live Rankings
   const teamScores = Object.entries(studentsByTeam).map(([team, members]) => {
     const totalScore = members.reduce((sum, m) => sum + (m.score || 0), 0);
     return { team, score: totalScore, members };
@@ -587,7 +614,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                 <div style={{ display: 'flex', justifyContent: 'center', marginTop: 18 }}>
                   <button 
                     type="button" 
-                    onClick={() => spawnBots(teamSize * 3)} // Spawn enough for 3 full teams
+                    onClick={() => spawnBots(teamSize * 3)} 
                     style={{ background: C.indigo, border: "none", borderRadius: 12, padding: "10px 20px", color: "#fff", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
                   >
                     🤖 Spawn {teamSize * 3} Test Bots ({teamSize} per team)
@@ -595,7 +622,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                 </div>
               </div>
 
-              {/* Joined Student Profiles Grid - NOW GROUPED BY TEAM */}
+              {/* Joined Student Profiles Grid */}
               <div style={{ width: "100%" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -612,7 +639,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                   </div>
                 </div>
 
-                {/* Team Bracket Display Layout */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20 }}>
                   {Object.entries(studentsByTeam).map(([teamName, members], idx) => (
                     <div key={teamName} style={{ 
@@ -641,7 +667,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                         {members.map(student => (
                           <PlayerChip key={student.id} player={student} animate={true} />
                         ))}
-                        {/* Pad with empty slots up to teamSize */}
                         {Array.from({ length: Math.max(0, teamSize - members.length) }).map((_, i) => (
                            <EmptySlot key={`empty-${teamName}-${i}`} />
                         ))}
@@ -649,7 +674,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                     </div>
                   ))}
                   
-                  {/* Empty Layout State before anyone joins */}
                   {joinedStudents.length === 0 && (
                      <div style={{ 
                       background: "linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))", 
@@ -686,7 +710,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                 </div>
               </div>
 
-              {/* LIVE INSPECTION CARD WITH FULL DATABASE QUESTION & CHOICES */}
               <div style={{ background: "rgba(91,61,246,0.15)", border: `2px solid ${C.indigo}`, borderRadius: 20, padding: "24px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
                   <Eye size={18} color={C.yellow} />
