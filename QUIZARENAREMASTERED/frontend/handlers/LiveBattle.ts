@@ -1,6 +1,6 @@
 import { WebSocket } from 'ws';
 import Redis from 'ioredis';
-import { finalizeAndSaveBattle, PlayerResult } from '../src/lib/student/battle/battlesync';
+import { finalizeAndSaveBattle, PlayerResult } from '../src/lib/student/battle/battleSync';
 
 const MAX_HISTORY_LIMIT = 100;
 const COMPLETED_ROOM_TTL_SECONDS = 3600; // Retain room state for 1 hour so results linger

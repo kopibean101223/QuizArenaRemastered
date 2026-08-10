@@ -6,9 +6,10 @@ import { AppProvider, useApp } from "@/context/AppContext";
 import { AuthScreen } from "@/components/AuthScreen";
 import { BattleLobby } from "@/components/studentONLY/BattleLobby";
 import { SelfPacedBattle } from "@/components/studentONLY/Battle_OwnPace";
-// Ensure this import matches the exported component name in Battle_LiveQuiz.tsx
-import { LiveBattle } from "@/components/studentONLY/Battle_LiveQuiz"; 
-import { BattleResults } from "@/components/studentONLY/BattleResults";
+import { LiveBattle } from "@/components/studentONLY/Battle_LiveQuiz";
+import { TeamBattle } from "@/components/studentONLY/Battle_TeamMode"; 
+import { BattleRoyale } from "@/components/studentONLY/Battle_BattleRoyale"; 
+import { BattleResults } from "@/components/studentONLY/BattleResultsONLY/Results_LiveQuiz";
 import { ProfessorDashboard } from "@/components/profonly/ProfessorDashboard";
 import SectionsDashboard from "@/components/profonly/SectionsDashboard";
 import { QuestionBank } from "@/components/profonly/QuestionBank";
@@ -27,13 +28,11 @@ function LoadingSpinner() {
 }
 
 function RouterContent() {
-  // Grab current active section/battle ID from AppContext or query params
   const { page, setPage, user, isLoading, activeSectionId } = useApp();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
 
-  // Fallback to URL search param if AppContext section ID isn't set
   const battleId = activeSectionId || searchParams.get("battleId") || "";
 
   useEffect(() => {
@@ -52,9 +51,10 @@ function RouterContent() {
     if (!isMounted || !page || isLoading) return;
     const currentParam = searchParams.get("page");
     if (currentParam !== page) {
-      router.replace(`/?page=${page}`, { scroll: false });
+      const url = battleId ? `/?page=${page}&battleId=${battleId}` : `/?page=${page}`;
+      router.replace(url, { scroll: false });
     }
-  }, [page, isLoading, isMounted, searchParams, router]);
+  }, [page, battleId, isLoading, isMounted, searchParams, router]);
 
   useEffect(() => {
     if (isMounted && !isLoading && user && page === "login") {
@@ -62,6 +62,23 @@ function RouterContent() {
       setPage(targetRoute);
     }
   }, [isMounted, isLoading, user, page, setPage]);
+
+  // Fallback check: If on a battle page without a valid battleId, redirect to lobby
+  useEffect(() => {
+    if (isMounted && !isLoading) {
+      const isBattlePage = [
+        "battle_selfpaced",
+        "battle_team",
+        "battle_royale",
+        "battle_livequiz",
+      ].includes(page);
+
+      if (isBattlePage && !battleId) {
+        console.warn(`[Router] No battleId provided for page '${page}'. Redirecting to lobby.`);
+        setPage("lobby");
+      }
+    }
+  }, [page, battleId, isMounted, isLoading, setPage]);
 
   if (!isMounted || isLoading) {
     return <LoadingSpinner />;
@@ -73,8 +90,11 @@ function RouterContent() {
       return <BattleLobby />;
     case "battle_selfpaced":
       return <SelfPacedBattle battleId={battleId} />;
+    case "battle_team":
+      return <TeamBattle battleId={battleId} />;
+    case "battle_royale":
+      return <BattleRoyale battleId={battleId} />;
     case "battle_livequiz":
-      // Pass the required battleId prop here
       return <LiveBattle battleId={battleId} />;
     case "results":
       return <BattleResults />;
