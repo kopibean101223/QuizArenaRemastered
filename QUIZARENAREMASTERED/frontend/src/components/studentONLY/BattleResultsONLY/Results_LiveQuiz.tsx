@@ -271,7 +271,10 @@ export function BattleResults({ battleId = "room-demo", myResultData }: BattleRe
       try {
         const payload = JSON.parse(event.data);
 
-        if (payload.type === 'ROOM_STATE_SYNC' || payload.type === 'SCORE_UPDATED' || payload.type === 'QUIZ_COMPLETED') {
+        // FIX: the server publishes "ROOM_COMPLETED" (not "QUIZ_COMPLETED")
+        // when a professor manually ends the battle via END_BATTLE/
+        // PROF_END_BATTLE - that case was missing here.
+        if (payload.type === 'ROOM_STATE_SYNC' || payload.type === 'SCORE_UPDATED' || payload.type === 'QUIZ_COMPLETED' || payload.type === 'ROOM_COMPLETED') {
           if (payload.leaderboard && Array.isArray(payload.leaderboard)) {
             setPlayers(processLeaderboard(payload.leaderboard));
           }

@@ -27,6 +27,11 @@ interface AppContextValue {
   logout: () => Promise<void>;
   navigate: (page: Page) => void;
   isLoading: boolean;
+  // FIX: page.tsx already reads this to build the battleId it passes to
+  // battle/results screens, but nothing ever declared or set it, so it
+  // was always undefined and battleId resolved to "" on the results page.
+  activeSectionId: string | null;
+  setActiveSectionId: (id: string | null) => void;
 }
 
 const AppContext = createContext<AppContextValue>({
@@ -36,12 +41,15 @@ const AppContext = createContext<AppContextValue>({
   logout: async () => {},
   navigate: () => {},
   isLoading: true,
+  activeSectionId: null,
+  setActiveSectionId: () => {},
 });
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [page, setPageInternal] = useState<Page>("login");
   const [isLoading, setIsLoading] = useState(true);
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -172,7 +180,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AppContext.Provider value={{ user, page, setPage, logout, navigate, isLoading }}>
+    <AppContext.Provider value={{ user, page, setPage, logout, navigate, isLoading, activeSectionId, setActiveSectionId }}>
       {children}
     </AppContext.Provider>
   );

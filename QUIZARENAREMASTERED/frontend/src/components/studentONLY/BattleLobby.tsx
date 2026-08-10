@@ -81,7 +81,7 @@ function EmptySlot() {
 }
 
 export function BattleLobby() {
-  const { user } = useApp();
+  const { user, setActiveSectionId } = useApp();
   const supabase = createBrowserSupabaseClient();
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -133,6 +133,11 @@ export function BattleLobby() {
 
       setRoomCode(code);
       setActualSessionId(data.id); // FIX: was data.section_id
+      // FIX: the results screen (via page.tsx) reads battleId from
+      // activeSectionId in context, not from this component's local
+      // state - without this, that id was lost the moment navigate()
+      // switched pages, and results always joined an empty battleId.
+      setActiveSectionId(data.id);
       setHasJoined(true);
       toast.success("Successfully joined the live lobby!");
     } catch (err) {

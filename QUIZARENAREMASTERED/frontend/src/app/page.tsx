@@ -99,7 +99,7 @@ function RouterContent() {
       return <BattleRoyale battleId={battleId} />;
     -------------------------------- */
     case "results":
-      return <BattleResults />;
+      return <BattleResults battleId={battleId} />;
     case "dashboard":
       return <ProfessorDashboard />;
     case "sections":
