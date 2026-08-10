@@ -135,4 +135,4 @@ export function TeamBattleResults({ battleId = "team-demo", myResultData }: { ba
       </div>
     </>
   );
-}
+}	

@@ -4,6 +4,14 @@ import { finalizeAndSaveBattle, PlayerResult } from '../src/lib/student/battle/b
 
 const MAX_HISTORY_LIMIT = 100;
 const COMPLETED_ROOM_TTL_SECONDS = 3600; // Retain room state for 1 hour so results linger
+// FIX (2.3): waiting/active room state previously had NO expiry at all, so an
+// abandoned lobby sat in Redis forever. Give it a generous TTL, refreshed on
+// activity, so it self-cleans if nothing else catches it.
+const ACTIVE_ROOM_TTL_SECONDS = 4 * 60 * 60; // 4 hours
+// FIX (2.2): grace period before a host disconnect is treated as "gone for
+// good" — covers brief refreshes/network drops instead of instantly killing
+// the room the moment the professor's socket blips.
+const HOST_DISCONNECT_GRACE_MS = 20_000;
 
 function roomChannel(battleId: string): string {
   return `battle:${battleId}`;
@@ -41,15 +49,26 @@ export interface BattlePayload {
   forceReset?: boolean;
   questions?: unknown[];
   playerData?: PlayerData;
+  // FIX (2.2): lets a client identify itself as the professor/host on join.
+  role?: 'host' | 'student';
 }
 
 class LiveBattleHandler {
   private activeRooms: Map<string, Set<WebSocket>>;
   private clientRoomMap: Map<WebSocket, string>;
+  // FIX (2.2): tracks which socket(s) in a room are the host, and any pending
+  // "host disconnected, waiting to see if they reconnect" timers.
+  private hostSockets: Map<string, Set<WebSocket>>;
+  private hostDisconnectTimers: Map<string, NodeJS.Timeout>;
+  // FIX (2.2): the grace-period timer in handleLeave() fires later, outside
+  // of any handleMessage() call, so it needs its own reference to Redis.
+  private redisPublisherRef: Redis | null = null;
 
   constructor() {
     this.activeRooms = new Map<string, Set<WebSocket>>();
     this.clientRoomMap = new Map<WebSocket, string>();
+    this.hostSockets = new Map<string, Set<WebSocket>>();
+    this.hostDisconnectTimers = new Map<string, NodeJS.Timeout>();
   }
 
   public initSubscriber(redisSubscriber: Redis): void {
@@ -134,6 +153,10 @@ class LiveBattleHandler {
       return;
     }
 
+    // FIX (2.2): keep a live reference so handleLeave()'s grace-period timer
+    // can talk to Redis after this call has already returned.
+    this.redisPublisherRef = redisPublisher;
+
     const channel = roomChannel(battleId);
     const sKey = stateKey(battleId);
     const hKey = historyKey(battleId);
@@ -152,6 +175,21 @@ class LiveBattleHandler {
       this.activeRooms.get(battleId)!.add(ws);
       this.clientRoomMap.set(ws, battleId);
 
+      // FIX (2.2): remember host sockets so handleLeave() can tell a professor
+      // disconnecting apart from a student disconnecting. Reconnecting also
+      // cancels any pending "host is gone" grace-period timer for this room.
+      if (payload.role === 'host') {
+        if (!this.hostSockets.has(battleId)) this.hostSockets.set(battleId, new Set<WebSocket>());
+        this.hostSockets.get(battleId)!.add(ws);
+
+        const pendingTimer = this.hostDisconnectTimers.get(battleId);
+        if (pendingTimer) {
+          clearTimeout(pendingTimer);
+          this.hostDisconnectTimers.delete(battleId);
+          console.log(`Host reconnected to Battle Room ${battleId} — cancelled scheduled auto-completion.`);
+        }
+      }
+
       let roomState = await redisPublisher.hgetall(sKey);
 
       if (!roomState || !roomState.currentIndex || payload.forceReset) {
@@ -164,9 +202,12 @@ class LiveBattleHandler {
           roomCode: roomCode || '',
         };
         await redisPublisher.hset(sKey, roomState);
-        await redisPublisher.persist(sKey).catch(() => {});
         await redisPublisher.del(hKey);
       }
+      // FIX (2.3): give the room state a TTL while it's waiting/active too,
+      // refreshed on every join, so an abandoned lobby eventually expires
+      // instead of sitting in Redis forever.
+      await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
 
       const history = await redisPublisher.lrange(hKey, 0, -1);
       const rawScores = await redisPublisher.hgetall(lKey);
@@ -224,6 +265,8 @@ class LiveBattleHandler {
         startedAt: String(startedAt),
         roomCode: roomCode || '',
       });
+      // FIX (2.3): refresh the TTL on activity so an active room doesn't expire mid-battle.
+      await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
 
       if (payload.forceReset) {
         await redisPublisher.del(hKey);
@@ -280,6 +323,8 @@ class LiveBattleHandler {
           JSON.stringify({ type: 'QUIZ_COMPLETED', battleId, leaderboard })
         );
       } else {
+        // FIX (2.3): keep refreshing the TTL as the battle progresses.
+        await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
         await redisPublisher.publish(
           channel,
           JSON.stringify({
@@ -374,8 +419,69 @@ class LiveBattleHandler {
       }
     }
 
+    // FIX (2.2): if the socket that just left was the host, don't treat it
+    // like an ordinary student disconnect (which the old code did — nothing
+    // about the room changed). Start a short grace period in case it's just a
+    // refresh/network blip; if the host hasn't reconnected by the time it
+    // fires, mark the room completed the same way END_BATTLE does.
+    const hostsInRoom = this.hostSockets.get(battleId);
+    if (hostsInRoom?.has(ws)) {
+      hostsInRoom.delete(ws);
+
+      if (hostsInRoom.size === 0 && !this.hostDisconnectTimers.has(battleId)) {
+        const timer = setTimeout(() => {
+          this.hostDisconnectTimers.delete(battleId);
+          this.completeAbandonedRoom(battleId).catch((err) =>
+            console.error(`[LiveBattle] Failed to auto-complete abandoned room ${battleId}:`, err)
+          );
+        }, HOST_DISCONNECT_GRACE_MS);
+        this.hostDisconnectTimers.set(battleId, timer);
+        console.log(`Host left Battle Room ${battleId}. Auto-completing in ${HOST_DISCONNECT_GRACE_MS / 1000}s unless they reconnect.`);
+      }
+    }
+
     this.clientRoomMap.delete(ws);
     console.log(`Client left Battle Room ${battleId}`);
+  }
+
+  /**
+   * FIX (2.1 + 2.2): best-effort close-out for a room the host walked away
+   * from (closed the tab, navigated off Matchmaking without clicking "End
+   * Session") instead of leaving it stuck in "waiting"/"active" forever.
+   * Needs its own Redis connection references, so callers pass them in via
+   * the same redisPublisher/redisSubscriber the rest of the handler uses —
+   * see the note in server.ts wiring below.
+   */
+  private async completeAbandonedRoom(battleId: string): Promise<void> {
+    if (!this.redisPublisherRef) return;
+    const redisPublisher = this.redisPublisherRef;
+
+    const sKey = stateKey(battleId);
+    const hKey = historyKey(battleId);
+    const lKey = leaderboardKey(battleId);
+    const channel = roomChannel(battleId);
+
+    const roomState = await redisPublisher.hgetall(sKey);
+    if (!roomState || roomState.status === 'completed') return; // already handled
+
+    await redisPublisher.hset(sKey, { status: 'completed' });
+    await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
+    await redisPublisher.expire(hKey, COMPLETED_ROOM_TTL_SECONDS);
+
+    const rawScores = await redisPublisher.hgetall(lKey);
+    const leaderboard = Object.values(rawScores || {}).map((item) => JSON.parse(item));
+
+    await this.syncBattleToSupabase(redisPublisher, battleId, roomState.roomCode);
+
+    await redisPublisher.publish(
+      channel,
+      JSON.stringify({
+        type: 'ROOM_COMPLETED',
+        battleId,
+        leaderboard,
+        message: 'The host disconnected and the session was automatically closed.',
+      })
+    );
   }
 }
 

@@ -40,7 +40,7 @@ export interface PlayerResult {
 export interface FinalBattleData {
   battleId: string;
   roomCode?: string;
-  battleMode?: 'LIVE' | 'SELF_PACED';
+  battleMode?: 'LIVE' | 'SELF_PACED' | 'TEAM' | 'ROYALE';
   players?: PlayerResult[];
 }
 
@@ -60,36 +60,30 @@ export async function finalizeAndSaveBattle(data: FinalBattleData): Promise<bool
   console.log('====================================================================\n');
 
   try {
-    // 🔍 CHECKER 3: Before Quiz Sessions Upsert
-    const sessionUpsertPayload = {
-      section_id: battleId,
-      room_code: roomCode,
+    // 🔍 CHECKER 3: Before Quiz Sessions Update
+    // FIX (3b): battleId is the section_id, NOT quiz_sessions.id. The old code
+    // upserted with `id: battleId`, which either fails (id isn't a valid FK/PK
+    // match) or silently creates/updates a completely different, fabricated
+    // row — leaving the REAL active session's status stuck on 'ACTIVE' forever.
+    // We now update the existing active row for this section instead.
+    const sessionUpdatePayload = {
       status: 'COMPLETED',
       finished_at: new Date().toISOString(),
       mode: battleMode,
+      ...(roomCode ? { room_code: roomCode } : {}),
     };
-    console.log('[BattleSync DB Query] Upserting to quiz_sessions with:', sessionUpsertPayload);
+    console.log('[BattleSync DB Query] Updating quiz_sessions (by section_id) with:', sessionUpdatePayload);
 
-    
-    // 1. Upsert session using battleId as the session's primary key 'id'
-const { data: sessionData, error: sessionError } = await supabaseAdmin
-  .from('quiz_sessions')
-  .upsert(
-    {
-      id: battleId,         // Primary key UUID for this session
-      section_id: battleId, // Or your section's UUID if passed separately
-      room_code: roomCode,
-      status: 'COMPLETED',
-      finished_at: new Date().toISOString(),
-      mode: battleMode,
-    },
-    { onConflict: 'id' }    // Works because 'id' is the primary key!
-  )
-  .select('id')
-  .single();
+    const { data: sessionData, error: sessionError } = await supabaseAdmin
+      .from('quiz_sessions')
+      .update(sessionUpdatePayload)
+      .eq('section_id', battleId)
+      .eq('status', 'ACTIVE')
+      .select('id')
+      .single();
 
 if (sessionError || !sessionData) {
-  console.error('❌ [BattleSync DB Error] Failed to upsert quiz_sessions:', sessionError);
+  console.error('❌ [BattleSync DB Error] Failed to update quiz_sessions:', sessionError);
   return false;
 }
 

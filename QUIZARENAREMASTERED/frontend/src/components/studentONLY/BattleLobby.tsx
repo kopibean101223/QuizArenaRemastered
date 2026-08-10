@@ -8,8 +8,6 @@ import {
 } from "lucide-react";
 import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
-import { LiveBattle } from "./Battle_LiveQuiz";
-import { SelfPacedBattle } from "./Battle_OwnPace";
 
 // ─── Palette ────────────────────────────────────────────────────────────────────
 const C = {
@@ -80,8 +78,20 @@ function EmptySlot() {
   );
 }
 
+// Maps the mode the server tells us about to the actual routed battle page.
+// FIX (1.2): page.tsx already has a router with a case for each of these —
+// BattleLobby now feeds that router instead of keeping its own parallel one.
+function pageForMode(mode: "LIVE" | "SELF_PACED" | "TEAM" | "ROYALE") {
+  switch (mode) {
+    case "SELF_PACED": return "battle_selfpaced" as const;
+    case "TEAM": return "battle_team" as const;
+    case "ROYALE": return "battle_royale" as const;
+    default: return "battle_livequiz" as const;
+  }
+}
+
 export function BattleLobby() {
-  const { user } = useApp();
+  const { user, navigate, setActiveSectionId, setLastBattleMode } = useApp();
   const supabase = createBrowserSupabaseClient();
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -95,8 +105,17 @@ export function BattleLobby() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [battleStarted, setBattleStarted] = useState(false);
   
-  // DYNAMIC BATTLE MODE: Tracks "LIVE" vs "SELF_PACED" from Professor/Server
-  const [battleMode, setBattleMode] = useState<"LIVE" | "SELF_PACED">("LIVE");
+  // DYNAMIC BATTLE MODE: Tracks mode chosen by the Professor/Server.
+  // FIX (1.2): now also recognizes TEAM and ROYALE, not just LIVE/SELF_PACED.
+  const [battleMode, setBattleMode] = useState<"LIVE" | "SELF_PACED" | "TEAM" | "ROYALE">("LIVE");
+
+  function parseMode(raw: unknown): "LIVE" | "SELF_PACED" | "TEAM" | "ROYALE" {
+    const mode = String(raw || "LIVE").toUpperCase();
+    if (mode === "SELF_PACED" || mode === "SELFPACED") return "SELF_PACED";
+    if (mode === "TEAM") return "TEAM";
+    if (mode === "ROYALE" || mode === "BATTLE_ROYALE") return "ROYALE";
+    return "LIVE";
+  }
 
   const handleJoinClick = async () => {
     if (!inputCode.trim()) {
@@ -125,6 +144,7 @@ export function BattleLobby() {
 
       setRoomCode(code);
       setActualSectionId(data.section_id);
+      setActiveSectionId(data.section_id); // FIX (1.6): so page.tsx's router/results screen has a real battleId
       setHasJoined(true);
       toast.success("Successfully joined the live lobby!");
     } catch (err) {
@@ -188,15 +208,13 @@ export function BattleLobby() {
           data.type === "BATTLE_STARTED" || 
           data.type === "START_BATTLE"
         ) {
-          const mode = (data.mode || data.battleMode || "LIVE").toUpperCase();
-          setBattleMode(mode === "SELF_PACED" || mode === "SELFPACED" ? "SELF_PACED" : "LIVE");
+          setBattleMode(parseMode(data.mode || data.battleMode));
           setCountdown((prev) => (prev === null ? 3 : prev));
         }
 
         // Late-joining student mid-game bypasses lobby countdown
         if (data.type === "ROOM_STATE_SYNC" && data.status === "active") {
-          const mode = (data.mode || data.battleMode || "LIVE").toUpperCase();
-          setBattleMode(mode === "SELF_PACED" || mode === "SELFPACED" ? "SELF_PACED" : "LIVE");
+          setBattleMode(parseMode(data.mode || data.battleMode));
           setBattleStarted(true);
         }
 
@@ -236,13 +254,15 @@ export function BattleLobby() {
 
   const emptySlots = Math.max(0, CAPACITY - players.length);
 
-  // ROUTE DYNAMICALLY BASED ON PROFESSOR'S CHOSEN MODE
-  if (battleStarted) {
-    if (battleMode === "SELF_PACED") {
-      return <SelfPacedBattle battleId={actualSectionId} />;
-    }
-    return <LiveBattle battleId={actualSectionId} />;
-  }
+  // FIX (1.2 + 1.5): route through page.tsx's router (which already has a case
+  // for every mode) instead of rendering a battle component locally, and record
+  // which mode this was so the results screen knows which one to show.
+  useEffect(() => {
+    if (!battleStarted) return;
+    setActiveSectionId(actualSectionId);
+    setLastBattleMode(battleMode);
+    navigate(pageForMode(battleMode));
+  }, [battleStarted, actualSectionId, battleMode, navigate, setActiveSectionId, setLastBattleMode]);
 
   return (
     <>

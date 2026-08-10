@@ -10,6 +10,8 @@ import { LiveBattle } from "@/components/studentONLY/Battle_LiveQuiz";
 import { TeamBattle } from "@/components/studentONLY/Battle_TeamMode"; 
 import { BattleRoyale } from "@/components/studentONLY/Battle_BattleRoyale"; 
 import { BattleResults } from "@/components/studentONLY/BattleResultsONLY/Results_LiveQuiz";
+import { TeamBattleResults } from "@/components/studentONLY/BattleResultsONLY/Results_TeamMode";
+import { BattleRoyaleResults } from "@/components/studentONLY/BattleResultsONLY/Results_BattleRoyale";
 import { ProfessorDashboard } from "@/components/profonly/ProfessorDashboard";
 import SectionsDashboard from "@/components/profonly/SectionsDashboard";
 import { QuestionBank } from "@/components/profonly/QuestionBank";
@@ -28,7 +30,7 @@ function LoadingSpinner() {
 }
 
 function RouterContent() {
-  const { page, setPage, user, isLoading, activeSectionId } = useApp();
+  const { page, setPage, user, isLoading, activeSectionId, lastBattleMode } = useApp();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
@@ -97,7 +99,11 @@ function RouterContent() {
     case "battle_livequiz":
       return <LiveBattle battleId={battleId} />;
     case "results":
-      return <BattleResults />;
+      // FIX (1.5): route to the results screen that matches the mode actually played,
+      // and pass the real battleId instead of falling back to the "room-demo" default.
+      if (lastBattleMode === "TEAM") return <TeamBattleResults battleId={battleId} />;
+      if (lastBattleMode === "ROYALE") return <BattleRoyaleResults battleId={battleId} />;
+      return <BattleResults battleId={battleId} />;
     case "dashboard":
       return <ProfessorDashboard />;
     case "sections":

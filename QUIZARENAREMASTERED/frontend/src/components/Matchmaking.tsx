@@ -164,6 +164,9 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [selectedBank, setSelectedBank] = useState<{ id: string; name: string }>({ id: '', name: 'Select Question Bank...' });
 
   const [isLive, setIsLive] = useState(true);
+  // FIX (1.4): there was previously no reachable UI anywhere for a professor to
+  // choose Team/Royale — only a dead ProfessorLiveLobby.tsx had this state.
+  const [selectedMode, setSelectedMode] = useState<'LIVE' | 'TEAM' | 'ROYALE'>('LIVE');
   const [deadline, setDeadline] = useState('');
   const [adaptive, setAdaptive] = useState(true);
   const [teamSize, setTeamSize] = useState(3);
@@ -311,7 +314,11 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
           battleId: selectedSection.id,
           totalQuestions: randomizedQuestions.length || 37,
           timeLimit: 60,
-          sender: 'Professor'
+          sender: 'Professor',
+          // FIX (2): the server needs to know this socket is the host so it can
+          // tell a professor disconnect apart from a student disconnect.
+          role: 'host',
+          userId: professorId || 'professor',
         }));
       };
 
@@ -388,6 +395,52 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     }, 1000);
     return () => clearInterval(timer);
   }, [battleStarted, currentIndex, randomizedQuestions.length]);
+
+  // FIX (2.1): Matchmaking.tsx previously had NO beforeunload/unmount cleanup
+  // at all. If a professor closed the tab or navigated away instead of
+  // clicking "End Session & Unlock", nothing ran to close the session — it
+  // just sat "waiting"/"active" forever. This is a best-effort attempt on
+  // both a real tab close (beforeunload) and an in-app navigation away
+  // (component unmount) while a session is actually active.
+  const inLobbyRef = useRef(inLobby);
+  const activeSessionExistsRef = useRef(activeSessionExists);
+  const sectionIdRef = useRef(selectedSection.id);
+  const roomCodeRef = useRef(roomCode);
+  useEffect(() => { inLobbyRef.current = inLobby; }, [inLobby]);
+  useEffect(() => { activeSessionExistsRef.current = activeSessionExists; }, [activeSessionExists]);
+  useEffect(() => { sectionIdRef.current = selectedSection.id; }, [selectedSection.id]);
+  useEffect(() => { roomCodeRef.current = roomCode; }, [roomCode]);
+
+  useEffect(() => {
+    function cleanupAbandonedSession() {
+      if (!inLobbyRef.current || !activeSessionExistsRef.current) return;
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        try {
+          wsRef.current.send(JSON.stringify({
+            type: 'END_BATTLE',
+            battleId: sectionIdRef.current,
+            roomCode: roomCodeRef.current,
+          }));
+        } catch {
+          // best-effort, socket may already be closing
+        }
+      }
+      // Fire-and-forget: the tab may close before this resolves, but it's
+      // strictly better than the previous behavior of never even trying.
+      supabase
+        .from('quiz_sessions')
+        .update({ status: 'COMPLETED' })
+        .eq('section_id', sectionIdRef.current)
+        .eq('status', 'ACTIVE')
+        .then(() => {}, () => {});
+    }
+
+    window.addEventListener('beforeunload', cleanupAbandonedSession);
+    return () => {
+      window.removeEventListener('beforeunload', cleanupAbandonedSession);
+      cleanupAbandonedSession(); // covers navigating away within the app (unmount)
+    };
+  }, [supabase]);
    
   async function handleConfirmAndDeploy() {
     if (activeSessionExists) {
@@ -404,7 +457,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
         room_code: roomCode, 
         is_live: isLive,
         status: isLive ? 'ACTIVE' : 'PENDING',
-        deadline: isLive ? null : deadline || null
+        deadline: isLive ? null : deadline || null,
+        mode: isLive ? selectedMode : 'SELF_PACED',
       }]);
 
     if (sessionError) {
@@ -431,7 +485,10 @@ const handleStartBattle = () => {
         battleId: selectedSection.id,
         bankId: selectedBank.id,
         forceReset: true,
-        questions: randomizedQuestions 
+        questions: randomizedQuestions,
+        // FIX (1.4): previously never sent — the server had no way to know
+        // Team/Royale was chosen, so it always fell back to Live behavior.
+        mode: selectedMode,
       }));
     }
   };
@@ -451,26 +508,69 @@ const handleStartBattle = () => {
           isLastQuestion: false
         }));
       }
+      setTimeRemaining(60);
     } else {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: 'ADVANCE_QUESTION',
-          battleId: selectedSection.id,
-          currentIndex: currentIndex,
-          isLastQuestion: true
-        }));
-      }
+      // FIX (3a): "Finish Quiz" used to only send ADVANCE_QUESTION(isLastQuestion),
+      // which never actually closed out the session — the professor had to
+      // separately click "End Session & Unlock" for anything to visibly change.
+      finishQuiz();
     }
-    setTimeRemaining(60);
+  };
+
+  // FIX (3a): finishing the quiz now also sends END_BATTLE and flips the same
+  // local UI state handleEndSession() does, in one click instead of two.
+  const finishQuiz = async () => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'ADVANCE_QUESTION',
+        battleId: selectedSection.id,
+        currentIndex,
+        isLastQuestion: true,
+      }));
+      wsRef.current.send(JSON.stringify({
+        type: 'END_BATTLE',
+        battleId: selectedSection.id,
+        roomCode,
+      }));
+      wsRef.current.close();
+    }
+
+    // FIX (3b): battleSync.ts's finalizeAndSaveBattle() now correctly updates
+    // this same row (matched by section_id + status ACTIVE) — this update here
+    // and that one target the same row, so whichever lands last wins, which is fine.
+    await supabase
+      .from('quiz_sessions')
+      .update({ status: 'COMPLETED' })
+      .eq('section_id', selectedSection.id)
+      .eq('status', 'ACTIVE');
+
+    setInLobby(false);
+    setActiveSessionExists(false);
+    setBattleStarted(false);
+    setJoinedStudents([]);
+    setCurrentIndex(0);
+    toast.success("Quiz finished! Results saved and session closed.");
   };
 
   const handleEndSession = async () => {
     if (window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
+      // FIX (2 - related): previously this closed only the professor's own
+      // socket without ever telling the room, so students' clients never
+      // learned the session ended. Send END_BATTLE first so LiveBattle.ts
+      // marks Redis 'completed' and broadcasts ROOM_COMPLETED to everyone.
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'END_BATTLE',
+          battleId: selectedSection.id,
+          roomCode,
+        }));
+      }
       if (wsRef.current) wsRef.current.close();
       await supabase
         .from('quiz_sessions')
         .update({ status: 'COMPLETED' })
-        .eq('section_id', selectedSection.id);
+        .eq('section_id', selectedSection.id)
+        .eq('status', 'ACTIVE');
 
       setInLobby(false);
       setActiveSessionExists(false);
@@ -740,6 +840,40 @@ const handleStartBattle = () => {
                   <Dropdown value={selectedSection} options={sectionsList} onChange={v => setSelectedSection(v)} disabled={activeSessionExists} />
                 </div>
               </div>
+
+              {/* FIX (1.4): there was previously no reachable UI to pick Team/Royale mode
+                  anywhere — ProfessorLiveLobby.tsx had this picker but was dead code,
+                  never imported by page.tsx. It's ported here into the component that's
+                  actually routed to. Only applies to Live sessions. */}
+              {isLive && (
+                <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Battle Mode</span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {([
+                      { id: 'LIVE', label: 'Individual' },
+                      { id: 'TEAM', label: 'Team' },
+                      { id: 'ROYALE', label: 'Battle Royale' },
+                    ] as const).map(m => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        disabled={activeSessionExists}
+                        onClick={() => setSelectedMode(m.id)}
+                        style={{
+                          flex: 1, padding: "10px 14px", borderRadius: 12, cursor: activeSessionExists ? "not-allowed" : "pointer",
+                          border: `1.5px solid ${selectedMode === m.id ? C.indigo : C.border}`,
+                          background: selectedMode === m.id ? C.indigoLight : C.white,
+                          fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700,
+                          color: selectedMode === m.id ? C.indigo : C.navy,
+                        }}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
 
               <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
