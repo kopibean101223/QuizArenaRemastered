@@ -7,7 +7,8 @@ import ast
 import socketio
 import uvicorn
 from dotenv import load_dotenv
-
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict
 # 1. Load environment variables (Automatically enables LangChain tracing)
 load_dotenv()
 
@@ -28,6 +29,38 @@ from pydantic import BaseModel
 from typing import List, Optional, Any
 from pypdf import PdfReader
 from openai import OpenAI
+import redis
+from fastapi import Request
+
+redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+
+def check_rate_limit_and_audit(student_id: str, endpoint: str, limit: int = 5, window_seconds: int = 60):
+    """
+    Addresses Panel Issue 7: Rate limits on analyzer submissions and audit logging.
+    Allows 5 requests per minute per student.
+    """
+    if not student_id:
+        raise HTTPException(status_code=400, detail="Missing student ID for audit logging.")
+
+    rate_key = f"ratelimit:{endpoint}:{student_id}"
+    current_requests = redis_client.get(rate_key)
+
+    if current_requests and int(current_requests) >= limit:
+        audit_log = f"[AUDIT WARNING] Student {student_id} spamming {endpoint}."
+        redis_client.lpush("audit:security_logs", audit_log)
+        
+        raise HTTPException(
+            status_code=429, 
+            detail=f"Rate limit exceeded to prevent API abuse. Please wait {window_seconds} seconds."
+        )
+    
+
+    pipe = redis_client.pipeline()
+    pipe.incr(rate_key, 1)
+    pipe.expire(rate_key, window_seconds)
+    pipe.execute()
+
+    redis_client.lpush("audit:activity_logs", f"[AUDIT] Student {student_id} accessed {endpoint}")
 
 # LangChain & Vector Store Imports
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -37,6 +70,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from supabase import create_client, Client
 
 from app.realtime.events import register_game_events
+
 
 # Initialize Supabase Client & Global Stores
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -164,7 +198,7 @@ async def ingest_file(file: UploadFile = File(...), docId: str = Form(...)):
             "chunks": extracted_chunks
         }
 
-        # LangChain Smart Text Splitter
+      
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=500,
             chunk_overlap=50,
@@ -206,6 +240,38 @@ async def ingest_file(file: UploadFile = File(...), docId: str = Form(...)):
         print(f"Ingestion error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class MathCitation(BaseModel):
+    docId: int = Field(description="The ID of the source document")
+    docName: str = Field(description="The filename of the syllabus/document")
+    topic: str = Field(description="The specific mathematical topic (e.g., Algebra)")
+    section: str = Field(description="The section or chapter name")
+    pageRange: str = Field(description="The exact page number(s) where this concept is found")
+    excerpt: str = Field(description="A direct quote from the text supporting the math problem")
+    confidence: str = Field(description="Must be 'strong', 'medium', or 'weak'")
+
+
+class MathQuestion(BaseModel):
+    text: str = Field(description="The mathematical problem to be solved.")
+    type: str = Field(description="Must be one of: 'Multiple Choice', 'Step-by-step Solution', 'Numerical Input', 'Graphing'")
+    difficulty: str = Field(description="Must be 'Easy', 'Medium', or 'Hard'")
+    answer: str = Field(description="The final, correct mathematical answer.")
+    choices: Optional[List[str]] = Field(default=None, description="Provide exactly 4 plausible choices if the type is 'Multiple Choice'. Otherwise null.")
+    
+
+    stepWeights: Optional[Dict[str, int]] = Field(
+        default=None, 
+        description="If 'Step-by-step Solution', provide a dictionary mapping each logical step to a percentage weight (e.g., {'Formula setup': 30, 'Substitution': 30, 'Calculation': 40})."
+    )
+    partialCreditRules: Optional[str] = Field(
+        default=None, 
+        description="If 'Step-by-step Solution', explain exactly how partial credit should be awarded if the final answer is incorrect but intermediate steps are right."
+    )
+    
+    citation: MathCitation
+
+class MathQuestionList(BaseModel):
+    questions: List[MathQuestion]
 
 class GenerateRequest(BaseModel):
     count: int = 5
@@ -287,56 +353,52 @@ async def generate_questions(req: GenerateRequest):
     full_context = "\n".join(context_items)
     filename = req.filename or "Syllabus.pdf"
 
+   # Inside ai-backend/app/main.py
+
     prompt = f"""
-Create exactly {req.count} test questions based on these excerpts from "{filename}":
+Create exactly {req.count} Mathematics test questions based on these excerpts from "{filename}":
 
 CONTEXT EXCERPTS:
 {full_context}
 
 Difficulty Level: {req.difficulty}
-Target Category: {req.category}
+Target Category: Mathematics ({req.category})
 
 CRITICAL QUESTION TYPE VALIDATION RULE:
-If any of the target question types include "Coding" or "Mathematics", you MUST verify that the context excerpts contain relevant code snippets, programming structures, or mathematical formulas/numbers. 
-If they DO NOT contain these concepts, you MUST abort and return EXACTLY this JSON object:
+If the excerpts DO NOT contain mathematical concepts, formulas, or numbers, you MUST abort and return EXACTLY this JSON object:
 {{
-  "error": "Selected question type requires coding or mathematics concepts, but none were detected in the uploaded document."
+  "error": "Selected question type requires mathematics concepts, but none were detected in the uploaded document."
 }}
 
-Otherwise, return ONLY a raw JSON object containing the questions array, without markdown wrappers, matching this exact structure:
+Otherwise, return ONLY a raw JSON object containing the questions array matching this exact structure:
 {{
   "questions": [
     {{
-      "text": "Question text derived from concept",
+      "text": "The mathematical problem derived from the concept",
       "type": "Target Type",
       "difficulty": "{req.difficulty}",
-      "topic": "Topic keyword",
+      "topic": "Specific Math Topic",
       "answer": "Correct answer text/explanation",
-      "choices": []
+      "choices": [],
+      "stepWeights": {{"Formula setup": 40, "Substitution": 30, "Calculation": 30}},
+      "partialCreditRules": "Give 40% if formula is correct but calculation is wrong."
     }}
   ]
 }}
 
 STRICT TYPE FORMATTING RULES:
-1. For "Identification":
-   - The question MUST ask for a specific term, concept, or name.
+1. For "Step-by-step Solution":
    - "choices" MUST BE AN EMPTY ARRAY: []
-   - "answer" MUST BE the exact word or short phrase.
-2. For "Short Answer":
-   - "choices" MUST BE AN EMPTY ARRAY: []
-   - "answer" MUST BE a concise explanation.
-3. For "True / False":
-   - The question "text" MUST be a statement evaluating to True or False.
-   - "answer" MUST BE EXACTLY "True" or "False".
-   - "choices" MUST contain exactly two options:
-     [
-       {{"label": "A", "text": "True", "isCorrect": true}},
-       {{"label": "B", "text": "False", "isCorrect": false}}
-     ]
-4. For "Multiple Choice", "Coding", or "Mathematics":
+   - You MUST provide "stepWeights" (a dictionary mapping logical steps to percentage weights totaling 100).
+   - You MUST provide "partialCreditRules" explaining how to grade mistakes.
+2. For "Multiple Choice":
    - "choices" MUST be an array of exactly 4 objects (A, B, C, D) with one correct choice.
-5. GENERAL RULE:
-   - NEVER include phrases like "According to page X", "Based on excerpt Y", or "In page Z".
+   - "stepWeights" and "partialCreditRules" can be null.
+3. For "Numerical Input":
+   - "choices" MUST BE AN EMPTY ARRAY: [].
+   - "answer" MUST be the exact number or expression.
+4. GENERAL RULE:
+   - NEVER include phrases like "According to page X" in the question text.
 """
 
     raw_text = None

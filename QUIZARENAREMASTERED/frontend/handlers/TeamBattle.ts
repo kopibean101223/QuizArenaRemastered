@@ -139,6 +139,7 @@ class TeamBattleHandler {
     }
 
     // ── SUBMIT MEMBER ANSWER & BROADCAST ALL TEAM ANSWERS ──
+
     if (type === 'SUBMIT_TEAM_MEMBER_ANSWER') {
       if (!answer || !answer.memberId) return;
 
@@ -148,6 +149,33 @@ class TeamBattleHandler {
       const rawAnswers = await redisPublisher.hgetall(ansKey);
       const teamAnswers: TeamMemberAnswerPayload[] = Object.values(rawAnswers).map((item) => JSON.parse(item));
 
+      const voteCounts: Record<string, number> = {};
+      let leaderVote = '';
+
+      teamAnswers.forEach(ans => {
+        voteCounts[ans.selectedOption] = (voteCounts[ans.selectedOption] || 0) + 1;
+        if ((ans as any).isDesignatedLeader) leaderVote = ans.selectedOption;
+      });
+
+     
+      let maxVotes = 0;
+      let winningOption = '';
+      let isTie = false;
+
+      Object.entries(voteCounts).forEach(([option, count]) => {
+        if (count > maxVotes) {
+          maxVotes = count;
+          winningOption = option;
+          isTie = false;
+        } else if (count === maxVotes) {
+          isTie = true;
+        }
+      });
+
+      if (isTie && leaderVote) {
+        winningOption = leaderVote;
+      }
+
       await redisPublisher.publish(
         channel,
         JSON.stringify({
@@ -155,6 +183,8 @@ class TeamBattleHandler {
           battleId,
           questionIndex,
           teamAnswers,
+          currentWinningOption: winningOption,
+          isTieResolvedByLeader: isTie
         })
       );
       return;

@@ -5,10 +5,10 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { AppProvider, useApp } from "@/context/AppContext";
 import { AuthScreen } from "@/components/AuthScreen";
 import { BattleLobby } from "@/components/studentONLY/BattleLobby";
-import { SelfPacedBattle } from "@/components/studentONLY/Battle_OwnPace";
+//import { SelfPacedBattle } from "@/components/studentONLY/Battle_OwnPace";
 import { LiveBattle } from "@/components/studentONLY/Battle_LiveQuiz";
 import { TeamBattle } from "@/components/studentONLY/Battle_TeamMode"; 
-import { BattleRoyale } from "@/components/studentONLY/Battle_BattleRoyale"; 
+//import { BattleRoyale } from "@/components/studentONLY/Battle_BattleRoyale"; 
 import { BattleResults } from "@/components/studentONLY/BattleResultsONLY/Results_LiveQuiz";
 import { ProfessorDashboard } from "@/components/profonly/ProfessorDashboard";
 import SectionsDashboard from "@/components/profonly/SectionsDashboard";
@@ -92,10 +92,12 @@ function RouterContent() {
       return <SelfPacedBattle battleId={battleId} />;
     case "battle_team":
       return <TeamBattle battleId={battleId} />;
+/* --- PHASE 2 STRETCH GOALS --- 
+    case "battle_selfpaced":
+      return <SelfPacedBattle battleId={battleId} />;
     case "battle_royale":
       return <BattleRoyale battleId={battleId} />;
-    case "battle_livequiz":
-      return <LiveBattle battleId={battleId} />;
+    -------------------------------- */
     case "results":
       return <BattleResults />;
     case "dashboard":
