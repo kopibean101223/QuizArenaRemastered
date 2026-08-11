@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 64, "column": 0}, "map": {"version":3,"sources":["file:///C:/Users/John/Documents/QuizArenaRemastered/quizarenaremastered/frontend/src/app/api/rag/data/route.ts"],"sourcesContent":["import { NextResponse } from 'next/server';\r\nimport { PrismaClient } from '@prisma/client';\r\n\r\nconst prisma = new PrismaClient();\r\n\r\nexport async function GET() {\r\n  try {\r\n    const docs = await prisma.syllabusDoc.findMany({ orderBy: { id: 'desc' } });\r\n    const questions = await prisma.generatedQuestion.findMany({ orderBy: { id: 'desc' } });\r\n    return NextResponse.json({ docs, questions });\r\n  } catch (error) {\r\n    return NextResponse.json({ error: 'Failed to fetch database records' }, { status: 500 });\r\n  }\r\n}"],"names":["prisma","GET","docs","syllabusDoc","findMany","orderBy","id","questions","generatedQuestion","json","error","status"],"mappings":";;;;AAAA;AACA;;;AAEA,MAAMA,SAAS,IAAI,yOAAY;AAExB,eAAeC;IACpB,IAAI;QACF,MAAMC,OAAO,MAAMF,OAAOG,WAAW,CAACC,QAAQ,CAAC;YAAEC,SAAS;gBAAEC,IAAI;YAAO;QAAE;QACzE,MAAMC,YAAY,MAAMP,OAAOQ,iBAAiB,CAACJ,QAAQ,CAAC;YAAEC,SAAS;gBAAEC,IAAI;YAAO;QAAE;QACpF,OAAO,mLAAY,CAACG,IAAI,CAAC;YAAEP;YAAMK;QAAU;IAC7C,EAAE,OAAOG,OAAO;QACd,OAAO,mLAAY,CAACD,IAAI,CAAC;YAAEC,OAAO;QAAmC,GAAG;YAAEC,QAAQ;QAAI;IACxF;AACF"}}]
+}

@@ -1,3 +1,4 @@
+
 "use client";
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
@@ -8,9 +9,10 @@ export type Role = "student" | "professor";
 export type Page =
   | "login" | "role"
   | "lobby" | "battle" | "results"
+  | "student_dashboard" | "history" | "classes" | "profile"
   | "dashboard" | "sections" | "questions" | "aigen" | "matchmaking" | "analyzer";
 
-const STUDENT_PAGES: Page[] = ["lobby", "battle", "results"];
+const STUDENT_PAGES: Page[] = ["lobby", "battle", "results", "student_dashboard", "history", "classes", "profile"];
 const PROFESSOR_PAGES: Page[] = ["dashboard", "sections", "questions", "aigen", "matchmaking", "analyzer"];
 
 export interface AppUser {
@@ -110,7 +112,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const urlParams = new URLSearchParams(window.location.search);
         const urlPage = urlParams.get("page") as Page | null;
 
-        const defaultPage = appUser.role === "professor" ? "dashboard" : "lobby";
+        const defaultPage = appUser.role === "professor" ? "dashboard" : "student_dashboard";
 
         // FIX: If URL has no page parameter OR is set to 'login', redirect to role default
         if (!urlPage || urlPage === "login") {

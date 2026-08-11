@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect, useRef } from "react";
@@ -10,6 +11,7 @@ import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
 import { LiveBattle } from "./Battle_LiveQuiz";
 import { SelfPacedBattle } from "./Battle_OwnPace";
+import { PENDING_JOIN_CODE_KEY } from "@/lib/student/studentData";
 
 // ─── Palette ────────────────────────────────────────────────────────────────────
 const C = {
@@ -105,6 +107,25 @@ export function BattleLobby() {
 
   // DYNAMIC BATTLE MODE: Tracks "LIVE" vs "SELF_PACED" from Professor/Server
   const [battleMode, setBattleMode] = useState<"LIVE" | "SELF_PACED">("LIVE");
+
+  // Picks up a room code that was already validated on the Dashboard's
+  // "Join a Battle" widget, so the student doesn't have to re-type it here.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(PENDING_JOIN_CODE_KEY);
+      if (!raw) return;
+      window.localStorage.removeItem(PENDING_JOIN_CODE_KEY);
+      const pending = JSON.parse(raw) as { code?: string; sectionId?: string };
+      if (pending?.code && pending?.sectionId) {
+        setRoomCode(pending.code);
+        setActualSectionId(pending.sectionId);
+        setHasJoined(true);
+        toast.success("Successfully joined the live lobby!");
+      }
+    } catch {
+      // ignore malformed/expired handoff data
+    }
+  }, []);
 
   const handleJoinClick = async () => {
     if (!inputCode.trim()) {
