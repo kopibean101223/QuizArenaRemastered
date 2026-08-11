@@ -484,7 +484,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     return () => clearInterval(timer);
   }, [battleStarted, currentIndex]);
 
-  async function handleConfirmAndDeploy() {
+ async function handleConfirmAndDeploy() {
     if (activeSessionExists) {
       return toast.error("A live quiz session is currently active. You must end it before deploying a new one.");
     }
@@ -492,10 +492,44 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       return toast.error("Please select a valid section.");
     }
 
+    // 1. Fetch the authenticated user
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const currentProfId = professorId || user?.id;
+
+    if (!currentProfId || authError) {
+      return toast.error("Authentication error: Could not verify your professor identity.");
+    }
+
+    // 2. Advanced Collision-Check Algorithm
+    let finalRoomCode = roomCode;
+    let isCodeUnique = false;
+
+    // Loop until we verify the code does not exist in the database
+    while (!isCodeUnique) {
+      const { data: existingSession } = await supabase
+        .from('quiz_sessions')
+        .select('id')
+        .eq('room_code', finalRoomCode)
+        .maybeSingle();
+
+      if (existingSession) {
+        // Collision detected! Generate a new one and try again.
+        finalRoomCode = generateSecureRoomCode();
+      } else {
+        isCodeUnique = true;
+      }
+    }
+    
+    // Update the UI with the final guaranteed unique code
+    setRoomCode(finalRoomCode); 
+
+    // 3. Deploy the session
     const { error: sessionError } = await supabase
       .from('quiz_sessions')
       .insert([{
         section_id: selectedSection.id,
+        professor_id: currentProfId,
+        room_code: finalRoomCode, // ✅ Verified unique code
         is_live: isLive,
         status: isLive ? 'ACTIVE' : 'PENDING',
         deadline: isLive ? null : deadline || null
@@ -503,19 +537,19 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
 
     if (sessionError) {
       toast.error("Failed to save match session to database.");
+      console.error(sessionError);
       return;
     }
 
     if (isLive) {
       setActiveSessionExists(true);
-      setLobbyPlayers(students);
       setInLobby(true);
+      setJoinedStudents([]); 
       toast.success(`Live Match Session initialized using bank: ${selectedBank.name}! Session Locked.`);
     } else {
       toast.success("Own-pace session successfully deployed!");
     }
   }
-
   const handleStartBattle = () => {
     setBattleStarted(true);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -582,7 +616,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflowY: "auto", padding: 32, color: "#fff" }}>
           
           <div style={{ background: "rgba(255,71,87,0.2)", border: "1px solid rgba(255,71,87,0.4)", borderRadius: 12, padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-            <span style={{ fontSize: 12, fontFamily: "Manrope, sans-serif", color: C.yellow, fontWeight: 700 }}>🔒 STRICT SESSION LOCK: Redis & WebSocket state auto-synced. Navigation is locked until session completion.</span>
+            <span style={{ fontSize: 12, fontFamily: "Manrope, sans-serif", color: C.yellow, fontWeight: 700 }}>🔒 STRICT SESSION LOCK:Navigation is locked until session completion.</span>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Bank: {selectedBank.name} ({randomizedQuestions.length} Questions)</span>
               <button type="button" onClick={handleEndSession} style={{ background: C.red, border: "none", borderRadius: 8, padding: "5px 12px", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>

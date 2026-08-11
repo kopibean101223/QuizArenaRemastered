@@ -29,9 +29,9 @@ export async function POST(req: Request) {
     }
 
 
-    const doc = await prisma.syllabusDoc.findUnique({
-      where: { id: Number(document_id) },
-    });
+   const doc = await prisma.syllabusDoc.findFirst({
+  where: { id: Number(document_id), userId },
+});
 
     if (!doc) {
       return NextResponse.json({ error: 'Document not found in database' }, { status: 404 });
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
 
   
     const fastapiUrl = process.env.FASTAPI_URL || 'http://127.0.0.1:8000';
-    const pyRes = await fetch(`${fastapiUrl}/generate`, {
+   const pyRes = await fetch(`${fastapiUrl}/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -49,7 +49,8 @@ export async function POST(req: Request) {
         document_id: doc.id,
         chunks: doc.chunks || [],
         filename: doc.filename,
-        category: category || 'General',
+        category: 'Mathematics', 
+        requireRubric: true
       }),
     });
 
@@ -60,7 +61,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: errorMessage }, { status: pyRes.status });
     }
 
-    const rawQuestions = Array.isArray(pyData) ? pyData : pyData.questions || [];
+   const rawQuestions = Array.isArray(pyData) ? pyData : pyData.questions || [];
+    const validQuestions = rawQuestions.filter((q: any) => 
+      q.text && 
+      q.answer && 
+      q.citation && 
+      (!types.includes("Step-by-step Solution") || (q.stepWeights && q.partialCreditRules))
+    );
+
+    if (validQuestions.length === 0) {
+      return NextResponse.json({ error: 'AI failed to generate valid Mathematics schemas with partial credit rubrics.' }, { status: 422 });
+    }
 
     const savedQuestions = await Promise.all(
       rawQuestions.map((q: any) =>

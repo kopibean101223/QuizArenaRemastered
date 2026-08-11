@@ -1,10 +1,21 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-const prisma = new PrismaClient();
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+const prisma = globalForPrisma.prisma || new PrismaClient();
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 export async function DELETE(req: Request) {
   try {
+    const supabase = await createServerSupabaseClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized user' }, { status: 401 });
+    }
+
+    const userId = user.id;
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
 
@@ -14,15 +25,25 @@ export async function DELETE(req: Request) {
 
     const docId = Number(id);
 
+    // Verify ownership of the document before deleting[cite: 2]
+    const doc = await prisma.syllabusDoc.findFirst({
+      where: { id: docId, userId },
+    });
+
+    if (!doc) {
+      return NextResponse.json({ error: 'Document not found or unauthorized' }, { status: 404 });
+    }
+
     await prisma.generatedQuestion.deleteMany({
       where: {
         docId: docId,
+        userId: userId,
         status: 'REJECTED' 
       }
     });
 
     await prisma.generatedQuestion.updateMany({
-      where: { docId: docId },
+      where: { docId: docId, userId: userId },
       data: { docId: null }
     });
 

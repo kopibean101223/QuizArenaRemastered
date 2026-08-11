@@ -5,21 +5,24 @@ import { useApp } from "../../context/AppContext";
 import { StudentTopBar } from "../shared/StudentTopBar";
 import {
   Crown, Zap, Star, Trophy, Flame, MessageCircle,
-  CheckCircle2, Wifi, WifiOff, Volume2, VolumeX, Send, ArrowRight
+  CheckCircle2, Wifi, WifiOff, Volume2, VolumeX, ArrowRight
 } from "lucide-react";
 
 import {
   C, OPTION_COLORS, AVATAR_COLORS, QuestionData,
-  INIT_CHAT, Player, ChatMsg, Vote,
+  Player, Vote,
 } from "./LiveBattleCOMPONENTONLY/Constants";
 import { CountdownBar } from "./LiveBattleCOMPONENTONLY/CountdownBar";
 import { AnswerBtn } from "./LiveBattleCOMPONENTONLY/AnswerButton";
 import { LeaderRow } from "./LiveBattleCOMPONENTONLY/LeaderRow";
-import { ChatBubble } from "./LiveBattleCOMPONENTONLY/ChatBubble";
 
 export function LiveBattle({ battleId }: { battleId: string }) {
   const { navigate, user } = useApp();
   const socketRef = useRef<WebSocket | null>(null);
+  // Tracks how many questions this player has gotten right across the
+  // whole quiz, so the results screen can show real correct/accuracy
+  // numbers instead of the last-question-only value the server used to see.
+  const correctCountRef = useRef(0);
 
   const [questions, setQuestions] = useState<QuestionData[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -33,12 +36,9 @@ export function LiveBattle({ battleId }: { battleId: string }) {
   const [votes, setVotes] = useState<Vote[]>([]);
 
   const [players, setPlayers] = useState<Player[]>([]);
-  const [chat, setChat] = useState<ChatMsg[]>(INIT_CHAT);
-  const [chatInput, setChatInput] = useState("");
   const [mode, setMode] = useState<"solo" | "discussion">("discussion");
   const [speedMode] = useState(true);
   const [reactionBursts, setReactionBursts] = useState<{ id: number; emoji: string; x: number; y: number }[]>([]);
-  const chatEndRef = useRef<HTMLDivElement>(null);
 
   const studentName = user?.username || user?.user_metadata?.full_name || user?.email?.split('@')[0] || "Student";
   const currentUserId = user?.id || "local-me";
@@ -154,21 +154,6 @@ export function LiveBattle({ battleId }: { battleId: string }) {
             }
           }
 
-          // Chat sync
-          if (data.type === "CHAT_MESSAGE" || (data.type === "BATTLE_ACTION" && data.message)) {
-            setChat((prev) => [
-              ...prev,
-              {
-                id: Date.now() + Math.random(),
-                player: data.sender || "Student",
-                initials: (data.sender || "ST").substring(0, 2).toUpperCase(),
-                color: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
-                text: data.message,
-                ts: "just now"
-              }
-            ]);
-          }
-
           if (data.type === "QUIZ_COMPLETED") {
             navigate("results");
           }
@@ -219,10 +204,6 @@ export function LiveBattle({ battleId }: { battleId: string }) {
     return () => clearInterval(interval);
   }, [startedAt, currentQuestion, revealed]);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chat]);
-
   function handleSelect(i: number) {
     if (revealed || selected !== null) return;
     setSelected(i);
@@ -266,6 +247,12 @@ export function LiveBattle({ battleId }: { battleId: string }) {
       return prev.map((p) => p.isMe ? { ...p, score: p.score + scoreAdd, streak: isCorrect ? p.streak + 1 : 0 } : p);
     });
 
+    // FIX: track the running correct-answer count ourselves. The server
+    // fully overwrites this player's leaderboard entry on every submit
+    // (it doesn't increment anything), so unless we send the cumulative
+    // count each time, only the most recent question's result survives.
+    if (isCorrect) correctCountRef.current += 1;
+
     // Send score to server so Redis & Supabase update
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
@@ -275,28 +262,15 @@ export function LiveBattle({ battleId }: { battleId: string }) {
           id: currentUserId,
           name: studentName,
           score: (players.find(p => p.isMe)?.score || 0) + scoreAdd,
-          correctCount: isCorrect ? 1 : 0
+          // FIX: was "correctCount" - the results screen reads "correct",
+          // so the old field name was never picked up at all. "total" is
+          // now the real question count instead of the missing/defaulted
+          // value the results screen used to fall back to.
+          correct: correctCountRef.current,
+          total: questions.length,
         }
       }));
     }
-  }
-
-  function sendChat() {
-    if (!chatInput.trim()) return;
-    const msgText = chatInput.trim();
-
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({
-        type: "CHAT_MESSAGE",
-        battleId: battleId || "room_101",
-        userId: currentUserId,
-        sender: studentName,
-        message: msgText,
-      }));
-    } else {
-      setChat((c) => [...c, { id: Date.now(), player: "You", initials: "ME", color: AVATAR_COLORS[0], text: msgText, ts: "now" }]);
-    }
-    setChatInput("");
   }
 
   const totalVotes = votes.reduce((a, v) => a + v.count, 0);
@@ -387,22 +361,10 @@ export function LiveBattle({ battleId }: { battleId: string }) {
           </div>
         </div>
 
-        {mode === "discussion" && (
-          <div style={{ height: 180, background: "rgba(0,0,0,0.3)", borderTop: "1.5px solid rgba(255,255,255,0.07)", display: "flex" }}>
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", borderRight: "1.5px solid rgba(255,255,255,0.06)" }}>
-              <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
-                {chat.map((m) => <ChatBubble key={m.id} msg={m} />)}
-                <div ref={chatEndRef} />
-              </div>
-              <div style={{ padding: "8px 10px", display: "flex", gap: 7, alignItems: "center" }}>
-                <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendChat()} placeholder="Type to discuss…" style={{ flex: 1, background: "rgba(255,255,255,0.06)", border: "1.5px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "7px 12px", color: "#fff" }} />
-                <button type="button" onClick={sendChat} style={{ width: 32, height: 32, background: C.indigo, border: "none", borderRadius: 9, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Send size={14} color="#fff" /></button>
-              </div>
-            </div>
-            <div style={{ width: 220, padding: "16px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
-              {!revealed && (
-                <button type="button" onClick={handleConfirmLeader} disabled={myVote === null} style={{ width: "100%", background: myVote !== null ? C.green : "rgba(255,255,255,0.1)", border: "none", borderRadius: 12, padding: "10px", color: "#fff", fontWeight: 700, cursor: myVote !== null ? "pointer" : "default" }}>Confirm Choice</button>
-              )}
+        {mode === "discussion" && !revealed && (
+          <div style={{ background: "rgba(0,0,0,0.3)", borderTop: "1.5px solid rgba(255,255,255,0.07)", display: "flex", justifyContent: "center", padding: "16px" }}>
+            <div style={{ width: 320 }}>
+              <button type="button" onClick={handleConfirmLeader} disabled={myVote === null} style={{ width: "100%", background: myVote !== null ? C.green : "rgba(255,255,255,0.1)", border: "none", borderRadius: 12, padding: "10px", color: "#fff", fontWeight: 700, cursor: myVote !== null ? "pointer" : "default" }}>Confirm Choice</button>
             </div>
           </div>
         )}

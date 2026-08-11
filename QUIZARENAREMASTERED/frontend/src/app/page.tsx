@@ -83,7 +83,7 @@ function RouterContent() {
       // once the professor starts the session, based on the section's mode.
       return <BattleLobby />;
     case "results":
-      return <BattleResults />;
+      return <BattleResults battleId={battleId} />;
     case "dashboard":
       return <ProfessorDashboard />;
     case "sections":

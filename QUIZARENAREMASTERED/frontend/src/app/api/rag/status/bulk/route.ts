@@ -1,18 +1,29 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-const prisma = new PrismaClient();
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+const prisma = globalForPrisma.prisma || new PrismaClient();
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 export async function PATCH(req: Request) {
   try {
+    const supabase = await createServerSupabaseClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized user' }, { status: 401 });
+    }
+
+    const userId = user.id;
     const { ids, status } = await req.json(); 
 
     if (!Array.isArray(ids) || ids.length === 0) {
       return NextResponse.json({ error: 'No question IDs provided' }, { status: 400 });
     }
 
-      const updated = await prisma.generatedQuestion.updateMany({
-      where: { id: { in: ids } },
+    const updated = await prisma.generatedQuestion.updateMany({
+      where: { id: { in: ids }, userId },
       data: { status },
     });
 
@@ -22,14 +33,19 @@ export async function PATCH(req: Request) {
   }
 }
 
-
 export async function DELETE(req: Request) {
   try {
-    const { searchParams } = new URL(req.url);
-    const userId = searchParams.get('userId'); 
+    const supabase = await createServerSupabaseClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized user' }, { status: 401 });
+    }
+
+    const userId = user.id;
 
     await prisma.generatedQuestion.deleteMany({
-      where: { status: 'REJECTED' },
+      where: { status: 'REJECTED', userId },
     });
 
     return NextResponse.json({ message: 'All rejected questions deleted successfully.' });

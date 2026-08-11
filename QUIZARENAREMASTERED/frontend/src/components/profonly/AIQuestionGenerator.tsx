@@ -444,14 +444,14 @@ function GeneratePanel({
         </div>
       </div>
 
-      {/* Multi-Select Question Types (Now includes Coding & Mathematics) */}
+     
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Question Types</label>
           <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: C.indigo }}>Multi-select</span>
         </div>
         <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-          {["Multiple Choice", "True / False", "Identification", "Short Answer", "Coding", "Mathematics"].map(t => {
+          {["Multiple Choice", "Step-by-step Solution", "Numerical Input", "Graphing/Plotting"].map(t => {
             const isSelected = selectedQtypes.includes(t);
             return (
               <button 

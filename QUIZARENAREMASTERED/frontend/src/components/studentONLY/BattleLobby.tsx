@@ -83,20 +83,28 @@ function EmptySlot() {
 }
 
 export function BattleLobby() {
-  const { user } = useApp();
+  const { user, setActiveSectionId } = useApp();
   const supabase = createBrowserSupabaseClient();
   const wsRef = useRef<WebSocket | null>(null);
 
   const [hasJoined, setHasJoined] = useState(false);
   const [inputCode, setInputCode] = useState("");
   const [roomCode, setRoomCode] = useState("");
-  const [actualSectionId, setActualSectionId] = useState("");
-  
+
+  // FIX: this used to hold quiz_sessions.section_id, which is shared by every
+  // session under the same class section. Two different room codes for the
+  // same section resolved to the same value here, so both rooms were sent to
+  // the server as the same battleId -> same Redis channel -> cross-room sync.
+  // It now holds quiz_sessions.id, the unique UUID per session/room code,
+  // matching how the professor side (Matchmaking.tsx) already derives its
+  // own sessionId/battleId.
+  const [actualSessionId, setActualSessionId] = useState("");
+
   const [players, setPlayers] = useState<Player[]>([]);
-  
+
   const [countdown, setCountdown] = useState<number | null>(null);
   const [battleStarted, setBattleStarted] = useState(false);
-  
+
   // DYNAMIC BATTLE MODE: Tracks "LIVE" vs "SELF_PACED" from Professor/Server
   const [battleMode, setBattleMode] = useState<"LIVE" | "SELF_PACED">("LIVE");
 
@@ -129,7 +137,7 @@ export function BattleLobby() {
     try {
       const { data, error } = await supabase
         .from('quiz_sessions')
-        .select('section_id')
+        .select('id, section_id') // FIX: need the unique session id, not just section_id
         .eq('room_code', code)
         .eq('status', 'ACTIVE')
         .maybeSingle();
@@ -145,7 +153,12 @@ export function BattleLobby() {
       }
 
       setRoomCode(code);
-      setActualSectionId(data.section_id);
+      setActualSessionId(data.id); // FIX: was data.section_id
+      // FIX: the results screen (via page.tsx) reads battleId from
+      // activeSectionId in context, not from this component's local
+      // state - without this, that id was lost the moment navigate()
+      // switched pages, and results always joined an empty battleId.
+      setActiveSectionId(data.id);
       setHasJoined(true);
       toast.success("Successfully joined the live lobby!");
     } catch (err) {
@@ -154,7 +167,7 @@ export function BattleLobby() {
   };
 
   useEffect(() => {
-    if (!hasJoined || !actualSectionId) return;
+    if (!hasJoined || !actualSessionId) return;
 
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
     const socket = new WebSocket(wsUrl);
@@ -170,7 +183,7 @@ export function BattleLobby() {
       // 1. Subscribe to the Redis room
       socket.send(JSON.stringify({
         type: "JOIN_BATTLE",
-        battleId: actualSectionId,
+        battleId: actualSessionId,
         userId: user?.id || `user_${Math.random()}`,
         sender: studentName
       }));
@@ -180,7 +193,7 @@ export function BattleLobby() {
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({
             type: "BATTLE_ACTION",
-            battleId: actualSectionId,
+            battleId: actualSessionId,
             userId: user?.id || `user_${Math.random()}`,
             sender: studentName,
             message: "has joined the live lobby! ✅",
@@ -240,7 +253,7 @@ export function BattleLobby() {
       }
     };
     return () => socket.close();
-  }, [hasJoined, actualSectionId, user]);
+  }, [hasJoined, actualSessionId, user]);
 
   useEffect(() => {
     if (countdown === null) return;
@@ -260,9 +273,9 @@ export function BattleLobby() {
   // ROUTE DYNAMICALLY BASED ON PROFESSOR'S CHOSEN MODE
   if (battleStarted) {
     if (battleMode === "SELF_PACED") {
-      return <SelfPacedBattle battleId={actualSectionId} />;
+      return <SelfPacedBattle battleId={actualSessionId} />;
     }
-    return <LiveBattle battleId={actualSectionId} />;
+    return <LiveBattle battleId={actualSessionId} />;
   }
 
   return (
