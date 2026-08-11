@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
   title: "QuizArena (Demo)",
@@ -15,7 +16,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="size-full">{children}</body>
+      <body className="size-full">{children}
+<Toaster position="top-right" richColors />
+
+      </body>
     </html>
   );
 }
