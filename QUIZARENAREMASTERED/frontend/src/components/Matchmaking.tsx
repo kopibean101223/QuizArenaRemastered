@@ -224,39 +224,60 @@
     }, [supabase, professorId]);
 
     // Load Sections and Question Banks from API
-    useEffect(() => {
-      const fetchSectionsAndBanks = async () => {
-        let query = supabase.from('sections').select('id, name');
-        if (professorId) query = query.eq('professor_id', professorId);
-        const { data: secData } = await query;
-        if (secData && secData.length > 0) {
-          setSectionsList(secData);
-          setSelectedSection(secData[0]);
-        } else {
-          setSectionsList([{ id: 'none', name: 'No Sections Found' }]);
-          setSelectedSection({ id: 'none', name: 'No Sections Found' });
-        }
+   useEffect(() => {
+  const fetchSectionsAndBanks = async () => {
 
-        try {
-          const res = await fetch('/api/questions');
-          if (res.ok) {
-            const qData = await res.json();
-            if (qData && qData.length > 0) {
-              const uniqueTopics = Array.from(new Set(qData.map((q: any) => q.topic).filter(Boolean)));
-              const banks = uniqueTopics.map((topicName, idx) => ({ id: `bank-${idx}`, name: String(topicName) }));
-              setQuestionBanks(banks);
-              if (banks.length > 0) setSelectedBank(banks[0]);
-            } else {
-              setQuestionBanks([{ id: 'default', name: 'Default Question Bank' }]);
-              setSelectedBank({ id: 'default', name: 'Default Question Bank' });
-            }
-          }
-        } catch (err) {
-          console.error("Failed to load question banks from API:", err);
+   const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      console.error("No authenticated user found:", authError);
+      setSectionsList([{ id: 'none', name: 'Please Log In' }]);
+      setSelectedSection({ id: 'none', name: 'Please Log In' });
+      setQuestionBanks([{ id: 'default', name: 'Default Question Bank' }]);
+      setSelectedBank({ id: 'default', name: 'Default Question Bank' });
+      return;
+    }
+
+    const currentUserId = user.id
+
+   const { data: secData, error: secError } = await supabase
+      .from('sections')
+      .select('id, name')
+      .eq('professor_id', currentUserId); // Change 'professor_id' to 'user_id' if your table column is user_id
+
+    if (secError) {
+      console.error("Error fetching sections:", secError);
+    }
+
+    if (secData && secData.length > 0) {
+      setSectionsList(secData);
+      setSelectedSection(secData[0]);
+    } else {
+      setSectionsList([{ id: 'none', name: 'No Sections Found' }]);
+      setSelectedSection({ id: 'none', name: 'No Sections Found' });
+    }
+    // 2. Fetch question banks filtered strictly by professorId via API query params
+    try {
+      const res = await fetch(`/api/questions?professor_id=${encodeURIComponent(professorId)}`);
+      if (res.ok) {
+        const qData = await res.json();
+        if (qData && qData.length > 0) {
+          const uniqueTopics = Array.from(new Set(qData.map((q: any) => q.topic).filter(Boolean)));
+          const banks = uniqueTopics.map((topicName, idx) => ({ id: `bank-${idx}`, name: String(topicName) }));
+          setQuestionBanks(banks);
+          if (banks.length > 0) setSelectedBank(banks[0]);
+        } else {
+          setQuestionBanks([{ id: 'default', name: 'Default Question Bank' }]);
+          setSelectedBank({ id: 'default', name: 'Default Question Bank' });
         }
-      };
-      fetchSectionsAndBanks();
-    }, [professorId, supabase]);
+      }
+    } catch (err) {
+      console.error("Failed to load question banks from API:", err);
+    }
+  };
+
+  fetchSectionsAndBanks();
+}, [professorId, supabase]);
 
     // Load and randomize questions
     useEffect(() => {

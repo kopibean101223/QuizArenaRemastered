@@ -29,9 +29,9 @@ export async function POST(req: Request) {
     }
 
 
-    const doc = await prisma.syllabusDoc.findUnique({
-      where: { id: Number(document_id) },
-    });
+   const doc = await prisma.syllabusDoc.findFirst({
+  where: { id: Number(document_id), userId },
+});
 
     if (!doc) {
       return NextResponse.json({ error: 'Document not found in database' }, { status: 404 });

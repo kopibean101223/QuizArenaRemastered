@@ -579,56 +579,67 @@ export function QuestionBank() {
   }, []);
 
   // Fetch approved questions from API
-  useEffect(() => {
-    async function fetchApprovedQuestions() {
-      try {
-        const res = await fetch("/api/questions");
-        if (!res.ok) throw new Error("Failed to fetch questions");
-        const data = await res.json();
+ useEffect(() => {
+  async function fetchApprovedQuestions() {
+    try {
+      const res = await fetch("/api/questions");
+      if (!res.ok) throw new Error("Failed to fetch questions");
 
-        if (data && data.length > 0) {
-          const formattedQuestions: Question[] = data.map((q: any) => {
-            // FIX for [object Object] displaying in inputs
-            let parsedChoices: string[] = [];
-            try {
-              let rawChoices = q.choices;
-              if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
-              if (Array.isArray(rawChoices)) {
-                parsedChoices = rawChoices.map((c: any) => {
-                  if (typeof c === 'string') return c;
-                  if (typeof c === 'object' && c !== null) return c.text || c.label || "";
-                  return "";
-                });
-              }
-            } catch (e) {
-              parsedChoices = [];
-            }
-
-            return {
-              id: q.id,
-              text: q.text,
-              subject: q.topic || "General",
-              difficulty: q.difficulty || "Medium",
-              topic: q.topic || "General",
-              type: q.type || "Multiple Choice",
-              points: 2,
-              timeLimit: q.timeLimit || 60,
-              choices: parsedChoices,
-              testCases: Array.isArray(q.testCases) ? q.testCases : [],
-              answer: q.answer,
-              explanation: "Generated via AI RAG pipeline.",
-              tags: ["AI-Generated", q.topic || "General"],
-              createdAt: q.createdAt ? q.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]
-            };
-          });
-          setQuestions(formattedQuestions);
-        }
-      } catch (err) {
-        console.error("Error loading user questions:", err);
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Received non-JSON response from server");
       }
+      
+      const data = await res.json();
+
+      // Safely check if data is an array before mapping
+      if (Array.isArray(data) && data.length > 0) {
+        const formattedQuestions: Question[] = data.map((q: any) => {
+          // FIX for [object Object] displaying in inputs
+          let parsedChoices: string[] = [];
+          try {
+            let rawChoices = q.choices;
+            if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
+            if (Array.isArray(rawChoices)) {
+              parsedChoices = rawChoices.map((c: any) => {
+                if (typeof c === 'string') return c;
+                if (typeof c === 'object' && c !== null) return c.text || c.label || "";
+                return "";
+              });
+            }
+          } catch (e) {
+            parsedChoices = [];
+          }
+
+          return {
+            id: q.id,
+            text: q.text,
+            subject: q.topic || "General",
+            difficulty: q.difficulty || "Medium",
+            topic: q.topic || "General",
+            type: q.type || "Multiple Choice",
+            points: 2,
+            timeLimit: q.timeLimit || 60,
+            choices: parsedChoices,
+            testCases: Array.isArray(q.testCases) ? q.testCases : [],
+            answer: q.answer,
+            explanation: "Generated via AI RAG pipeline.",
+            tags: ["AI-Generated", q.topic || "General"],
+            createdAt: q.createdAt ? q.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]
+          };
+        });
+        setQuestions(formattedQuestions);
+      } else {
+        // HANDLE NONE: Clear questions if the array is empty or null/undefined
+        setQuestions([]);
+      }
+    } catch (err) {
+      console.error("Error loading user questions:", err);
+      setQuestions([]); // Fallback to empty state on error too
     }
-    fetchApprovedQuestions();
-  }, []);
+  }
+  fetchApprovedQuestions();
+}, []);
 
   // Add new topic and save to LocalStorage
   const handleAddTopic = (name: string, subject: string) => {

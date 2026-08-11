@@ -1,6 +1,4 @@
 import { NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import { PrismaClient } from "@prisma/client";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -11,28 +9,27 @@ if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 export async function GET() {
   try {
     const supabase = await createServerSupabaseClient();
-
     const { data: { user }, error } = await supabase.auth.getUser();
+    
     if (error || !user) {
       return NextResponse.json({ error: "Unauthorized user" }, { status: 401 });
     }
 
-  
+    // Filter questions by status AND the current professor's user ID
     const questions = await prisma.generatedQuestion.findMany({
-      where: {
-        status: "APPROVED"
+      where: { 
+        status: "APPROVED",
+        userId: user.id // Scope questions only to this specific professor
       },
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "desc" },
     });
 
     return NextResponse.json(questions);
   } catch (error: any) {
-    console.error("Error fetching question bank API:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("DETAILED GET /api/questions ERROR:", error);
+    return NextResponse.json({ error: error.message, stack: error.stack }, { status: 500 });
   }
 }
-
-
 
 export async function POST(req: Request) {
   try {
@@ -47,7 +44,7 @@ export async function POST(req: Request) {
 
     const newQuestion = await prisma.generatedQuestion.create({
       data: {
-        userId: user.id,
+        userId: user.id, // Explicitly assign ownership to the logged-in professor
         text: body.text,
         type: body.type,
         difficulty: body.difficulty,
@@ -56,14 +53,14 @@ export async function POST(req: Request) {
         choices: body.choices || [],
         testCases: body.testCases || [],
         timeLimit: Number(body.timeLimit) || 60,
-        status: "APPROVED", // Auto-approve manual creations
-      }
+        status: "APPROVED",
+      },
     });
 
     return NextResponse.json(newQuestion);
   } catch (error: any) {
-    console.error("Error saving manual question:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("DETAILED POST /api/questions ERROR:", error);
+    return NextResponse.json({ error: error.message, stack: error.stack }, { status: 500 });
   }
 }
 
@@ -82,10 +79,11 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: "Question ID is required for updating" }, { status: 400 });
     }
 
+    // Ensure the professor updating the question actually owns it
     const updatedQuestion = await prisma.generatedQuestion.update({
       where: { 
         id: body.id,
-        userId: user.id
+        userId: user.id 
       },
       data: {
         text: body.text,
@@ -96,12 +94,12 @@ export async function PUT(req: Request) {
         choices: body.choices || [],
         testCases: body.testCases || [],
         timeLimit: Number(body.timeLimit) || 60,
-      }
+      },
     });
 
     return NextResponse.json(updatedQuestion);
   } catch (error: any) {
-    console.error("Error updating question:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("DETAILED PUT /api/questions ERROR:", error);
+    return NextResponse.json({ error: error.message, stack: error.stack }, { status: 500 });
   }
 }
