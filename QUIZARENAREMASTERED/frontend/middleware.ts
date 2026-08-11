@@ -1,6 +1,10 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next'
 
+// 1. Define Role Page Access Rules
+const STUDENT_PAGES = ['lobby', 'battle', 'results']
+const PROFESSOR_PAGES = ['dashboard', 'sections', 'questions', 'aigen', 'matchmaking', 'analyzer']
+
 export default async function middleware(request: NextRequest) {
   let response = NextResponse.next({
     request: {
@@ -8,7 +12,7 @@ export default async function middleware(request: NextRequest) {
     },
   })
 
-  // 1. Initialize Supabase client
+  // 2. Initialize Supabase Server Client
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -30,20 +34,20 @@ export default async function middleware(request: NextRequest) {
     }
   )
 
-  // IMPORTANT: MUST use getUser() to validate auth on server
+  // 3. Authenticate User
   const { data: { user } } = await supabase.auth.getUser()
   const url = request.nextUrl.clone()
 
-  // 2. Resolve requested page state safely
+  // Resolve requested route safely (handles both pathname and ?page= parameter)
   const pageParam = url.searchParams.get('page')?.toLowerCase()
-  const pathName = url.pathname.toLowerCase().replace(/^\/+|\/+$/g, '') // Strips leading/trailing slashes clean
+  const pathName = url.pathname.toLowerCase().replace(/^\/+|\/+$/g, '') // Strips leading/trailing slashes
+  const activeRoute = pageParam || pathName // Evaluates the targeted view/page
 
-  // Explicitly identify routes
-  const isAuthPage = pageParam === 'login' || pageParam === 'register' || pathName === 'login' || pathName === 'register'
-  const isRolePage = pageParam === 'role' || pathName === 'role'
+  const isAuthPage = activeRoute === 'login' || activeRoute === 'register'
+  const isRolePage = activeRoute === 'role'
   const isRootPath = !pageParam && pathName === ''
 
-  // Helper to construct clean redirect URL while PRESERVING updated auth cookies
+  // Helper to construct redirect URLs while preserving auth cookies & preventing cache
   const redirectWithNoCache = (targetPage: string, extraParam?: { key: string; val: string }) => {
     const targetUrl = request.nextUrl.clone()
     targetUrl.pathname = '/'
@@ -55,12 +59,11 @@ export default async function middleware(request: NextRequest) {
 
     const redirectRes = NextResponse.redirect(targetUrl)
 
-    // FIX: Copy all updated session cookies from `response` to the redirect response
+    // Copy updated auth cookies to redirect response
     response.cookies.getAll().forEach((cookie) => {
       redirectRes.cookies.set(cookie.name, cookie.value, cookie)
     })
 
-    // Prevent browser back-button caching
     redirectRes.headers.set('Cache-Control', 'no-store, max-age=0, must-revalidate')
     return redirectRes
   }
@@ -76,9 +79,9 @@ export default async function middleware(request: NextRequest) {
   }
 
   // ----------------------------------------------------
-  // CASE B: Authenticated User -> Lookup Role
+  // CASE B: Resolve User Role
   // ----------------------------------------------------
-  let role = user.user_metadata?.role
+  let role: 'student' | 'professor' | null = user.user_metadata?.role || null
 
   if (!role) {
     const { data: profile } = await supabase
@@ -87,7 +90,7 @@ export default async function middleware(request: NextRequest) {
       .eq('user_id', user.id)
       .maybeSingle()
 
-    role = profile?.role
+    role = profile?.role || null
   }
 
   // ----------------------------------------------------
@@ -101,22 +104,23 @@ export default async function middleware(request: NextRequest) {
   }
 
   // ----------------------------------------------------
-  // CASE D: Authenticated User WITH Role
+  // CASE D: Role-Based Routing & Authorization Checks
   // ----------------------------------------------------
   const defaultPage = role === 'professor' ? 'dashboard' : 'lobby'
 
-  // Block logged-in users from accessing Auth, Role selection, or Root '/'
-  if (isAuthPage || isRolePage || isRootPath) {
-    return redirectWithNoCache(defaultPage)
+  // Block logged-in users from Auth, Role Selection, or root '/'
+ if (isAuthPage || isRolePage || isRootPath) {
+  return redirectWithNoCache(defaultPage);
+}
+
+  // Prevent Students from accessing Professor pages
+  if (role === 'student' && PROFESSOR_PAGES.includes(activeRoute)) {
+    return redirectWithNoCache('lobby', { key: 'error', val: 'unauthorized_professor_access' })
   }
 
-  // Role authorization checks
-  if ((pageParam === 'dashboard' || pathName === 'dashboard') && role !== 'professor') {
-    return redirectWithNoCache('lobby', { key: 'error', val: 'unauthorized_professor' })
-  }
-
-  if ((pageParam === 'lobby' || pathName === 'lobby') && role !== 'student') {
-    return redirectWithNoCache('dashboard', { key: 'error', val: 'unauthorized_student' })
+  // Prevent Professors from accessing Student pages
+  if (role === 'professor' && STUDENT_PAGES.includes(activeRoute)) {
+    return redirectWithNoCache('dashboard', { key: 'error', val: 'unauthorized_student_access' })
   }
 
   response.headers.set('Cache-Control', 'no-store, max-age=0, must-revalidate')

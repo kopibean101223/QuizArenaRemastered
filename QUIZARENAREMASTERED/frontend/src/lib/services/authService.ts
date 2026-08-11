@@ -52,8 +52,7 @@ export async function loginWithGoogle() {
       redirectTo: `${window.location.origin}/api/auth/callback`,
       queryParams: {
         access_type: 'offline',
-        prompt: 'consent',
-        hd: 'umak.edu.ph',
+        prompt: 'consent'
       },
     },
   })

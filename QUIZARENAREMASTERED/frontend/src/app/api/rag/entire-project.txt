@@ -1,0 +1,322 @@
+
+
+--- FILE: data\route.ts ---
+
+import { NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+export async function GET() {
+  try {
+    const docs = await prisma.syllabusDoc.findMany({ orderBy: { id: 'desc' } });
+    const questions = await prisma.generatedQuestion.findMany({ orderBy: { id: 'desc' } });
+    return NextResponse.json({ docs, questions });
+  } catch (error) {
+    return NextResponse.json({ error: 'Failed to fetch database records' }, { status: 500 });
+  }
+}
+
+--- FILE: doc\route.ts ---
+
+import { NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+export async function DELETE(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      return NextResponse.json({ error: 'Document ID is required' }, { status: 400 });
+    }
+
+    const docId = Number(id);
+
+    await prisma.generatedQuestion.deleteMany({
+      where: {
+        docId: docId,
+        status: 'REJECTED' 
+      }
+    });
+
+    await prisma.generatedQuestion.updateMany({
+      where: { docId: docId },
+      data: { docId: null }
+    });
+
+    await prisma.syllabusDoc.delete({
+      where: { id: docId }
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    console.error('Error deleting document:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+--- FILE: generate\route.ts ---
+
+import { NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+const prisma = globalForPrisma.prisma || new PrismaClient();
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+
+export async function POST(req: Request) {
+  try {
+   
+   const supabase = await createServerSupabaseClient();
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized user' }, { status: 401 });
+    }
+
+    const userId = user.id;
+
+ 
+    const { count, difficulty, types, document_id, category } = await req.json();
+
+    if (!document_id) {
+      return NextResponse.json({ error: 'document_id is required' }, { status: 400 });
+    }
+
+
+    const doc = await prisma.syllabusDoc.findUnique({
+      where: { id: Number(document_id) },
+    });
+
+    if (!doc) {
+      return NextResponse.json({ error: 'Document not found in database' }, { status: 404 });
+    }
+
+  
+    const fastapiUrl = process.env.FASTAPI_URL || 'http://127.0.0.1:8000';
+   const pyRes = await fetch(`${fastapiUrl}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        count: Number(count) || 5,
+        difficulty: difficulty || 'Medium',
+        types: Array.isArray(types) ? types : ['Multiple Choice'],
+        document_id: doc.id,
+        chunks: doc.chunks || [],
+        filename: doc.filename,
+        category: 'Mathematics', 
+        requireRubric: true
+      }),
+    });
+
+    const pyData = await pyRes.json();
+
+    if (!pyRes.ok) {
+      const errorMessage = pyData?.detail || pyData?.error || 'FastAPI generation failed';
+      return NextResponse.json({ error: errorMessage }, { status: pyRes.status });
+    }
+
+   const rawQuestions = Array.isArray(pyData) ? pyData : pyData.questions || [];
+    const validQuestions = rawQuestions.filter((q: any) => 
+      q.text && 
+      q.answer && 
+      q.citation && 
+      (!types.includes("Step-by-step Solution") || (q.stepWeights && q.partialCreditRules))
+    );
+
+    if (validQuestions.length === 0) {
+      return NextResponse.json({ error: 'AI failed to generate valid Mathematics schemas with partial credit rubrics.' }, { status: 422 });
+    }
+
+    const savedQuestions = await Promise.all(
+      rawQuestions.map((q: any) =>
+        prisma.generatedQuestion.create({
+          data: {
+            userId: userId, 
+            docId: doc.id,
+            text: q.text,
+            type: q.type || 'Multiple Choice',
+            difficulty: q.difficulty || difficulty || 'Medium',
+            topic: category && category !== 'General' ? category : (doc.filename || 'General'),
+            answer: q.answer || '',
+            choices: q.choices || [],
+            citation: q.citation || {},
+            status: 'PENDING',
+          },
+        })
+      )
+    );
+
+    return NextResponse.json(savedQuestions);
+  } catch (error: any) {
+    console.error('Error in /api/rag/generate:', error);
+    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+--- FILE: status\bulk\route.ts ---
+
+import { NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+export async function PATCH(req: Request) {
+  try {
+    const { ids, status } = await req.json(); 
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return NextResponse.json({ error: 'No question IDs provided' }, { status: 400 });
+    }
+
+      const updated = await prisma.generatedQuestion.updateMany({
+      where: { id: { in: ids } },
+      data: { status },
+    });
+
+    return NextResponse.json(updated);
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+
+export async function DELETE(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const userId = searchParams.get('userId'); 
+
+    await prisma.generatedQuestion.deleteMany({
+      where: { status: 'REJECTED' },
+    });
+
+    return NextResponse.json({ message: 'All rejected questions deleted successfully.' });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+--- FILE: status\route.ts ---
+
+import { NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+export async function PATCH(req: Request) {
+  try {
+    const { questionId, status } = await req.json(); 
+    if (status === 'REJECTED') {
+      await prisma.generatedQuestion.delete({
+        where: { id: Number(questionId) },
+      });
+      return NextResponse.json({ status: 'REJECTED', deleted: true });
+    }
+
+    const updated = await prisma.generatedQuestion.update({
+      where: { id: Number(questionId) },
+      data: { status },
+    });
+
+    return NextResponse.json(updated);
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+--- FILE: upload\route.ts ---
+
+import { NextResponse } from "next/server";
+import { PrismaClient } from "@prisma/client";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+
+const prisma = new PrismaClient();
+
+export async function POST(req: Request) {
+  try {
+    // 1. Get authenticated user session from Supabase
+    const cookieStore = await cookies();
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            );
+          },
+        },
+      }
+    );
+
+    const { data: { user }, error } = await supabase.auth.getUser();
+if (error || !user) {
+  return NextResponse.json({ error: "Unauthorized user" }, { status: 401 });
+}
+
+    const userId = user.id;
+
+    // 2. Parse form data
+    const formData = await req.formData();
+    const file = formData.get("file") as File;
+
+    if (!file) {
+      return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    }
+
+  
+    const docRecord = await prisma.syllabusDoc.create({
+      data: {
+        userId: userId,
+        filename: file.name,
+      },
+    });
+
+    const pythonFormData = new FormData();
+    pythonFormData.append("file", file);
+    pythonFormData.append("docId", String(docRecord.id));
+
+    const pyRes = await fetch(
+      `${process.env.FASTAPI_URL || "http://127.0.0.1:8000"}/ingest`,
+      {
+        method: "POST",
+        body: pythonFormData,
+      }
+    );
+
+    if (!pyRes.ok) {
+      throw new Error("FastAPI PDF ingestion failed");
+    }
+
+    const pyData = await pyRes.json();
+
+    const updatedDoc = await prisma.syllabusDoc.update({
+      where: { id: docRecord.id },
+      data: {
+        chunks: pyData.chunks || [],
+      },
+    });
+
+    return NextResponse.json({
+      id: updatedDoc.id,
+      filename: updatedDoc.filename,
+      pages: pyData.pages || 0,
+      status: "ready",
+    });
+  } catch (error: any) {
+    console.error("Error in /api/rag/upload:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}

@@ -1,840 +1,942 @@
-import { useState, useRef, useCallback } from "react";
-import { ProfSidebar } from "./shared/ProfSidebar";
-import {
-  Trophy, LayoutDashboard, Library, BarChart2, Settings,
-  Layers, LogOut, Sparkles, Users, Shuffle, CheckCircle2,
-  Download, ChevronDown, Info, AlertTriangle, Zap,
-  ArrowRight, RefreshCw, Shield, TrendingUp, Clock,
-} from "lucide-react";
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell, ReferenceLine,
-} from "recharts";
+  'use client';
 
-// ─── Tokens ────────────────────────────────────────────────────────────────────
-const C = {
-  indigo: "#5B3DF6", indigoLight: "rgba(91,61,246,0.07)", indigoMid: "rgba(91,61,246,0.14)",
-  indigoBorder: "rgba(91,61,246,0.18)", indigoTrack: "rgba(91,61,246,0.15)",
-  coral: "#FF6B4A",  coralLight: "rgba(255,107,74,0.09)", coralHover: "#E85A3A",
-  yellow: "#FFC93C", yellowLight: "rgba(255,201,60,0.13)", yellowBorder: "rgba(255,201,60,0.35)",
-  green: "#2ED47A",  greenLight: "rgba(46,212,122,0.1)",  greenBorder: "rgba(46,212,122,0.28)",
-  red: "#FF4757",    redLight: "rgba(255,71,87,0.09)",
-  navy: "#1B1E2B", offWhite: "#FAFAFC", white: "#FFFFFF",
-  muted: "#717182", border: "rgba(0,0,0,0.07)", inputBg: "#F3F3F7",
-};
+  import { useState, useRef, useEffect } from "react";
+  import { ProfSidebar } from "./shared/ProfSidebar";
+  import {
+    Trophy, LayoutDashboard, Library, BarChart2, Settings,
+    Layers, LogOut, Sparkles, Users, Shuffle, CheckCircle2,
+    Download, ChevronDown, Info, AlertTriangle, Zap,
+    ArrowRight, RefreshCw, Shield, TrendingUp, Clock, Copy, Check, Crown, User, Star, Database, Lock, Eye
+  } from "lucide-react";
+  import { createBrowserSupabaseClient } from '@/lib/supabase/client';
+  import { toast } from "sonner";
+  import { useBotSimulator } from "@/hooks/useBotSimulator";
 
-const TEAM_PALETTE = [
-  { bg: "#5B3DF6", light: "rgba(91,61,246,0.1)",  text: "#5B3DF6",  label: "Team Alpha" },
-  { bg: "#FF6B4A", light: "rgba(255,107,74,0.1)", text: "#C8441E",  label: "Team Beta" },
-  { bg: "#2ED47A", light: "rgba(46,212,122,0.1)", text: "#18A058",  label: "Team Gamma" },
-  { bg: "#FFC93C", light: "rgba(255,201,60,0.13)",text: "#9A6C00",  label: "Team Delta" },
-  { bg: "#FF4757", light: "rgba(255,71,87,0.1)",  text: "#CC2030",  label: "Team Epsilon" },
-  { bg: "#5BC8F6", light: "rgba(91,200,246,0.13)",text: "#076E9A",  label: "Team Zeta" },
-];
-
-const PERF_STYLE = {
-  High:   { bg: C.greenLight,  text: "#18A058", border: C.greenBorder,          dot: "#2ED47A" },
-  Medium: { bg: C.yellowLight, text: "#9A6C00", border: C.yellowBorder,         dot: "#FFC93C" },
-  Low:    { bg: C.redLight,    text: "#CC2030", border: "rgba(255,71,87,0.22)", dot: "#FF4757" },
-};
-
-const SECTIONS   = ["BSCS 3-A", "BSCS 3-B", "BSMATH 2-A", "BSPHYS 1-A", "BSHIST 4-B"];
-const SESSIONS   = ["Quiz #1 — Algebra Basics", "Quiz #2 — Data Structures", "Quiz #3 — Mechanics", "Quiz #4 — WW2 Overview"];
-
-interface Student {
-  id: number; name: string; initials: string;
-  perfLevel: "High" | "Medium" | "Low"; score: number; team: number;
-  avatarColor: string;
-}
-
-const AVATAR_COLORS = ["#5B3DF6","#FF6B4A","#FFC93C","#2ED47A","#FF4757","#5BC8F6","#B06EF6","#FF9F40","#E040FB","#00BCD4"];
-
-const BASE_STUDENTS: Omit<Student, "team">[] = [
-  { id:1,  name:"Ana Reyes",       initials:"AR", perfLevel:"High",   score:91, avatarColor:AVATAR_COLORS[0] },
-  { id:2,  name:"Carlo Bautista",  initials:"CB", perfLevel:"Medium", score:74, avatarColor:AVATAR_COLORS[1] },
-  { id:3,  name:"Maria Santos",    initials:"MS", perfLevel:"High",   score:88, avatarColor:AVATAR_COLORS[2] },
-  { id:4,  name:"Juan dela Torre", initials:"JD", perfLevel:"Low",    score:52, avatarColor:AVATAR_COLORS[3] },
-  { id:5,  name:"Lea Fajardo",     initials:"LF", perfLevel:"Medium", score:69, avatarColor:AVATAR_COLORS[4] },
-  { id:6,  name:"Rico Mendoza",    initials:"RM", perfLevel:"Low",    score:48, avatarColor:AVATAR_COLORS[5] },
-  { id:7,  name:"Trisha Villar",   initials:"TV", perfLevel:"High",   score:95, avatarColor:AVATAR_COLORS[6] },
-  { id:8,  name:"Ben Aquino",      initials:"BA", perfLevel:"Medium", score:77, avatarColor:AVATAR_COLORS[7] },
-  { id:9,  name:"Sofia Cruz",      initials:"SC", perfLevel:"Low",    score:55, avatarColor:AVATAR_COLORS[8] },
-  { id:10, name:"Diego Lim",       initials:"DL", perfLevel:"High",   score:83, avatarColor:AVATAR_COLORS[9] },
-  { id:11, name:"Camille Torres",  initials:"CT", perfLevel:"Medium", score:71, avatarColor:AVATAR_COLORS[0] },
-  { id:12, name:"Marco Dela Cruz", initials:"MD", perfLevel:"Low",    score:44, avatarColor:AVATAR_COLORS[1] },
-];
-
-function assignTeams(students: Omit<Student,"team">[], teamSize: number, adaptive: boolean): Student[] {
-  if (!adaptive) {
-    return students.map((s, i) => ({ ...s, team: i % Math.ceil(students.length / teamSize) }));
-  }
-  // Adaptive: distribute H/M/L evenly across teams
-  const numTeams = Math.ceil(students.length / teamSize);
-  const sorted = [...students].sort((a, b) => b.score - a.score);
-  const teams: number[] = Array(students.length).fill(0);
-  const idxMap = new Map(sorted.map((s, i) => [s.id, i]));
-  sorted.forEach((s, i) => { teams[i] = i % numTeams; });
-  return students.map(s => ({ ...s, team: teams[idxMap.get(s.id)!] }));
-}
-
-function computeTeamStats(students: Student[], numTeams: number) {
-  return Array.from({ length: numTeams }, (_, t) => {
-    const members = students.filter(s => s.team === t);
-    const avg = members.length ? Math.round(members.reduce((a, s) => a + s.score, 0) / members.length) : 0;
-    return { team: t, name: TEAM_PALETTE[t]?.label ?? `Team ${t+1}`, avg, count: members.length };
-  }).filter(t => t.count > 0);
-}
-
-function fairnessScore(teamStats: ReturnType<typeof computeTeamStats>) {
-  if (!teamStats.length) return { score: 100, label: "Balanced", verdict: "balanced" as const };
-  const avgs = teamStats.map(t => t.avg);
-  const mean = avgs.reduce((a, b) => a + b, 0) / avgs.length;
-  const variance = avgs.reduce((a, b) => a + (b - mean) ** 2, 0) / avgs.length;
-  const stddev = Math.sqrt(variance);
-  const score = Math.max(0, Math.round(100 - stddev * 1.5));
-  return {
-    score,
-    label: score >= 80 ? "Balanced" : score >= 65 ? "Needs Review" : "Unbalanced",
-    verdict: (score >= 80 ? "balanced" : score >= 65 ? "review" : "unbalanced") as "balanced"|"review"|"unbalanced",
+  // ─── Tokens ────────────────────────────────────────────────────────────────────
+  const C = {
+    indigo: "#5B3DF6", indigoLight: "rgba(91,61,246,0.07)", indigoMid: "rgba(91,61,246,0.14)",
+    indigoBorder: "rgba(91,61,246,0.18)", indigoTrack: "rgba(91,61,246,0.15)",
+    coral: "#FF6B4A",  coralLight: "rgba(255,107,74,0.09)", coralHover: "#E85A3A",
+    yellow: "#FFC93C", yellowLight: "rgba(255,201,60,0.13)", yellowBorder: "rgba(255,201,60,0.35)",
+    green: "#2ED47A",  greenLight: "rgba(46,212,122,0.1)",  greenBorder: "rgba(46,212,122,0.28)",
+    red: "#FF4757",    redLight: "rgba(255,71,87,0.09)",
+    navy: "#1B1E2B", offWhite: "#FAFAFC", white: "#FFFFFF",
+    muted: "#717182", border: "rgba(0,0,0,0.07)", inputBg: "#F3F3F7",
+    indigoDeep: "#4228D4", yellowGlow: "rgba(255,201,60,0.5)",
   };
-}
 
-// ─── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar() { return <ProfSidebar />;
-  const [active, setActive] = useState("match");
-  const items = [
-    { id:"dashboard", icon:<LayoutDashboard size={17} strokeWidth={2}/>, label:"Dashboard" },
-    { id:"sections",  icon:<Layers size={17} strokeWidth={2}/>,          label:"My Sections" },
-    { id:"bank",      icon:<Library size={17} strokeWidth={2}/>,          label:"Question Bank" },
-    { id:"ai",        icon:<Sparkles size={17} strokeWidth={2}/>,         label:"AI Generator" },
-    { id:"match",     icon:<Users size={17} strokeWidth={2}/>,            label:"Matchmaking" },
-    { id:"analytics", icon:<BarChart2 size={17} strokeWidth={2}/>,        label:"Analytics" },
-    { id:"settings",  icon:<Settings size={17} strokeWidth={2}/>,         label:"Settings" },
-  ];
-  return (
-    <div style={{width:210,minWidth:210,background:C.navy,display:"flex",flexDirection:"column",
-      padding:"22px 12px",gap:3,height:"100vh",position:"sticky",top:0,flexShrink:0}}>
-      <div style={{display:"flex",alignItems:"center",gap:9,padding:"4px 8px",marginBottom:22}}>
-        <div style={{width:34,height:34,borderRadius:9,background:C.indigo,display:"flex",
-          alignItems:"center",justifyContent:"center"}}>
-          <Trophy fill={C.yellow} color="transparent" size={17}/>
-        </div>
-        <span style={{fontFamily:"Fredoka, sans-serif",fontSize:19,fontWeight:700,color:"#fff"}}>QuizArena</span>
-      </div>
-      <div style={{flex:1,display:"flex",flexDirection:"column",gap:2}}>
-        {items.map(item=>(
-          <button key={item.id} type="button" onClick={()=>setActive(item.id)} style={{
-            display:"flex",alignItems:"center",gap:9,padding:"9px 11px",borderRadius:11,
-            background:active===item.id?"rgba(91,61,246,0.85)":"transparent",border:"none",
-            cursor:"pointer",color:active===item.id?"#fff":"rgba(255,255,255,0.42)",
-            fontFamily:"Manrope, sans-serif",fontSize:13,fontWeight:active===item.id?700:500,
-            textAlign:"left",transition:"all 0.15s",width:"100%",
-          }}>
-            {item.icon}{item.label}
-          </button>
-        ))}
-      </div>
-      <div style={{borderTop:"1px solid rgba(255,255,255,0.07)",display:"flex",alignItems:"center",
-        gap:9,padding:"14px 8px 0"}}>
-        <div style={{width:32,height:32,borderRadius:"50%",background:C.indigo,display:"flex",
-          alignItems:"center",justifyContent:"center",fontFamily:"Manrope, sans-serif",
-          fontSize:11,fontWeight:800,color:"#fff",flexShrink:0}}>RD</div>
-        <div style={{flex:1,minWidth:0}}>
-          <p style={{fontFamily:"Manrope, sans-serif",fontSize:12,fontWeight:700,color:"#fff",
-            margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Prof. R. Dela Cruz</p>
-          <p style={{fontFamily:"Manrope, sans-serif",fontSize:10,color:"rgba(255,255,255,0.38)",margin:0}}>Professor</p>
-        </div>
-        <button type="button" style={{background:"none",border:"none",cursor:"pointer",
-          color:"rgba(255,255,255,0.28)",padding:0,display:"flex"}}>
-          <LogOut size={14} strokeWidth={2}/>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Toggle Switch ──────────────────────────────────────────────────────────────
-function ToggleSwitch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button type="button" onClick={() => onChange(!on)} style={{
-      width: 44, height: 24, borderRadius: 50, border: "none", cursor: "pointer", padding: 0,
-      background: on ? C.indigo : "#CBD0D8", position: "relative", transition: "background 0.2s", flexShrink: 0,
-    }}>
-      <span style={{
-        position: "absolute", top: 3, left: on ? 23 : 3,
-        width: 18, height: 18, borderRadius: "50%", background: "#fff",
-        boxShadow: "0 1px 4px rgba(0,0,0,0.2)", transition: "left 0.2s",
-      }} />
-    </button>
-  );
-}
-
-// ─── Fancy Slider ──────────────────────────────────────────────────────────────
-function FairnessSlider({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  const trackRef = useRef<HTMLDivElement>(null);
-  const pct = ((value - 1) / 9) * 100;
-
-  function handlePointer(e: React.PointerEvent) {
-    if (!trackRef.current) return;
-    const rect = trackRef.current.getBoundingClientRect();
-    const raw = ((e.clientX - rect.left) / rect.width) * 9 + 1;
-    onChange(Math.max(1, Math.min(10, Math.round(raw))));
+  interface Student {
+    id: string; name: string; initials: string;
+    perfLevel: "High" | "Medium" | "Low"; score: number; team: string;
+    avatarColor: string; isReady?: boolean; isHost?: boolean;
   }
 
-  const getLabel = (v: number) => v <= 3 ? "Strict" : v <= 7 ? "Balanced" : "Lenient";
-  const getColor = (v: number) => v <= 3 ? C.green : v <= 7 ? C.indigo : C.coral;
+  interface QuestionItem {
+    id: number | string;
+    text: string;
+    topic?: string;
+    choices?: string[];
+    answer: string;
+    type?: string;
+  }
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted,
-          textTransform: "uppercase", letterSpacing: "0.07em" }}>Fairness Tolerance</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ background: C.indigoMid, color: C.indigo, borderRadius: 8, padding: "3px 10px",
-            fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800 }}>{value}</span>
-          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700,
-            color: getColor(value) }}>{getLabel(value)}</span>
-        </div>
-      </div>
-      {/* Track */}
-      <div ref={trackRef} onPointerDown={handlePointer} onPointerMove={e => { if (e.buttons) handlePointer(e); }}
-        style={{ height: 8, borderRadius: 50, background: C.inputBg, position: "relative", cursor: "pointer" }}>
-        {/* Fill */}
-        <div style={{ position: "absolute", left: 0, top: 0, height: "100%", borderRadius: 50,
-          width: `${pct}%`, background: `linear-gradient(90deg, ${C.green}, ${C.indigo} 55%, ${C.coral})`,
-          transition: "width 0.1s" }} />
-        {/* Thumb */}
-        <div style={{ position: "absolute", top: "50%", left: `${pct}%`,
-          transform: "translate(-50%, -50%)", width: 20, height: 20, borderRadius: "50%",
-          background: C.white, border: `3px solid ${C.indigo}`,
-          boxShadow: "0 2px 8px rgba(91,61,246,0.35)", transition: "left 0.1s", zIndex: 2 }} />
-      </div>
-      {/* Labels */}
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        {["1","2","3","4","5","6","7","8","9","10"].map((n, i) => (
-          <span key={n} style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600,
-            color: Number(n) === value ? C.indigo : C.muted, lineHeight: 1,
-            cursor: "pointer", transition: "color 0.15s" }}
-            onClick={() => onChange(Number(n))}>
-            {n}
-          </span>
-        ))}
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        {[{l:"Strict",c:C.green},{l:"Balanced",c:C.indigo},{l:"Lenient",c:C.coral}].map(item => (
-          <span key={item.l} style={{ fontFamily: "Manrope, sans-serif", fontSize: 10,
-            fontWeight: 700, color: item.c, opacity: 0.7 }}>{item.l}</span>
-        ))}
-      </div>
-    </div>
-  );
-}
+  // Cryptographically secure random room code generator
+  function generateSecureRoomCode(length = 6) {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    const randomArray = new Uint8Array(length);
+    window.crypto.getRandomValues(randomArray);
+    for (let i = 0; i < length; i++) {
+      result += chars[randomArray[i] % chars.length];
+    }
+    return result;
+  }
 
-// ─── Dropdown ──────────────────────────────────────────────────────────────────
-function Dropdown({ value, options, onChange, width }:
-  { value: string; options: string[]; onChange: (v: string) => void; width?: number }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  return (
-    <div ref={ref} style={{ position: "relative", width }}>
-      <button type="button" onClick={() => setOpen(v => !v)} style={{
-        width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
-        background: C.white, border: `1.5px solid ${open ? C.indigo : C.border}`, borderRadius: 11,
-        padding: "8px 12px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600,
-        color: C.navy, cursor: "pointer", whiteSpace: "nowrap",
+  const AVATAR_COLORS = ["#5B3DF6","#FF6B4A","#FFC93C","#2ED47A","#FF4757","#5BC8F6","#B06EF6","#FF9F40","#E040FB","#00BCD4"];
+  const CAPACITY = 40;
+
+  function shuffleArray<T>(array: T[]): T[] {
+    const arr = [...array];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function ToggleSwitch({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+    return (
+      <button type="button" disabled={disabled} onClick={() => !disabled && onChange(!on)} style={{
+        width: 44, height: 24, borderRadius: 50, border: "none", cursor: disabled ? "not-allowed" : "pointer", padding: 0,
+        background: on ? C.indigo : "#CBD0D8", position: "relative", opacity: disabled ? 0.6 : 1, transition: "background 0.2s", flexShrink: 0,
       }}>
-        {value}
-        <ChevronDown size={13} color={C.muted}
-          style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+        <span style={{
+          position: "absolute", top: 3, left: on ? 23 : 3,
+          width: 18, height: 18, borderRadius: "50%", background: "#fff",
+          boxShadow: "0 1px 4px rgba(0,0,0,0.2)", transition: "left 0.2s",
+        }} />
       </button>
-      {open && (
-        <div style={{ position: "absolute", top: "calc(100% + 5px)", left: 0, width: "100%", minWidth: 200,
-          background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 13,
-          boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 120, padding: "5px", maxHeight: 240, overflowY: "auto" }}>
-          {options.map(opt => (
-            <button key={opt} type="button" onClick={() => { onChange(opt); setOpen(false); }} style={{
-              width: "100%", background: opt === value ? C.indigoLight : "transparent", border: "none",
-              borderRadius: 8, padding: "8px 11px", fontFamily: "Manrope, sans-serif", fontSize: 13,
-              fontWeight: opt === value ? 700 : 500, color: opt === value ? C.indigo : C.navy,
-              cursor: "pointer", textAlign: "left",
-            }}>{opt}</button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Fairness Score Ring ────────────────────────────────────────────────────────
-function FairnessRing({ score, verdict }: { score: number; verdict: "balanced"|"review"|"unbalanced" }) {
-  const r = 52, circ = 2 * Math.PI * r;
-  const fill = (score / 100) * circ;
-  const color = verdict === "balanced" ? C.green : verdict === "review" ? C.yellow : C.coral;
-  const bgColor = verdict === "balanced" ? C.greenLight : verdict === "review" ? C.yellowLight : C.coralLight;
-  const label = verdict === "balanced" ? "Balanced" : verdict === "review" ? "Needs Review" : "Unbalanced";
-  const Icon = verdict === "balanced" ? Shield : AlertTriangle;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-      {/* Ring */}
-      <div style={{ position: "relative", width: 140, height: 140 }}>
-        <svg width="140" height="140" viewBox="0 0 140 140" style={{ transform: "rotate(-90deg)" }}>
-          {/* Track */}
-          <circle cx="70" cy="70" r={r} fill="none" stroke={C.inputBg} strokeWidth="10" />
-          {/* Fill */}
-          <circle cx="70" cy="70" r={r} fill="none" stroke={color} strokeWidth="10"
-            strokeLinecap="round" strokeDasharray={`${fill} ${circ}`}
-            style={{ transition: "stroke-dasharray 0.6s cubic-bezier(0.4,0,0.2,1)" }} />
-        </svg>
-        {/* Center content */}
-        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column",
-          alignItems: "center", justifyContent: "center", gap: 2 }}>
-          <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 34, fontWeight: 700,
-            color: C.navy, lineHeight: 1 }}>{score}</span>
-          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 700,
-            color: C.muted, letterSpacing: "0.06em", textTransform: "uppercase" }}>/ 100</span>
-        </div>
-      </div>
-      {/* Verdict badge */}
-      <div style={{ display: "inline-flex", alignItems: "center", gap: 7,
-        background: bgColor, border: `2px solid ${color}`, borderRadius: 20,
-        padding: "7px 16px" }}>
-        <Icon size={14} color={color} strokeWidth={2.5} />
-        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800, color,
-          letterSpacing: "0.02em" }}>{label}</span>
-      </div>
-      <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted, margin: 0,
-        textAlign: "center", maxWidth: 140, lineHeight: 1.55 }}>
-        {verdict === "balanced"
-          ? "Team performance distribution looks fair and even."
-          : verdict === "review"
-          ? "Minor imbalance detected. Consider reshuffling."
-          : "Significant gap between teams. Reshuffle recommended."}
-      </p>
-    </div>
-  );
-}
-
-// ─── Custom tooltip for bar chart ──────────────────────────────────────────────
-function CustomTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
-  const t = payload[0];
-  return (
-    <div style={{ background: C.navy, borderRadius: 12, padding: "10px 14px",
-      boxShadow: "0 8px 24px rgba(0,0,0,0.2)" }}>
-      <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700,
-        color: "#fff", margin: "0 0 3px" }}>{label}</p>
-      <p style={{ fontFamily: "Fredoka, sans-serif", fontSize: 20, fontWeight: 700,
-        color: t.fill, margin: 0, lineHeight: 1 }}>{t.value}%</p>
-      <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, color: "rgba(255,255,255,0.5)",
-        margin: "2px 0 0" }}>avg. score</p>
-    </div>
-  );
-}
-
-// ─── Main Page ─────────────────────────────────────────────────────────────────
-export function Matchmaking() {
-  const [adaptive, setAdaptive] = useState(true);
-  const [teamSize, setTeamSize] = useState(3);
-  const [tolerance, setTolerance] = useState(5);
-  const [previewed, setPreviewed] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
-  const [section, setSection] = useState(SECTIONS[0]);
-  const [quizSession, setQuizSession] = useState(SESSIONS[1]);
-  const [shuffleKey, setShuffleKey] = useState(0);
-
-  const students: Student[] = assignTeams(BASE_STUDENTS, teamSize, adaptive);
-  const numTeams = Math.ceil(BASE_STUDENTS.length / teamSize);
-  const teamStats = computeTeamStats(students, numTeams);
-  const { score, label: fsLabel, verdict } = fairnessScore(teamStats);
-  const mean = teamStats.reduce((a, t) => a + t.avg, 0) / (teamStats.length || 1);
-
-  function handleReshuffle() {
-    setShuffleKey(k => k + 1);
-    setConfirmed(false);
+    );
   }
 
-  function handleConfirm() {
-    setConfirming(true);
-    setTimeout(() => { setConfirming(false); setConfirmed(true); }, 1400);
+  function Dropdown({ value, options, onChange, width, disabled }:
+    { value: { id: string; name: string }; options: { id: string; name: string }[]; onChange: (v: { id: string; name: string }) => void; width?: number | string; disabled?: boolean }) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+    return (
+      <div ref={ref} style={{ position: "relative", width, opacity: disabled ? 0.6 : 1, pointerEvents: disabled ? "none" : "auto" }}>
+        <button type="button" disabled={disabled} onClick={() => setOpen(v => !v)} style={{
+          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
+          background: C.white, border: `1.5px solid ${open ? C.indigo : C.border}`, borderRadius: 11,
+          padding: "8px 12px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600,
+          color: C.navy, cursor: disabled ? "not-allowed" : "pointer", whiteSpace: "nowrap",
+        }}>
+          {value?.name || "Select..."}
+          <ChevronDown size={13} color={C.muted} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+        </button>
+        {open && (
+          <div style={{ position: "absolute", top: "calc(100% + 5px)", left: 0, width: "100%", minWidth: 200, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 13, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 120, padding: "5px", maxHeight: 240, overflowY: "auto" }}>
+            {options.map(opt => (
+              <button key={opt.id} type="button" onClick={() => { onChange(opt); setOpen(false); }} style={{
+                width: "100%", background: opt.id === value?.id ? C.indigoLight : "transparent", border: "none",
+                borderRadius: 8, padding: "8px 11px", fontFamily: "Manrope, sans-serif", fontSize: 13,
+                fontWeight: opt.id === value?.id ? 700 : 500, color: opt.id === value?.id ? C.indigo : C.navy,
+                cursor: "pointer", textAlign: "left",
+              }}>{opt.name}</button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   }
 
-  return (
-    <div style={{ display: "flex", height: "100vh", background: C.offWhite, overflow: "hidden" }}>
-      <Sidebar />
-
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
-        {/* Top bar */}
-        <div style={{ background: C.white, borderBottom: `1.5px solid ${C.border}`, padding: "0 28px",
-          height: 62, display: "flex", alignItems: "center", justifyContent: "space-between",
-          flexShrink: 0, gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(91,61,246,0.08)",
-              display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Users size={17} color={C.indigo} strokeWidth={2} />
-            </div>
-            <div>
-              <h1 style={{ fontFamily: "Manrope, sans-serif", fontSize: 18, fontWeight: 800,
-                color: C.navy, margin: 0, lineHeight: 1.2 }}>Matchmaking</h1>
-              <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600,
-                color: C.muted, margin: 0 }}>Adaptive team balancing for fair quiz battles</p>
-            </div>
+  function PlayerChip({ player, animate }: { player: Student; animate?: boolean }) {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+        animation: animate ? "popIn 0.35s cubic-bezier(0.34,1.56,0.64,1)" : undefined
+      }}>
+        <div style={{ position: "relative" }}>
+          <div style={{
+            width: 60, height: 60, borderRadius: "50%",
+            background: `linear-gradient(145deg, ${player.avatarColor}, ${player.avatarColor}cc)`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontFamily: "Fredoka, sans-serif", fontSize: 18, fontWeight: 700, color: "#fff",
+            boxShadow: player.isReady
+              ? `0 0 0 3px ${C.green}, 0 4px 16px ${player.avatarColor}55`
+              : `0 0 0 3px rgba(255,255,255,0.15), 0 4px 12px rgba(0,0,0,0.3)`,
+            transition: "box-shadow 0.3s",
+          }}>
+            {player.initials}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {confirmed && (
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 6,
-                background: C.greenLight, border: `1.5px solid ${C.greenBorder}`,
-                borderRadius: 20, padding: "6px 14px" }}>
-                <CheckCircle2 size={13} color="#18A058" strokeWidth={2.5} />
-                <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12,
-                  fontWeight: 700, color: "#18A058" }}>Teams Confirmed</span>
-              </div>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 5,
-              background: C.indigoLight, border: `1.5px solid ${C.indigoBorder}`,
-              borderRadius: 20, padding: "5px 12px" }}>
-              <Users size={12} color={C.indigo} strokeWidth={2} />
-              <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12,
-                fontWeight: 700, color: C.indigo }}>{BASE_STUDENTS.length} Students</span>
-            </div>
-          </div>
+          <div style={{
+            position: "absolute", bottom: 1, right: 1, width: 14, height: 14,
+            borderRadius: "50%", background: player.isReady ? C.green : "rgba(255,255,255,0.2)",
+            border: "2px solid #1B1E2B", transition: "background 0.3s"
+          }} />
         </div>
+        <span style={{
+          fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
+          color: "rgba(255,255,255,0.75)", textAlign: "center", maxWidth: 68,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
+        }}>
+          {player.name}
+        </span>
+      </div>
+    );
+  }
 
-        {/* Scrollable body */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px",
-          display: "flex", flexDirection: "column", gap: 20 }}>
+  function EmptySlot() {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+        <div style={{
+          width: 60, height: 60, borderRadius: "50%",
+          border: "2px dashed rgba(255,255,255,0.12)", display: "flex",
+          alignItems: "center", justifyContent: "center"
+        }}>
+          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 20, color: "rgba(255,255,255,0.1)", fontWeight: 700 }}>+</span>
+        </div>
+        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.18)" }}>waiting…</span>
+      </div>
+    );
+  }
 
-          {/* ── SECTION 1: MATCHMAKING CONFIGURATION ── */}
-          <div style={{ background: C.white, borderRadius: 22, border: `1.5px solid ${C.border}`,
-            boxShadow: "0 2px 16px rgba(0,0,0,0.04)", overflow: "hidden" }}>
+  // ─── Main Page Component ───────────────────────────────────────────────────────
+  export function Matchmaking({ professorId }: { professorId?: string }) {
+    const supabase = createBrowserSupabaseClient();
+    const [sectionsList, setSectionsList] = useState<{ id: string; name: string }[]>([]);
+    const [selectedSection, setSelectedSection] = useState<{ id: string; name: string }>({ id: '', name: 'Loading...' });
+    
+    const [questionBanks, setQuestionBanks] = useState<{ id: string; name: string }[]>([]);
+    const [selectedBank, setSelectedBank] = useState<{ id: string; name: string }>({ id: '', name: 'Select Question Bank...' });
 
-            {/* Section header */}
-            <div style={{ padding: "18px 24px 14px", borderBottom: `1.5px solid ${C.border}`,
-              display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 10, background: C.indigoLight,
-                  display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Zap size={15} color={C.indigo} strokeWidth={2} />
-                </div>
-                <div>
-                  <h2 style={{ fontFamily: "Manrope, sans-serif", fontSize: 15, fontWeight: 800,
-                    color: C.navy, margin: 0 }}>Matchmaking Configuration</h2>
-                  <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted,
-                    margin: 0, fontWeight: 500 }}>Set how teams are formed for the selected quiz session</p>
-                </div>
+    const [isLive, setIsLive] = useState(true);
+    const [deadline, setDeadline] = useState('');
+    const [adaptive, setAdaptive] = useState(true);
+    const [teamSize, setTeamSize] = useState(3);
+    const [previewed, setPreviewed] = useState(false);
+    
+    const [inLobby, setInLobby] = useState(false);
+    const [activeSessionExists, setActiveSessionExists] = useState(false);
+    
+    // State for globally unique session routing
+    const [sessionId, setSessionId] = useState<string>('');
+    const [roomCode, setRoomCode] = useState(() => generateSecureRoomCode());
+    
+    const [joinedStudents, setJoinedStudents] = useState<Student[]>([]);
+    const [copied, setCopied] = useState(false);
+    const [battleStarted, setBattleStarted] = useState(false);
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [timeRemaining, setTimeRemaining] = useState(60);
+    const [liveFeed, setLiveFeed] = useState<any[]>([]);
+
+    const [randomizedQuestions, setRandomizedQuestions] = useState<QuestionItem[]>([]);
+    const wsRef = useRef<WebSocket | null>(null);
+
+    // Use sessionId here instead of selectedSection.id to ensure isolated routing
+    const { spawnBots, cleanupBots } = useBotSimulator(sessionId, roomCode, randomizedQuestions, 'LIVE', teamSize);
+
+    // 1. Fetch active session scoped exclusively to THIS professor
+    useEffect(() => {
+      const checkActiveSession = async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        const currentProfId = professorId || user?.id;
+        
+        if (!currentProfId) return;
+
+        const { data } = await supabase
+          .from('quiz_sessions')
+          .select('id, section_id, status, is_live, room_code') 
+          .eq('status', 'ACTIVE')
+          .eq('is_live', true)
+          .eq('professor_id', currentProfId) // Prevents overlapping views
+          .limit(1);
+
+        if (data && data.length > 0) {
+          setSessionId(data[0].id); // Grab the exact session UUID
+          setRoomCode(data[0].room_code);
+          setActiveSessionExists(true);
+          setInLobby(true);
+          setBattleStarted(false); 
+        }
+      };
+      checkActiveSession();
+    }, [supabase, professorId]);
+
+    // Load Sections and Question Banks from API
+   useEffect(() => {
+  const fetchSectionsAndBanks = async () => {
+
+   const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      console.error("No authenticated user found:", authError);
+      setSectionsList([{ id: 'none', name: 'Please Log In' }]);
+      setSelectedSection({ id: 'none', name: 'Please Log In' });
+      setQuestionBanks([{ id: 'default', name: 'Default Question Bank' }]);
+      setSelectedBank({ id: 'default', name: 'Default Question Bank' });
+      return;
+    }
+
+    const currentUserId = user.id
+
+   const { data: secData, error: secError } = await supabase
+      .from('sections')
+      .select('id, name')
+      .eq('professor_id', currentUserId); // Change 'professor_id' to 'user_id' if your table column is user_id
+
+    if (secError) {
+      console.error("Error fetching sections:", secError);
+    }
+
+    if (secData && secData.length > 0) {
+      setSectionsList(secData);
+      setSelectedSection(secData[0]);
+    } else {
+      setSectionsList([{ id: 'none', name: 'No Sections Found' }]);
+      setSelectedSection({ id: 'none', name: 'No Sections Found' });
+    }
+    // 2. Fetch question banks filtered strictly by professorId via API query params
+    try {
+      const res = await fetch(`/api/questions?professor_id=${encodeURIComponent(professorId)}`);
+      if (res.ok) {
+        const qData = await res.json();
+        if (qData && qData.length > 0) {
+          const uniqueTopics = Array.from(new Set(qData.map((q: any) => q.topic).filter(Boolean)));
+          const banks = uniqueTopics.map((topicName, idx) => ({ id: `bank-${idx}`, name: String(topicName) }));
+          setQuestionBanks(banks);
+          if (banks.length > 0) setSelectedBank(banks[0]);
+        } else {
+          setQuestionBanks([{ id: 'default', name: 'Default Question Bank' }]);
+          setSelectedBank({ id: 'default', name: 'Default Question Bank' });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load question banks from API:", err);
+    }
+  };
+
+  fetchSectionsAndBanks();
+}, [professorId, supabase]);
+
+    // Load and randomize questions
+    useEffect(() => {
+      async function loadAndRandomizeQuestions() {
+        try {
+          const res = await fetch('/api/questions');
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+              const formatted = data.map((q: any) => {
+                let parsedChoices: string[] = [];
+                try {
+                  let rawChoices = q.choices;
+                  if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
+                  if (Array.isArray(rawChoices)) {
+                    parsedChoices = rawChoices.map((c: any) => {
+                      if (typeof c === 'string') return c;
+                      if (typeof c === 'object' && c !== null) return c.text || c.label || String(c);
+                      return String(c);
+                    });
+                  }
+                } catch (e) {
+                  parsedChoices = [];
+                }
+                return { ...q, choices: parsedChoices };
+              });
+
+              const filtered = selectedBank.name && selectedBank.name !== 'Select Question Bank...'
+                ? formatted.filter((q: QuestionItem) => q.topic?.trim().toLowerCase() === selectedBank.name.trim().toLowerCase())
+                : formatted;
+
+              const targetQuestions = filtered.length > 0 ? filtered : formatted;
+              const shuffled = shuffleArray(targetQuestions);
+              const fullyRandomized = shuffled.map((q: QuestionItem) => ({
+                ...q,
+                choices: q.choices && q.choices.length > 0 ? shuffleArray(q.choices) : []
+              }));
+
+              setRandomizedQuestions(fullyRandomized);
+            }
+          }
+        } catch (err) {
+          console.error("Error loading randomized questions for session:", err);
+        }
+      }
+      loadAndRandomizeQuestions();
+    }, [selectedBank]);
+
+    // WebSocket Connection Handler
+    useEffect(() => {
+      // We strictly wait until we have a sessionId mapped before connecting
+      if (!inLobby || !sessionId) return;
+      
+      let ws: WebSocket | null = null;
+      let isMounted = true;
+
+      function connectWs() {
+        if (!isMounted) return;
+        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
+        ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          ws?.send(JSON.stringify({
+            type: 'JOIN_BATTLE',
+            battleId: sessionId, // Isolated session channel
+            totalQuestions: randomizedQuestions.length || 37,
+            timeLimit: 60,
+            sender: 'Professor'
+          }));
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED') {
+              if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
+              if (data.history) setLiveFeed(data.history);
+              
+              if (data.leaderboard && Array.isArray(data.leaderboard)) {
+                setJoinedStudents(prev => {
+                  const updated = [...prev];
+                  data.leaderboard.forEach((player: any) => {
+                    const idx = updated.findIndex(p => p.id === (player.id || player.userId));
+                    if (idx !== -1) updated[idx] = { ...updated[idx], score: player.score || 0 };
+                  });
+                  return updated;
+                });
+              }
+            } 
+            else if (data.type === 'SCORE_UPDATED') {
+              if (data.leaderboard && Array.isArray(data.leaderboard)) {
+                setJoinedStudents(prev => {
+                  const updated = [...prev];
+                  data.leaderboard.forEach((player: any) => {
+                    const idx = updated.findIndex(p => p.id === (player.id || player.userId));
+                    if (idx !== -1) {
+                      updated[idx] = { ...updated[idx], score: player.score || 0 };
+                    }
+                  });
+                  return updated;
+                });
+              }
+            }
+            else if (data.type === 'BATTLE_ACTION') {
+              setLiveFeed(prev => [data, ...prev]);
+              
+              if (data.isJoinEvent || (data.message && data.message.includes('joined'))) {
+                if (data.sender && data.sender !== 'Professor') {
+                  setJoinedStudents(prev => {
+                    const uniqueId = data.userId || data.sender;
+                    const rawName = data.rawName || data.sender;
+                    if (prev.some(s => s.id === uniqueId || s.name === rawName)) return prev;
+                    
+                    return [...prev, {
+                      id: uniqueId,
+                      name: rawName,
+                      initials: rawName.substring(0, 2).toUpperCase(),
+                      perfLevel: 'Medium',
+                      score: 0,
+                      team: data.team || 'Unassigned',
+                      avatarColor: AVATAR_COLORS[prev.length % AVATAR_COLORS.length],
+                      isReady: true
+                    }];
+                  });
+                }
+              } 
+            }
+          } catch (err) {
+            console.error("WS message parse error:", err);
+          }
+        };
+
+        ws.onclose = () => {
+          if (isMounted && inLobby) {
+            setTimeout(connectWs, 2000);
+          }
+        };
+      }
+
+      connectWs();
+
+      return () => {
+        isMounted = false;
+        if (ws) ws.close();
+      };
+    }, [inLobby, sessionId, randomizedQuestions.length]);
+
+    useEffect(() => {
+      if (!battleStarted) return;
+      const timer = setInterval(() => {
+        setTimeRemaining(prev => {
+          if (prev <= 1) {
+            handleNextQuestion();
+            return 60; 
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(timer);
+    }, [battleStarted, currentIndex, randomizedQuestions.length]);
+    
+    async function handleConfirmAndDeploy() {
+      if (activeSessionExists) {
+        return toast.error("A live quiz session is currently active. You must end it before deploying a new one.");
+      }
+      if (!selectedSection.id || selectedSection.id === 'none') {
+        return toast.error("Please select a valid section.");
+      }
+
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      const currentProfId = professorId || user?.id;
+
+      if (!currentProfId || authError) {
+        return toast.error("Authentication error: Could not verify your professor identity.");
+      }
+
+      // Collision Check Algorithm
+      let finalRoomCode = roomCode;
+      let isCodeUnique = false;
+
+      while (!isCodeUnique) {
+        const { data: existingSession } = await supabase
+          .from('quiz_sessions')
+          .select('id')
+          .eq('room_code', finalRoomCode)
+          .maybeSingle();
+
+        if (existingSession) {
+          finalRoomCode = generateSecureRoomCode();
+        } else {
+          isCodeUnique = true;
+        }
+      }
+      setRoomCode(finalRoomCode); 
+
+      // Insert and fetch returning session ID
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('quiz_sessions')
+        .insert([{
+          section_id: selectedSection.id,
+          professor_id: currentProfId, // Establish ownership
+          room_code: finalRoomCode, 
+          is_live: isLive,
+          status: isLive ? 'ACTIVE' : 'PENDING',
+          deadline: isLive ? null : deadline || null
+        }])
+        .select('id')
+        .single();
+
+      if (sessionError) {
+        toast.error("Failed to save match session to database.");
+        console.error(sessionError);
+        return;
+      }
+
+      if (isLive && sessionData) {
+        setSessionId(sessionData.id); // Isolate the WebSocket with this UUID
+        setActiveSessionExists(true);
+        setInLobby(true);
+        setJoinedStudents([]); 
+        toast.success(`Live Match Session initialized using bank: ${selectedBank.name}! Session Locked.`);
+      } else {
+        toast.success("Own-pace session successfully deployed!");
+      }
+    }
+
+    const handleStartBattle = () => {
+      setBattleStarted(true);
+      setCurrentIndex(0);
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'PROF_START_BATTLE',
+          battleId: sessionId, // Use UUID
+          bankId: selectedBank.id,
+          forceReset: true,
+          questions: randomizedQuestions 
+        }));
+      }
+    };
+
+    const handleNextQuestion = () => {
+      const totalQCount = randomizedQuestions.length || 1;
+      const nextIdx = currentIndex + 1;
+
+      if (nextIdx < totalQCount) {
+        setCurrentIndex(nextIdx);
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: 'ADVANCE_QUESTION',
+            battleId: sessionId, // Use UUID
+            currentIndex: nextIdx,
+            nextTimeLimit: 60,
+            isLastQuestion: false
+          }));
+        }
+      } else {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: 'ADVANCE_QUESTION',
+            battleId: sessionId, // Use UUID
+            currentIndex: currentIndex,
+            isLastQuestion: true
+          }));
+        }
+      }
+      setTimeRemaining(60);
+    };
+
+    useEffect(() => {
+      return () => cleanupBots();
+    }, [cleanupBots]);
+
+  const handleEndSession = async () => {
+      if (window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
+        if (wsRef.current) wsRef.current.close();
+        cleanupBots(); 
+        
+        await supabase
+          .from('quiz_sessions')
+          .update({ status: 'COMPLETED' })
+          .eq('id', sessionId); // Cleanly update by UUID
+
+        setInLobby(false);
+        setActiveSessionExists(false);
+        setBattleStarted(false);
+        setJoinedStudents([]);
+        setCurrentIndex(0);
+        setSessionId(''); // Clear UUID
+        
+        setRoomCode(generateSecureRoomCode());
+        
+        toast.success("Live session ended successfully. Configuration unlocked.");
+      }
+    };
+
+    const currentActiveQuestion = randomizedQuestions[currentIndex];
+    const totalQCount = randomizedQuestions.length > 0 ? randomizedQuestions.length : 1;
+
+    const studentsByTeam = joinedStudents.reduce((acc, student) => {
+      const t = student.team || 'Unassigned';
+      if (!acc[t]) acc[t] = [];
+      acc[t].push(student);
+      return acc;
+    }, {} as Record<string, Student[]>);
+
+    const teamScores = Object.entries(studentsByTeam).map(([team, members]) => {
+      const totalScore = members.reduce((sum, m) => sum + (m.score || 0), 0);
+      return { team, score: totalScore, members };
+    }).sort((a, b) => b.score - a.score);
+
+    if (inLobby) {
+      return (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", background: C.navy, overflow: "hidden" }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflowY: "auto", padding: 32, color: "#fff" }}>
+            
+            <div style={{ background: "rgba(255,71,87,0.2)", border: "1px solid rgba(255,71,87,0.4)", borderRadius: 12, padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <span style={{ fontSize: 12, fontFamily: "Manrope, sans-serif", color: C.yellow, fontWeight: 700 }}>🔒 STRICT SESSION LOCK</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Bank: {selectedBank.name} ({randomizedQuestions.length} Total Loaded)</span>
+                <button type="button" onClick={handleEndSession} style={{ background: C.red, border: "none", borderRadius: 8, padding: "5px 12px", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                  End Session & Unlock
+                </button>
               </div>
             </div>
 
-            <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
-              {/* Config controls row */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
+            {!battleStarted ? (
+              <div style={{ maxWidth: 900, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 24 }}>
+                <style>{`
+                  @keyframes popIn { 0%{opacity:0;transform:scale(0.4)} 100%{opacity:1;transform:scale(1)} }
+                  @keyframes dotPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.35;transform:scale(0.75)} }
+                `}</style>
 
-                {/* Adaptive toggle */}
-                <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px",
-                  border: `1.5px solid ${adaptive ? C.indigoBorder : C.border}`,
-                  display: "flex", flexDirection: "column", gap: 10,
-                  transition: "border-color 0.2s" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700,
-                      color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>
-                      Adaptive Randomization
-                    </span>
-                    <ToggleSwitch on={adaptive} onChange={v => { setAdaptive(v); setConfirmed(false); }} />
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,201,60,0.15)", border: "1.5px solid rgba(255,201,60,0.3)", borderRadius: 20, padding: "5px 16px", marginBottom: 12 }}>
+                    <Zap size={13} fill={C.yellow} color="transparent" />
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: C.yellow, letterSpacing: "0.1em", textTransform: "uppercase" }}>Live Fullscreen Session Lobby</span>
                   </div>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
-                    <div style={{ width: 32, height: 32, borderRadius: 9,
-                      background: adaptive ? C.indigoMid : C.inputBg, display: "flex",
-                      alignItems: "center", justifyContent: "center", flexShrink: 0,
-                      transition: "background 0.2s" }}>
-                      <Sparkles size={14} color={adaptive ? C.indigo : C.muted} strokeWidth={2} />
+                  <h1 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 42, fontWeight: 700, margin: 0 }}>{selectedSection.name} - Waiting Room</h1>
+                </div>
+
+                {/* Room Code Card */}
+                <div style={{ background: "rgba(255,255,255,0.05)", border: "1.5px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "22px 24px" }}>
+                  <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.45)", textAlign: "center", textTransform: "uppercase", marginBottom: 10, letterSpacing: "0.1em" }}>External Student Room Code</p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
+                    <div style={{ background: "rgba(255,255,255,0.06)", border: "2px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: "10px 24px" }}>
+                      <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 36, fontWeight: 700, color: C.yellow, letterSpacing: "0.15em" }}>{roomCode}</span>
                     </div>
-                    <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 500,
-                      color: adaptive ? C.navy : C.muted, margin: 0, lineHeight: 1.55,
-                      transition: "color 0.2s" }}>
-                      {adaptive
-                        ? "AI balances teams by distributing High, Medium, and Low performers evenly."
-                        : "Teams are assigned sequentially without performance consideration."}
-                    </p>
+                    <button type="button" onClick={() => { navigator.clipboard.writeText(roomCode); setCopied(true); setTimeout(() => setCopied(false), 2000); }} style={{ width: 48, height: 48, borderRadius: 14, background: copied ? "rgba(46,212,122,0.2)" : "rgba(255,255,255,0.08)", border: `2px solid ${copied ? C.green : "rgba(255,255,255,0.12)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: copied ? C.green : "#fff" }}>
+                      {copied ? <Check size={18} /> : <Copy size={18} />}
+                    </button>
                   </div>
-                  <div style={{ display: "inline-flex", alignItems: "center", gap: 5,
-                    background: adaptive ? C.greenLight : C.redLight,
-                    borderRadius: 20, padding: "4px 10px", alignSelf: "flex-start",
-                    transition: "background 0.2s" }}>
-                    <span style={{ width: 6, height: 6, borderRadius: "50%",
-                      background: adaptive ? "#2ED47A" : "#FF4757" }} />
-                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 800,
-                      color: adaptive ? "#18A058" : C.red }}>
-                      {adaptive ? "Enabled" : "Disabled"}
-                    </span>
+                  
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: 18 }}>
+                    <button 
+                      type="button" 
+                      onClick={() => spawnBots(teamSize * 3)} 
+                      style={{ background: C.indigo, border: "none", borderRadius: 12, padding: "10px 20px", color: "#fff", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
+                    >
+                      🤖 Spawn {teamSize * 3} Test Bots ({teamSize} per team)
+                    </button>
                   </div>
                 </div>
 
-                {/* Team size */}
-                <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px",
-                  border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
-                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700,
-                    color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>
-                    Team Size
-                  </span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 0,
-                    background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12,
-                    overflow: "hidden", width: "fit-content" }}>
-                    <button type="button"
-                      onClick={() => { setTeamSize(v => Math.max(2, v - 1)); setConfirmed(false); }}
-                      style={{ width: 38, height: 38, background: "none", border: "none",
-                        borderRight: `1.5px solid ${C.border}`, cursor: "pointer",
-                        fontFamily: "Manrope, sans-serif", fontSize: 18, fontWeight: 700,
-                        color: teamSize <= 2 ? C.muted : C.navy }}>−</button>
-                    <span style={{ width: 52, textAlign: "center", fontFamily: "Fredoka, sans-serif",
-                      fontSize: 26, fontWeight: 700, color: C.indigo, lineHeight: 1 }}>{teamSize}</span>
-                    <button type="button"
-                      onClick={() => { setTeamSize(v => Math.min(8, v + 1)); setConfirmed(false); }}
-                      style={{ width: 38, height: 38, background: "none", border: "none",
-                        borderLeft: `1.5px solid ${C.border}`, cursor: "pointer",
-                        fontFamily: "Manrope, sans-serif", fontSize: 18, fontWeight: 700,
-                        color: teamSize >= 8 ? C.muted : C.navy }}>+</button>
+                {/* Joined Student Profiles Grid */}
+                <div style={{ width: "100%" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Users size={14} color="rgba(255,255,255,0.5)" strokeWidth={2} />
+                      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                        Joined Participants ({joinedStudents.length}/{CAPACITY})
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.yellow, animation: "dotPulse 1.2s ease-in-out infinite" }} />
+                      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.4)" }}>
+                        Waiting for students to join…
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    {[
-                      { label: "Teams formed", val: Math.ceil(BASE_STUDENTS.length / teamSize) },
-                      { label: "Students/team", val: `~${teamSize}` },
-                    ].map(item => (
-                      <div key={item.label} style={{ display: "flex", justifyContent: "space-between",
-                        alignItems: "center" }}>
-                        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12,
-                          fontWeight: 500, color: C.muted }}>{item.label}</span>
-                        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12,
-                          fontWeight: 800, color: C.navy }}>{item.val}</span>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20 }}>
+                    {Object.entries(studentsByTeam).map(([teamName, members], idx) => (
+                      <div key={teamName} style={{ 
+                        background: "linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))", 
+                        border: "1px solid rgba(255,255,255,0.1)", 
+                        borderRadius: 20, 
+                        padding: 20, 
+                        display: "flex", 
+                        flexDirection: "column", 
+                        position: "relative", 
+                        overflow: "hidden" 
+                      }}>
+                        
+                        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 4, background: AVATAR_COLORS[idx % AVATAR_COLORS.length] }} />
+
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                          <h4 style={{ color: "#fff", fontFamily: "Fredoka, sans-serif", margin: 0, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
+                            🛡️ {teamName}
+                          </h4>
+                          <span style={{ fontSize: 12, background: "rgba(255,255,255,0.1)", padding: "2px 8px", borderRadius: 12, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>
+                            {members.length} / {teamSize}
+                          </span>
+                        </div>
+
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(60px, 1fr))", gap: 12 }}>
+                          {members.map(student => (
+                            <PlayerChip key={student.id} player={student} animate={true} />
+                          ))}
+                          {Array.from({ length: Math.max(0, teamSize - members.length) }).map((_, i) => (
+                            <EmptySlot key={`empty-${teamName}-${i}`} />
+                          ))}
+                        </div>
                       </div>
                     ))}
-                  </div>
-                </div>
-
-                {/* Session selector */}
-                <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px",
-                  border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
-                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700,
-                    color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>
-                    Session
-                  </span>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11,
-                        fontWeight: 600, color: C.muted }}>Section</span>
-                      <Dropdown value={section} options={SECTIONS}
-                        onChange={v => { setSection(v); setConfirmed(false); }} />
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11,
-                        fontWeight: 600, color: C.muted }}>Quiz Session</span>
-                      <Dropdown value={quizSession} options={SESSIONS}
-                        onChange={v => { setQuizSession(v); setConfirmed(false); }} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Fairness tolerance slider */}
-              <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 20px",
-                border: `1.5px solid ${C.border}` }}>
-                <FairnessSlider value={tolerance}
-                  onChange={v => { setTolerance(v); setConfirmed(false); }} />
-              </div>
-
-              {/* Preview button */}
-              <div style={{ display: "flex", gap: 10 }}>
-                <button type="button" onClick={() => { setPreviewed(true); setConfirmed(false); }} style={{
-                  background: C.coral, border: "none", borderRadius: 13, padding: "11px 22px",
-                  fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 700, color: "#fff",
-                  cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
-                  boxShadow: "0 4px 14px rgba(255,107,74,0.3)",
-                }}>
-                  <Users size={16} strokeWidth={2.5} />Preview Team Assignments
-                  <ArrowRight size={15} strokeWidth={2.5} />
-                </button>
-                <button type="button" onClick={() => { setPreviewed(true); handleReshuffle(); }} style={{
-                  background: "transparent", border: `2px solid ${C.border}`, borderRadius: 13,
-                  padding: "11px 18px", fontFamily: "Manrope, sans-serif", fontSize: 14,
-                  fontWeight: 700, color: C.navy, cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 7,
-                }}>
-                  <Shuffle size={15} strokeWidth={2.5} />Reshuffle
-                </button>
-              </div>
-            </div>
-
-            {/* ── Preview Table ── */}
-            {previewed && (
-              <div style={{ borderTop: `1.5px solid ${C.border}`, padding: "20px 24px" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-                  marginBottom: 14 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <h3 style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 800,
-                      color: C.navy, margin: 0 }}>Team Preview</h3>
-                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-                      color: C.muted, background: C.inputBg, borderRadius: 20, padding: "2px 9px" }}>
-                      {numTeams} teams · {BASE_STUDENTS.length} students
-                    </span>
-                    {adaptive && (
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
-                        background: C.indigoLight, border: `1.5px solid ${C.indigoBorder}`,
-                        borderRadius: 20, padding: "2px 9px",
-                        fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.indigo }}>
-                        <Sparkles size={10} strokeWidth={2.5} />Adaptive
-                      </span>
+                    
+                    {joinedStudents.length === 0 && (
+                      <div style={{ 
+                        background: "linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))", 
+                        border: "1px dashed rgba(255,255,255,0.2)", 
+                        borderRadius: 20, padding: 20, display: "flex", flexDirection: "column"
+                      }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(60px, 1fr))", gap: 12 }}>
+                          {Array.from({ length: teamSize }).map((_, i) => <EmptySlot key={`empty-${i}`} />)}
+                        </div>
+                      </div>
                     )}
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button type="button" onClick={() => { handleReshuffle(); }} style={{
-                      display: "inline-flex", alignItems: "center", gap: 5,
-                      background: "transparent", border: `1.5px solid ${C.border}`, borderRadius: 9,
-                      padding: "7px 14px", fontFamily: "Manrope, sans-serif", fontSize: 12,
-                      fontWeight: 700, color: C.navy, cursor: "pointer",
-                    }}>
-                      <RefreshCw size={13} strokeWidth={2.5} />Reshuffle Teams
-                    </button>
-                    <button type="button" onClick={handleConfirm} disabled={confirming || confirmed} style={{
-                      display: "inline-flex", alignItems: "center", gap: 5,
-                      background: confirmed ? C.greenLight : C.coral,
-                      border: `none`, borderRadius: 9,
-                      padding: "7px 16px", fontFamily: "Manrope, sans-serif", fontSize: 12,
-                      fontWeight: 700, color: confirmed ? "#18A058" : "#fff", cursor: "pointer",
-                      boxShadow: confirmed ? "none" : "0 3px 10px rgba(255,107,74,0.28)",
-                    }}>
-                      {confirmed
-                        ? <><CheckCircle2 size={13} strokeWidth={2.5} />Confirmed!</>
-                        : confirming
-                        ? "Confirming…"
-                        : <><CheckCircle2 size={13} strokeWidth={2.5} />Confirm Teams</>}
+                </div>
+
+                <button type="button" onClick={handleStartBattle} style={{ width: "100%", background: `linear-gradient(135deg, ${C.indigo}, ${C.indigoDeep})`, border: "none", borderRadius: 20, padding: "18px 0", fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 8px 32px rgba(91,61,246,0.5)" }}>
+                  Start Live Battle Now! ⚡
+                </button>
+              </div>
+            ) : (
+              <div style={{ maxWidth: 1000, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.05)", padding: "20px 24px", borderRadius: 20, border: "1px solid rgba(255,255,255,0.1)" }}>
+                  <div>
+                    <p style={{ color: C.yellow, fontSize: 12, textTransform: "uppercase", fontWeight: 700, margin: 0 }}>Active Bank: {selectedBank.name}</p>
+                    <h2 style={{ color: "#fff", fontSize: 26, fontFamily: "Fredoka, sans-serif", margin: "4px 0 0" }}>Question {currentIndex + 1} of {totalQCount}</h2>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+                    <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 18px", borderRadius: 14, textAlign: "center" }}>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block" }}>Timer</span>
+                      <span style={{ fontSize: 22, fontFamily: "Fredoka, sans-serif", color: timeRemaining <= 10 ? C.coral : C.yellow }}>{timeRemaining}s</span>
+                    </div>
+                    <button type="button" onClick={handleNextQuestion} style={{ background: C.coral, border: "none", borderRadius: 14, padding: "12px 24px", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: "#fff", cursor: "pointer" }}>
+                      {currentIndex >= totalQCount - 1 ? 'Finish Quiz' : 'Next Question →'}
                     </button>
                   </div>
                 </div>
 
-                {/* Table */}
-                <div style={{ borderRadius: 14, border: `1.5px solid ${C.border}`, overflow: "hidden" }}>
-                  {/* Header */}
-                  <div style={{ display: "grid", gridTemplateColumns: "40px 1fr 160px 140px 120px",
-                    padding: "9px 16px", background: "#F5F5FA",
-                    borderBottom: `1.5px solid ${C.border}`, gap: 8 }}>
-                    {["#", "Student", "Team", "Performance", "Score"].map((h, i) => (
-                      <span key={h} style={{ fontFamily: "Manrope, sans-serif", fontSize: 11,
-                        fontWeight: 700, color: C.muted, textTransform: "uppercase",
-                        letterSpacing: "0.07em", textAlign: i === 4 ? "right" : "left" }}>
-                        {h}
-                      </span>
-                    ))}
+                <div style={{ background: "rgba(91,61,246,0.15)", border: `2px solid ${C.indigo}`, borderRadius: 20, padding: "24px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <Eye size={18} color={C.yellow} />
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800, color: C.yellow, textTransform: "uppercase" }}>
+                      Professor Testing Panel (Synchronized Live Item)
+                    </span>
                   </div>
-                  {/* Rows */}
-                  {students.map((s, i) => {
-                    const team = TEAM_PALETTE[s.team] ?? TEAM_PALETTE[0];
-                    const perf = PERF_STYLE[s.perfLevel];
-                    return (
-                      <div key={`${shuffleKey}-${s.id}`}
-                        style={{ display: "grid", gridTemplateColumns: "40px 1fr 160px 140px 120px",
-                          padding: "10px 16px", gap: 8, alignItems: "center",
-                          background: i % 2 === 0 ? C.white : "#FAFAFC",
-                          borderBottom: i < students.length - 1 ? `1px solid ${C.border}` : "none",
-                        }}>
-                        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12,
-                          fontWeight: 600, color: C.muted }}>{i + 1}</span>
 
-                        {/* Student */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                          <div style={{ width: 28, height: 28, borderRadius: "50%",
-                            background: s.avatarColor, display: "flex", alignItems: "center",
-                            justifyContent: "center", fontFamily: "Manrope, sans-serif",
-                            fontSize: 10, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
-                            {s.initials}
-                          </div>
-                          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13,
-                            fontWeight: 600, color: C.navy }}>{s.name}</span>
+                  {currentActiveQuestion ? (
+                    <div>
+                      <p style={{ fontSize: 18, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>
+                        {currentActiveQuestion.text}
+                      </p>
+
+                      {currentActiveQuestion.choices && currentActiveQuestion.choices.length > 0 ? (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                          {currentActiveQuestion.choices.map((choice, i) => {
+                            const isCorrect = choice === currentActiveQuestion.answer;
+                            return (
+                              <div key={i} style={{
+                                background: isCorrect ? "rgba(46,212,122,0.25)" : "rgba(0,0,0,0.3)",
+                                border: `1.5px solid ${isCorrect ? C.green : "rgba(255,255,255,0.1)"}`,
+                                padding: "12px 16px", borderRadius: 12, fontSize: 14,
+                                color: isCorrect ? C.green : "rgba(255,255,255,0.85)", fontWeight: isCorrect ? 700 : 500,
+                                display: "flex", alignItems: "center", justifyContent: "space-between"
+                              }}>
+                                <span><b>{["A", "B", "C", "D"][i]}.</b> {choice}</span>
+                                {isCorrect && <span style={{ fontSize: 10, background: C.green, color: "#fff", padding: "2px 6px", borderRadius: 4 }}>Correct</span>}
+                              </div>
+                            );
+                          })}
                         </div>
+                      ) : (
+                        <div style={{ background: "rgba(46,212,122,0.2)", border: `1px solid ${C.green}`, padding: "12px 16px", borderRadius: 12 }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: C.green, display: "block", marginBottom: 4 }}>Expected Answer:</span>
+                          <span style={{ fontFamily: "monospace", fontSize: 16, color: "#fff", fontWeight: 700 }}>{currentActiveQuestion.answer}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p style={{ color: "rgba(255,255,255,0.4)", fontStyle: "italic", margin: 0 }}>Loading questions from selected bank...</p>
+                  )}
+                </div>
 
-                        {/* Team badge */}
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6,
-                          background: team.light, border: `1.5px solid ${team.bg}22`,
-                          borderRadius: 20, padding: "4px 10px",
-                          fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700,
-                          color: team.text, width: "fit-content" }}>
-                          <span style={{ width: 7, height: 7, borderRadius: "50%",
-                            background: team.bg, flexShrink: 0 }} />
-                          {team.label}
-                        </span>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+                  <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 20, padding: 20, border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <h3 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, marginTop: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                      <Trophy size={18} color={C.yellow} /> Live Team Rankings
+                    </h3>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: 350, overflowY: "auto" }}>
+                      {teamScores.map((ts, idx) => (
+                        <div key={ts.team} style={{ background: "rgba(255,255,255,0.06)", borderRadius: 12, padding: 14 }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: idx === 0 ? C.yellow : "rgba(255,255,255,0.5)" }}>#{idx + 1}</span>
+                              <span style={{ fontWeight: 700, fontFamily: "Fredoka, sans-serif", fontSize: 16 }}>{ts.team}</span>
+                            </div>
+                            <span style={{ color: C.green, fontWeight: 700, fontFamily: "Fredoka, sans-serif", fontSize: 16 }}>{ts.score} pts</span>
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            {ts.members.map(m => (
+                              <span key={m.id} style={{ fontSize: 11, background: "rgba(0,0,0,0.3)", padding: "2px 8px", borderRadius: 8, color: "rgba(255,255,255,0.7)" }}>
+                                {m.name} ({m.score})
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
 
-                        {/* Performance chip */}
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5,
-                          background: perf.bg, border: `1.5px solid ${perf.border}`,
-                          borderRadius: 7, padding: "3px 9px",
-                          fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-                          color: perf.text, width: "fit-content" }}>
-                          <span style={{ width: 5, height: 5, borderRadius: "50%",
-                            background: perf.dot }} />
-                          {s.perfLevel}
-                        </span>
-
-                        {/* Score */}
-                        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800,
-                          color: C.navy, textAlign: "right" }}>{s.score}%</span>
-                      </div>
-                    );
-                  })}
+                  <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 20, padding: 20, border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <h3 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, marginTop: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                      <Sparkles size={18} color={C.yellow} /> Match Stream
+                    </h3>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 350, overflowY: "auto", fontFamily: "monospace", fontSize: 12 }}>
+                      {liveFeed.length === 0 ? (
+                        <p style={{ color: "rgba(255,255,255,0.3)", textAlign: "center", marginTop: 40 }}>Waiting for student activity...</p>
+                      ) : (
+                        liveFeed.map((f, i) => (
+                          <div key={i} style={{ background: "rgba(0,0,0,0.3)", padding: "8px 12px", borderRadius: 8, color: "rgba(255,255,255,0.8)" }}>
+                            <span style={{ color: C.yellow }}>[{new Date().toLocaleTimeString()}]</span> <b>{f.sender || 'Student'}</b> {f.message || 'completed a question.'}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
+
           </div>
+        </div>
+      );
+    }
 
-          {/* ── SECTION 2: FAIRNESS REPORT ── */}
-          <div style={{ background: C.white, borderRadius: 22, border: `1.5px solid ${C.border}`,
-            boxShadow: "0 2px 16px rgba(0,0,0,0.04)", overflow: "hidden" }}>
+    return (
+      <div style={{ display: "flex", height: "100vh", background: C.offWhite, overflow: "hidden", position: "relative" }}>
+        {activeSessionExists && (
+          <div style={{ position: "absolute", inset: 0, background: "rgba(27,30,43,0.75)", backdropFilter: "blur(4px)", zIndex: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
+            <div style={{ background: C.navy, border: `2px solid ${C.red}`, borderRadius: 24, padding: "32px 40px", maxWidth: 500, boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+              <Lock size={48} color={C.red} style={{ marginBottom: 16 }} />
+              <h2 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 24, color: "#fff", margin: "0 0 10px" }}>Session Locked</h2>
+              <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, color: "rgba(255,255,255,0.7)", margin: "0 0 24px", lineHeight: 1.5 }}>
+                A live quiz session is currently running on the network. Configuration and match creation are locked until the active session concludes or is explicitly terminated.
+              </p>
+              <button type="button" onClick={() => setInLobby(true)} style={{ background: C.indigo, border: "none", borderRadius: 12, padding: "12px 24px", color: "#fff", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(91,61,246,0.4)" }}>
+                Return to Active Lobby ⚡
+              </button>
+            </div>
+          </div>
+        )}
 
-            {/* Section header */}
-            <div style={{ padding: "18px 24px 14px", borderBottom: `1.5px solid ${C.border}`,
-              display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 10, background: C.greenLight,
-                  display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <TrendingUp size={15} color="#18A058" strokeWidth={2} />
-                </div>
-                <div>
-                  <h2 style={{ fontFamily: "Manrope, sans-serif", fontSize: 15, fontWeight: 800,
-                    color: C.navy, margin: 0 }}>Fairness Report</h2>
-                  <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted,
-                    margin: 0, fontWeight: 500 }}>Team balance analysis based on current assignments</p>
-                </div>
+        <ProfSidebar />
+
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, opacity: activeSessionExists ? 0.3 : 1, pointerEvents: activeSessionExists ? "none" : "auto" }}>
+          <div style={{ background: C.white, borderBottom: `1.5px solid ${C.border}`, padding: "0 28px", height: 62, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(91,61,246,0.08)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Users size={17} color={C.indigo} strokeWidth={2} />
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Dropdown value={section} options={SECTIONS}
-                  onChange={v => setSection(v)} width={150} />
-                <Dropdown value={quizSession} options={SESSIONS}
-                  onChange={v => setQuizSession(v)} width={220} />
-                <button type="button" style={{
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                  background: "transparent", border: `1.5px solid ${C.border}`, borderRadius: 11,
-                  padding: "8px 14px", fontFamily: "Manrope, sans-serif", fontSize: 13,
-                  fontWeight: 700, color: C.navy, cursor: "pointer",
-                }}>
-                  <Download size={14} strokeWidth={2} />Export Report
-                </button>
+              <div>
+                <h1 style={{ fontFamily: "Manrope, sans-serif", fontSize: 18, fontWeight: 800, color: C.navy, margin: 0 }}>Matchmaking</h1>
+                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600, color: C.muted, margin: 0 }}>Adaptive team balancing for fair quiz battles</p>
               </div>
             </div>
+          </div>
 
-            <div style={{ padding: "24px", display: "flex", gap: 24, alignItems: "flex-start" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px", display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ background: C.white, borderRadius: 22, border: `1.5px solid ${C.border}`, boxShadow: "0 2px 16px rgba(0,0,0,0.04)", overflow: "hidden" }}>
+              <div style={{ padding: "18px 24px 14px", borderBottom: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 10, background: C.indigoLight, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Zap size={15} color={C.indigo} strokeWidth={2} />
+                  </div>
+                  <div>
+                    <h2 style={{ fontFamily: "Manrope, sans-serif", fontSize: 15, fontWeight: 800, color: C.navy, margin: 0 }}>Matchmaking Configuration</h2>
+                    <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted, margin: 0, fontWeight: 500 }}>Configure class section and live/own-pace execution mode</p>
+                  </div>
+                </div>
+              </div>
 
-              {/* Left: Fairness ring + stats */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 20, alignItems: "center",
-                minWidth: 180 }}>
-                <FairnessRing score={score} verdict={verdict} />
-
-                {/* Quick stats */}
-                <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 8 }}>
-                  {[
-                    { icon: <Users size={13} color={C.indigo} strokeWidth={2} />,    label: "Teams",      val: numTeams },
-                    { icon: <TrendingUp size={13} color="#18A058" strokeWidth={2} />, label: "Mean Avg",   val: `${Math.round(mean)}%` },
-                    { icon: <Clock size={13} color="#9A6C00" strokeWidth={2} />,      label: "Session",    val: "Active" },
-                  ].map(s => (
-                    <div key={s.label} style={{ display: "flex", alignItems: "center",
-                      justifyContent: "space-between", gap: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        {s.icon}
-                        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12,
-                          fontWeight: 500, color: C.muted }}>{s.label}</span>
-                      </div>
-                      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12,
-                        fontWeight: 800, color: C.navy }}>{s.val}</span>
+              <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
+                  <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${adaptive ? C.indigoBorder : C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Adaptive Randomization</span>
+                      <ToggleSwitch on={adaptive} onChange={v => setAdaptive(v)} disabled={activeSessionExists} />
                     </div>
-                  ))}
+                  </div>
+
+                  <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Team Size</span>
+                  <div style={{ display: "flex", alignItems: "center", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, width: "fit-content" }}>
+
+    <button type="button" disabled={activeSessionExists} onClick={() => setTeamSize(v => Math.max(3, v - 1))} style={{ width: 38, height: 38, background: "none", border: "none", cursor: "pointer", fontWeight: 700 }}>−</button>
+    <span style={{ width: 52, textAlign: "center", fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: C.indigo }}>{teamSize}</span>
+    <button type="button" disabled={activeSessionExists} onClick={() => setTeamSize(v => Math.min(7, v + 1))} style={{ width: 38, height: 38, background: "none", border: "none", cursor: "pointer", fontWeight: 700 }}>+</button>
+  </div>
+                  </div>
+
+                  <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Target Class Section</span>
+                    <Dropdown value={selectedSection} options={sectionsList} onChange={v => setSelectedSection(v)} disabled={activeSessionExists} />
+                  </div>
+                </div>
+
+                <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Database size={15} color={C.indigo} />
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Dynamic Question Bank Source</span>
+                  </div>
+                  <Dropdown value={selectedBank} options={questionBanks} onChange={v => setSelectedBank(v)} disabled={activeSessionExists} />
+                </div>
+
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button type="button" disabled={activeSessionExists} onClick={() => setPreviewed(true)} style={{
+                    background: C.coral, border: "none", borderRadius: 13, padding: "11px 22px", fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 700, color: "#fff", cursor: activeSessionExists ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 14px rgba(255,107,74,0.3)"
+                  }}>
+                    <Users size={16} strokeWidth={2.5} />Preview Team Assignments
+                    <ArrowRight size={15} strokeWidth={2.5} />
+                  </button>
                 </div>
               </div>
 
-              {/* Divider */}
-              <div style={{ width: 1, background: C.border, alignSelf: "stretch" }} />
-
-              {/* Right: Bar chart */}
-              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 14 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800,
-                    color: C.navy }}>Team Average Performance</span>
-                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600,
-                    color: C.muted }}>Class mean: {Math.round(mean)}%</span>
+              {previewed && !activeSessionExists && (
+                <div style={{ borderTop: `1.5px solid ${C.border}`, padding: "20px 24px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <h3 style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 800, color: C.navy, margin: 0 }}>Team Preview</h3>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button type="button" onClick={handleConfirmAndDeploy} style={{
+                        display: "inline-flex", alignItems: "center", gap: 5, background: C.coral, border: "none", borderRadius: 9, padding: "9px 18px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
+                      }}>
+                        <CheckCircle2 size={15} /> Confirm & Launch Live Lobby
+                      </button>
+                    </div>
+                  </div>
                 </div>
-
-                <div style={{ height: 220 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={teamStats} barCategoryGap="30%" barGap={4}
-                      margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-                      <CartesianGrid key="grid" vertical={false} stroke={C.border} strokeDasharray="3 3" />
-                      <XAxis key="x" dataKey="name" tick={{ fontFamily: "Manrope, sans-serif", fontSize: 11,
-                        fontWeight: 700, fill: C.muted }}
-                        axisLine={false} tickLine={false} />
-                      <YAxis key="y" domain={[0, 100]} tick={{ fontFamily: "Manrope, sans-serif",
-                        fontSize: 11, fill: C.muted }} axisLine={false} tickLine={false}
-                        tickFormatter={(v: number) => `${v}%`} />
-                      <Tooltip key="tooltip" content={<CustomTooltip />} cursor={{ fill: "rgba(91,61,246,0.04)" }} />
-                      <ReferenceLine key="ref" y={mean} stroke={C.indigo} strokeDasharray="5 3"
-                        strokeWidth={1.5} label={{ value: "Mean", position: "right",
-                          fill: C.indigo, fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 700 }} />
-                      <Bar key="bar" dataKey="avg" radius={[8, 8, 0, 0]} maxBarSize={56}>
-                        {teamStats.map((entry, i) => (
-                          <Cell key={`cell-${i}`}
-                            fill={TEAM_PALETTE[entry.team]?.bg ?? C.indigo}
-                            fillOpacity={0.85} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-
-                {/* Team summary chips */}
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {teamStats.map(ts => {
-                    const team = TEAM_PALETTE[ts.team];
-                    const delta = ts.avg - Math.round(mean);
-                    return (
-                      <div key={ts.team} style={{ display: "flex", alignItems: "center", gap: 6,
-                        background: team.light, borderRadius: 10, padding: "7px 12px",
-                        border: `1.5px solid ${team.bg}33` }}>
-                        <span style={{ width: 8, height: 8, borderRadius: "50%",
-                          background: team.bg, flexShrink: 0 }} />
-                        <div>
-                          <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12,
-                            fontWeight: 800, color: team.text, margin: 0, lineHeight: 1 }}>
-                            {ts.name}
-                          </p>
-                          <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 10,
-                            fontWeight: 600, color: C.muted, margin: "2px 0 0" }}>
-                            {ts.avg}% avg
-                            <span style={{ color: delta >= 0 ? "#18A058" : C.red, fontWeight: 700,
-                              marginLeft: 4 }}>
-                              ({delta >= 0 ? "+" : ""}{delta})
-                            </span>
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Insight row */}
-                <div style={{ background: verdict === "balanced" ? C.greenLight : C.yellowLight,
-                  borderRadius: 12, padding: "11px 14px",
-                  border: `1.5px solid ${verdict === "balanced" ? C.greenBorder : C.yellowBorder}`,
-                  display: "flex", alignItems: "flex-start", gap: 9 }}>
-                  <Info size={14} color={verdict === "balanced" ? "#18A058" : "#9A6C00"}
-                    strokeWidth={2.5} style={{ flexShrink: 0, marginTop: 1 }} />
-                  <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600,
-                    color: verdict === "balanced" ? "#18A058" : "#9A6C00", margin: 0, lineHeight: 1.55 }}>
-                    {verdict === "balanced"
-                      ? `Team performance spread is within tolerance. Maximum gap between teams is ${Math.max(...teamStats.map(t=>t.avg)) - Math.min(...teamStats.map(t=>t.avg))} points — well within the configured threshold.`
-                      : `Some teams show higher-than-ideal performance gaps. Consider lowering fairness tolerance or enabling Adaptive Randomization to redistribute students.`}
-                  </p>
-                </div>
-              </div>
+              )}
             </div>
           </div>
-
         </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
+
+  export default Matchmaking;

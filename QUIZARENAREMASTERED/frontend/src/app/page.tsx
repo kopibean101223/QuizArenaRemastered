@@ -1,61 +1,105 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { AppProvider, useApp } from "@/context/AppContext";
 import { AuthScreen } from "@/components/AuthScreen";
-import { BattleLobby } from "@/components/BattleLobby";
-import { LiveBattle } from "@/components/LiveBattle";
-import { BattleResults } from "@/components/BattleResults";
-import { ProfessorDashboard } from "@/components/ProfessorDashboard";
-import { SectionsDashboard } from "@/components/SectionsDashboard";
-import { QuestionBank } from "@/components/QuestionBank";
-import { AIQuestionGenerator } from "@/components/AIQuestionGenerator";
-import { Matchmaking } from "@/components/Matchmaking";
-import { SolutionAnalyzer } from "@/components/SolutionAnalyzer";
-import ChooseRole from "@/components/chooserole"; 
+import { BattleLobby } from "@/components/studentONLY/BattleLobby";
+//import { SelfPacedBattle } from "@/components/studentONLY/Battle_OwnPace";
+import { LiveBattle } from "@/components/studentONLY/Battle_LiveQuiz";
+import { TeamBattle } from "@/components/studentONLY/Battle_TeamMode"; 
+//import { BattleRoyale } from "@/components/studentONLY/Battle_BattleRoyale"; 
+import { BattleResults } from "@/components/studentONLY/BattleResultsONLY/Results_LiveQuiz";
+import { ProfessorDashboard } from "@/components/profonly/ProfessorDashboard";
+import SectionsDashboard from "@/components/profonly/SectionsDashboard";
+import { QuestionBank } from "@/components/profonly/QuestionBank";
+import { AIQuestionGenerator } from "@/components/profonly/AIQuestionGenerator";
+import Matchmaking from "@/components/Matchmaking";
+import { SolutionAnalyzer } from "@/components/profonly/SolutionAnalyzer";
+import ChooseRole from "@/components/chooserole";
+
+function LoadingSpinner() {
+  return (
+    <div className="min-h-screen w-full bg-slate-950 flex flex-col items-center justify-center gap-3">
+      <div className="size-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      <p className="text-xs text-slate-400 font-mono">Loading...</p>
+    </div>
+  );
+}
 
 function RouterContent() {
-  const { page, setPage } = useApp();
+  const { page, setPage, user, isLoading, activeSectionId } = useApp();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
 
-  // 1. Mark component as mounted to safely render client-only state
+  const battleId = activeSectionId || searchParams.get("battleId") || "";
+
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  // 2. Sync URL query parameter to AppContext
   useEffect(() => {
-    const targetPage = searchParams.get("page");
-    if (targetPage && setPage && targetPage !== page) {
-      setPage(targetPage);
+    if (!isMounted || isLoading) return;
+    const urlPage = searchParams.get("page");
+    if (urlPage && urlPage !== page && setPage) {
+      setPage(urlPage as any);
     }
-  }, [searchParams, setPage, page]);
+  }, [searchParams, isMounted, isLoading]);
 
-  // 3. Prevent Hydration Mismatch: Render a loading shell during SSR frame
-  if (!isMounted) {
-    return (
-      <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center">
-        <div className="size-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+  useEffect(() => {
+    if (!isMounted || !page || isLoading) return;
+    const currentParam = searchParams.get("page");
+    if (currentParam !== page) {
+      const url = battleId ? `/?page=${page}&battleId=${battleId}` : `/?page=${page}`;
+      router.replace(url, { scroll: false });
+    }
+  }, [page, battleId, isLoading, isMounted, searchParams, router]);
+
+  useEffect(() => {
+    if (isMounted && !isLoading && user && page === "login") {
+      const targetRoute = user.role === "professor" ? "dashboard" : "lobby";
+      setPage(targetRoute);
+    }
+  }, [isMounted, isLoading, user, page, setPage]);
+
+  // Fallback check: If on a battle page without a valid battleId, redirect to lobby
+  useEffect(() => {
+    if (isMounted && !isLoading) {
+      const isBattlePage = [
+        "battle_selfpaced",
+        "battle_team",
+        "battle_royale",
+        "battle_livequiz",
+      ].includes(page);
+
+      if (isBattlePage && !battleId) {
+        console.warn(`[Router] No battleId provided for page '${page}'. Redirecting to lobby.`);
+        setPage("lobby");
+      }
+    }
+  }, [page, battleId, isMounted, isLoading, setPage]);
+
+  if (!isMounted || isLoading) {
+    return <LoadingSpinner />;
   }
 
-  // 4. Derive target active page (Prioritize URL param first)
-  const targetPage = searchParams.get("page");
-  const activePage = targetPage || page;
-
-  switch (activePage) {
-    // Student flow
+  // Router Switch
+  switch (page) {
     case "lobby":
       return <BattleLobby />;
-    case "battle":
-      return <LiveBattle />;
+    case "battle_selfpaced":
+      return <SelfPacedBattle battleId={battleId} />;
+    case "battle_team":
+      return <TeamBattle battleId={battleId} />;
+/* --- PHASE 2 STRETCH GOALS --- 
+    case "battle_selfpaced":
+      return <SelfPacedBattle battleId={battleId} />;
+    case "battle_royale":
+      return <BattleRoyale battleId={battleId} />;
+    -------------------------------- */
     case "results":
-      return <BattleResults />;
-
-    // Professor flow
+      return <BattleResults battleId={battleId} />;
     case "dashboard":
       return <ProfessorDashboard />;
     case "sections":
@@ -68,14 +112,13 @@ function RouterContent() {
       return <Matchmaking />;
     case "analyzer":
       return <SolutionAnalyzer />;
-
-    
     case "role":
-      return <ChooseRole />; 
-
-  
+      return <ChooseRole />;
     case "login":
     default:
+      if (user) {
+        return user.role === "professor" ? <ProfessorDashboard /> : <BattleLobby />;
+      }
       return <AuthScreen />;
   }
 }
@@ -84,7 +127,7 @@ export default function Home() {
   return (
     <AppProvider>
       <div className="size-full overflow-auto">
-        <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+        <Suspense fallback={<LoadingSpinner />}>
           <RouterContent />
         </Suspense>
       </div>

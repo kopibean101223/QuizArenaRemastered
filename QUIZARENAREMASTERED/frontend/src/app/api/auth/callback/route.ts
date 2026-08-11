@@ -7,8 +7,6 @@ export async function GET(request: Request) {
   const code = requestUrl.searchParams.get('code')
   const origin = requestUrl.origin
 
-  console.log("👉 [Callback Route] Triggered with URL:", request.url)
-  console.log("👉 [Callback Route] Auth Code present:", !!code)
 
   if (code) {
     const cookieStore = await cookies()
