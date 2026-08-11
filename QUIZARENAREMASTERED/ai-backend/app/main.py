@@ -341,7 +341,7 @@ async def generate_questions(req: GenerateRequest):
     selected_types = req.types if req.types else ["Multiple Choice"]
     context_items = []
     
-    sampled_docs = random.choices(relevant_docs, k=min(req.count, len(relevant_docs)))
+    sampled_docs = random.sample(relevant_docs, k=min(req.count, len(relevant_docs)))
     
     for idx, doc in enumerate(sampled_docs):
         q_type = selected_types[idx % len(selected_types)]
