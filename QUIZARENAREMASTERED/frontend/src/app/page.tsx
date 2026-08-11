@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
@@ -5,13 +6,15 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { AppProvider, useApp } from "@/context/AppContext";
 import { AuthScreen } from "@/components/AuthScreen";
 import { BattleLobby } from "@/components/studentONLY/BattleLobby";
-import { SelfPacedBattle } from "@/components/studentONLY/Battle_OwnPace";
+import { StudentDashboard } from "@/components/studentONLY/StudentDashboard";
+import { StudentHistory } from "@/components/studentONLY/StudentHistory";
+import { StudentClasses } from "@/components/studentONLY/StudentClasses";
+import { StudentProfile } from "@/components/studentONLY/StudentProfile";
+//import { SelfPacedBattle } from "@/components/studentONLY/Battle_OwnPace";
 import { LiveBattle } from "@/components/studentONLY/Battle_LiveQuiz";
 import { TeamBattle } from "@/components/studentONLY/Battle_TeamMode"; 
-import { BattleRoyale } from "@/components/studentONLY/Battle_BattleRoyale"; 
+//import { BattleRoyale } from "@/components/studentONLY/Battle_BattleRoyale"; 
 import { BattleResults } from "@/components/studentONLY/BattleResultsONLY/Results_LiveQuiz";
-import { TeamBattleResults } from "@/components/studentONLY/BattleResultsONLY/Results_TeamMode";
-import { BattleRoyaleResults } from "@/components/studentONLY/BattleResultsONLY/Results_BattleRoyale";
 import { ProfessorDashboard } from "@/components/profonly/ProfessorDashboard";
 import SectionsDashboard from "@/components/profonly/SectionsDashboard";
 import { QuestionBank } from "@/components/profonly/QuestionBank";
@@ -30,7 +33,7 @@ function LoadingSpinner() {
 }
 
 function RouterContent() {
-  const { page, setPage, user, isLoading, activeSectionId, lastBattleMode } = useApp();
+  const { page, setPage, user, isLoading, activeSectionId } = useApp();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
@@ -60,7 +63,7 @@ function RouterContent() {
 
   useEffect(() => {
     if (isMounted && !isLoading && user && page === "login") {
-      const targetRoute = user.role === "professor" ? "dashboard" : "lobby";
+      const targetRoute = user.role === "professor" ? "dashboard" : "student_dashboard";
       setPage(targetRoute);
     }
   }, [isMounted, isLoading, user, page, setPage]);
@@ -88,22 +91,28 @@ function RouterContent() {
 
   // Router Switch
   switch (page) {
+    case "student_dashboard":
+      return <StudentDashboard />;
+    case "history":
+      return <StudentHistory />;
+    case "classes":
+      return <StudentClasses />;
+    case "profile":
+      return <StudentProfile />;
     case "lobby":
       return <BattleLobby />;
     case "battle_selfpaced":
       return <SelfPacedBattle battleId={battleId} />;
     case "battle_team":
       return <TeamBattle battleId={battleId} />;
+/* --- PHASE 2 STRETCH GOALS --- 
+    case "battle_selfpaced":
+      return <SelfPacedBattle battleId={battleId} />;
     case "battle_royale":
       return <BattleRoyale battleId={battleId} />;
-    case "battle_livequiz":
-      return <LiveBattle battleId={battleId} />;
+    -------------------------------- */
     case "results":
-      // FIX (1.5): route to the results screen that matches the mode actually played,
-      // and pass the real battleId instead of falling back to the "room-demo" default.
-      if (lastBattleMode === "TEAM") return <TeamBattleResults battleId={battleId} />;
-      if (lastBattleMode === "ROYALE") return <BattleRoyaleResults battleId={battleId} />;
-      return <BattleResults battleId={battleId} />;
+      return <BattleResults />;
     case "dashboard":
       return <ProfessorDashboard />;
     case "sections":
@@ -121,7 +130,7 @@ function RouterContent() {
     case "login":
     default:
       if (user) {
-        return user.role === "professor" ? <ProfessorDashboard /> : <BattleLobby />;
+        return user.role === "professor" ? <ProfessorDashboard /> : <StudentDashboard />;
       }
       return <AuthScreen />;
   }

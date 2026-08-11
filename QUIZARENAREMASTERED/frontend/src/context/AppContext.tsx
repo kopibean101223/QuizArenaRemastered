@@ -1,3 +1,4 @@
+
 "use client";
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
@@ -8,16 +9,10 @@ export type Role = "student" | "professor";
 export type Page =
   | "login" | "role"
   | "lobby" | "battle" | "results"
-  | "battle_livequiz" | "battle_team" | "battle_royale" | "battle_selfpaced"
+  | "student_dashboard" | "history" | "classes" | "profile"
   | "dashboard" | "sections" | "questions" | "aigen" | "matchmaking" | "analyzer";
 
-// The four concrete battle-mode pages, kept in one place so nothing drifts out of sync
-export type BattleMode = "LIVE" | "TEAM" | "ROYALE" | "SELF_PACED";
-
-const STUDENT_PAGES: Page[] = [
-  "lobby", "battle", "results",
-  "battle_livequiz", "battle_team", "battle_royale", "battle_selfpaced",
-];
+const STUDENT_PAGES: Page[] = ["lobby", "battle", "results", "student_dashboard", "history", "classes", "profile"];
 const PROFESSOR_PAGES: Page[] = ["dashboard", "sections", "questions", "aigen", "matchmaking", "analyzer"];
 
 export interface AppUser {
@@ -34,12 +29,6 @@ interface AppContextValue {
   logout: () => Promise<void>;
   navigate: (page: Page) => void;
   isLoading: boolean;
-  // FIX (1.6): activeSectionId was read by page.tsx but never existed here.
-  activeSectionId: string;
-  setActiveSectionId: (id: string) => void;
-  // FIX (1.5): so page.tsx knows which results screen to render.
-  lastBattleMode: BattleMode;
-  setLastBattleMode: (mode: BattleMode) => void;
 }
 
 const AppContext = createContext<AppContextValue>({
@@ -49,18 +38,12 @@ const AppContext = createContext<AppContextValue>({
   logout: async () => {},
   navigate: () => {},
   isLoading: true,
-  activeSectionId: "",
-  setActiveSectionId: () => {},
-  lastBattleMode: "LIVE",
-  setLastBattleMode: () => {},
 });
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [page, setPageInternal] = useState<Page>("login");
   const [isLoading, setIsLoading] = useState(true);
-  const [activeSectionId, setActiveSectionId] = useState("");
-  const [lastBattleMode, setLastBattleMode] = useState<BattleMode>("LIVE");
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -121,7 +104,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const urlParams = new URLSearchParams(window.location.search);
         const urlPage = urlParams.get("page") as Page | null;
 
-        const defaultPage = appUser.role === "professor" ? "dashboard" : "lobby";
+        const defaultPage = appUser.role === "professor" ? "dashboard" : "student_dashboard";
 
         // FIX: If URL has no page parameter OR is set to 'login', redirect to role default
         if (!urlPage || urlPage === "login") {
@@ -191,11 +174,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AppContext.Provider value={{
-      user, page, setPage, logout, navigate, isLoading,
-      activeSectionId, setActiveSectionId,
-      lastBattleMode, setLastBattleMode,
-    }}>
+    <AppContext.Provider value={{ user, page, setPage, logout, navigate, isLoading }}>
       {children}
     </AppContext.Provider>
   );

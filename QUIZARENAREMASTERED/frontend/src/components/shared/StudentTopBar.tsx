@@ -1,3 +1,4 @@
+
 import { LogOut, Home, ChevronRight } from "lucide-react";
 import { useApp, type Page } from "../../context/AppContext";
 
@@ -9,10 +10,11 @@ const C = {
 };
 
 const PAGE_LABELS: Record<Page, string> = {
-  login: "Login", lobby: "Battle Lobby", battle: "Live Battle",
+  login: "Login", role: "Choose Role", lobby: "Battle Lobby", battle: "Live Battle",
   results: "Battle Results", dashboard: "Dashboard", sections: "My Sections",
   questions: "Question Bank", aigen: "AI Generator",
   matchmaking: "Matchmaking", analyzer: "Solution Analyzer",
+  student_dashboard: "Dashboard", history: "History", classes: "Classes", profile: "Profile",
 };
 
 export function StudentTopBar() {
@@ -30,9 +32,19 @@ export function StudentTopBar() {
     }}>
       {/* Logo */}
       <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, fontWeight: 700,
-        color: "#fff", flexShrink: 0 }}>
+        color: "#fff", flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
         🏆 QuizArena
       </span>
+
+      {/* Back to Dashboard */}
+      <button type="button" onClick={() => navigate("student_dashboard")}
+        title="Back to Dashboard"
+        style={{ display: "flex", alignItems: "center", justifyContent: "center",
+          width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+          background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+          cursor: "pointer" }}>
+        <Home size={13} color="rgba(255,255,255,0.6)" strokeWidth={2.25} />
+      </button>
 
       {/* Breadcrumb */}
       <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, marginLeft: 8 }}>
@@ -83,3 +95,4 @@ export function StudentTopBar() {
     </div>
   );
 }
+
