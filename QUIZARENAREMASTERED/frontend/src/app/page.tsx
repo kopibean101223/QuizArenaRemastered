@@ -10,10 +10,6 @@ import { StudentDashboard } from "@/components/studentONLY/StudentDashboard";
 import { StudentHistory } from "@/components/studentONLY/StudentHistory";
 import { StudentClasses } from "@/components/studentONLY/StudentClasses";
 import { StudentProfile } from "@/components/studentONLY/StudentProfile";
-//import { SelfPacedBattle } from "@/components/studentONLY/Battle_OwnPace";
-import { LiveBattle } from "@/components/studentONLY/Battle_LiveQuiz";
-import { TeamBattle } from "@/components/studentONLY/Battle_TeamMode"; 
-//import { BattleRoyale } from "@/components/studentONLY/Battle_BattleRoyale"; 
 import { BattleResults } from "@/components/studentONLY/BattleResultsONLY/Results_LiveQuiz";
 import { ProfessorDashboard } from "@/components/profonly/ProfessorDashboard";
 import SectionsDashboard from "@/components/profonly/SectionsDashboard";
@@ -33,12 +29,12 @@ function LoadingSpinner() {
 }
 
 function RouterContent() {
-  const { page, setPage, user, isLoading, activeSectionId } = useApp();
+  const { page, setPage, user, isLoading } = useApp();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
 
-  const battleId = activeSectionId || searchParams.get("battleId") || "";
+  const battleId = searchParams.get("battleId") || "";
 
   useEffect(() => {
     setIsMounted(true);
@@ -68,23 +64,6 @@ function RouterContent() {
     }
   }, [isMounted, isLoading, user, page, setPage]);
 
-  // Fallback check: If on a battle page without a valid battleId, redirect to lobby
-  useEffect(() => {
-    if (isMounted && !isLoading) {
-      const isBattlePage = [
-        "battle_selfpaced",
-        "battle_team",
-        "battle_royale",
-        "battle_livequiz",
-      ].includes(page);
-
-      if (isBattlePage && !battleId) {
-        console.warn(`[Router] No battleId provided for page '${page}'. Redirecting to lobby.`);
-        setPage("lobby");
-      }
-    }
-  }, [page, battleId, isMounted, isLoading, setPage]);
-
   if (!isMounted || isLoading) {
     return <LoadingSpinner />;
   }
@@ -100,17 +79,9 @@ function RouterContent() {
     case "profile":
       return <StudentProfile />;
     case "lobby":
+      // BattleLobby internally switches between self-paced/team/live modes
+      // once the professor starts the session, based on the section's mode.
       return <BattleLobby />;
-    case "battle_selfpaced":
-      return <SelfPacedBattle battleId={battleId} />;
-    case "battle_team":
-      return <TeamBattle battleId={battleId} />;
-/* --- PHASE 2 STRETCH GOALS --- 
-    case "battle_selfpaced":
-      return <SelfPacedBattle battleId={battleId} />;
-    case "battle_royale":
-      return <BattleRoyale battleId={battleId} />;
-    -------------------------------- */
     case "results":
       return <BattleResults />;
     case "dashboard":
