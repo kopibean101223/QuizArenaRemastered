@@ -12,22 +12,23 @@ export async function GET() {
     const { data: { user }, error } = await supabase.auth.getUser();
     
     if (error || !user) {
-      return NextResponse.json({ error: "Unauthorized user" }, { status: 401 });
+      // If offline or unauthorized, return a structured fallback response 
+      // or let the frontend handle the cached data.
+      return NextResponse.json({ error: "Offline / Unauthorized", useCache: true }, { status: 401 });
     }
 
-    // Filter questions by status AND the current professor's user ID
     const questions = await prisma.generatedQuestion.findMany({
       where: { 
         status: "APPROVED",
-        userId: user.id // Scope questions only to this specific professor
+        userId: user.id 
       },
       orderBy: { createdAt: "desc" },
     });
 
     return NextResponse.json(questions);
   } catch (error: any) {
-    console.error("DETAILED GET /api/questions ERROR:", error);
-    return NextResponse.json({ error: error.message, stack: error.stack }, { status: 500 });
+    console.warn("⚠️ [Offline LAN] Database unreachable. Requesting client-side cache fallback.");
+    return NextResponse.json({ error: error.message, useCache: true }, { status: 500 });
   }
 }
 

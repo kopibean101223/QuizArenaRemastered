@@ -1153,8 +1153,8 @@ export default async function middleware(request: NextRequest) {
 
   // Resolve requested route safely (handles both pathname and ?page= parameter)
   const pageParam = url.searchParams.get('page')?.toLowerCase()
-  const pathName = url.pathname.toLowerCase().replace(/^\/+|\/+$/g, '') // Strips leading/trailing slashes
-  const activeRoute = pageParam || pathName // Evaluates the targeted view/page
+  const pathName = url.pathname.toLowerCase().replace(/^\/+|\/+$/g, '')
+  const activeRoute = pageParam || pathName
 
   const isAuthPage = activeRoute === 'login' || activeRoute === 'register'
   const isRolePage = activeRoute === 'role'
@@ -1192,19 +1192,18 @@ export default async function middleware(request: NextRequest) {
   }
 
   // ----------------------------------------------------
-  // CASE B: Resolve User Role
+  // CASE B: Resolve User Role (DB First, then Fallback to Metadata)
   // ----------------------------------------------------
-  let role: 'student' | 'professor' | null = user.user_metadata?.role || null
+  let role: 'student' | 'professor' | null = null
 
-  if (!role) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('user_id', user.id)
-      .maybeSingle()
+  // Query DB first to get the most up-to-date role
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('user_id', user.id)
+    .maybeSingle()
 
-    role = profile?.role || null
-  }
+  role = profile?.role || user.user_metadata?.role || null
 
   // ----------------------------------------------------
   // CASE C: Authenticated User WITHOUT Role
@@ -1222,9 +1221,9 @@ export default async function middleware(request: NextRequest) {
   const defaultPage = role === 'professor' ? 'dashboard' : 'lobby'
 
   // Block logged-in users from Auth, Role Selection, or root '/'
- if (isAuthPage || isRolePage || isRootPath) {
-  return redirectWithNoCache(defaultPage);
-}
+  if (isAuthPage || isRolePage || isRootPath) {
+    return redirectWithNoCache(defaultPage)
+  }
 
   // Prevent Students from accessing Professor pages
   if (role === 'student' && PROFESSOR_PAGES.includes(activeRoute)) {
@@ -7142,6 +7141,7 @@ body,
 
 import type { Metadata } from "next";
 import "./globals.css";
+import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
   title: "QuizArena (Demo)",
@@ -7157,7 +7157,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="size-full">{children}</body>
+      <body className="size-full">{children}
+<Toaster position="top-right" richColors />
+
+      </body>
     </html>
   );
 }
@@ -7182,7 +7185,6 @@ import SectionsDashboard from "@/components/profonly/SectionsDashboard";
 import { QuestionBank } from "@/components/profonly/QuestionBank";
 import { AIQuestionGenerator } from "@/components/profonly/AIQuestionGenerator";
 import Matchmaking from "@/components/Matchmaking";
-import { SolutionAnalyzer } from "@/components/profonly/SolutionAnalyzer";
 import ChooseRole from "@/components/chooserole";
 
 function LoadingSpinner() {
@@ -8184,363 +8186,414 @@ export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElemen
 
 --- FILE: src\components\Matchmaking.tsx ---
 
-  'use client';
+'use client';
 
-  import { useState, useRef, useEffect } from "react";
-  import { ProfSidebar } from "./shared/ProfSidebar";
-  import {
-    Trophy, LayoutDashboard, Library, BarChart2, Settings,
-    Layers, LogOut, Sparkles, Users, Shuffle, CheckCircle2,
-    Download, ChevronDown, Info, AlertTriangle, Zap,
-    ArrowRight, RefreshCw, Shield, TrendingUp, Clock, Copy, Check, Crown, User, Star, Database, Lock, Eye
-  } from "lucide-react";
-  import { createBrowserSupabaseClient } from '@/lib/supabase/client';
-  import { toast } from "sonner";
-  import { useBotSimulator } from "@/hooks/useBotSimulator";
+import { useState, useRef, useEffect } from "react";
+import { ProfSidebar } from "./shared/ProfSidebar";
+import {
+  Trophy, LayoutDashboard, Library, BarChart2, Settings,
+  Layers, LogOut, Sparkles, Users, Shuffle, CheckCircle2,
+  Download, ChevronDown, Info, AlertTriangle, Zap,
+  ArrowRight, RefreshCw, Shield, TrendingUp, Clock, Copy, Check, Crown, User, Star, Database, Lock, Eye, Loader2
+} from "lucide-react";
+import { createBrowserSupabaseClient } from '@/lib/supabase/client';
+import { toast } from "sonner";
+import { useBotSimulator } from "@/hooks/useBotSimulator";
 
-  // ─── Tokens ────────────────────────────────────────────────────────────────────
-  const C = {
-    indigo: "#5B3DF6", indigoLight: "rgba(91,61,246,0.07)", indigoMid: "rgba(91,61,246,0.14)",
-    indigoBorder: "rgba(91,61,246,0.18)", indigoTrack: "rgba(91,61,246,0.15)",
-    coral: "#FF6B4A",  coralLight: "rgba(255,107,74,0.09)", coralHover: "#E85A3A",
-    yellow: "#FFC93C", yellowLight: "rgba(255,201,60,0.13)", yellowBorder: "rgba(255,201,60,0.35)",
-    green: "#2ED47A",  greenLight: "rgba(46,212,122,0.1)",  greenBorder: "rgba(46,212,122,0.28)",
-    red: "#FF4757",    redLight: "rgba(255,71,87,0.09)",
-    navy: "#1B1E2B", offWhite: "#FAFAFC", white: "#FFFFFF",
-    muted: "#717182", border: "rgba(0,0,0,0.07)", inputBg: "#F3F3F7",
-    indigoDeep: "#4228D4", yellowGlow: "rgba(255,201,60,0.5)",
-  };
+// ─── Tokens ────────────────────────────────────────────────────────────────────
+const C = {
+  indigo: "#5B3DF6", indigoLight: "rgba(91,61,246,0.07)", indigoMid: "rgba(91,61,246,0.14)",
+  indigoBorder: "rgba(91,61,246,0.18)", indigoTrack: "rgba(91,61,246,0.15)",
+  coral: "#FF6B4A",  coralLight: "rgba(255,107,74,0.09)", coralHover: "#E85A3A",
+  yellow: "#FFC93C", yellowLight: "rgba(255,201,60,0.13)", yellowBorder: "rgba(255,201,60,0.35)",
+  green: "#2ED47A",  greenLight: "rgba(46,212,122,0.1)",  greenBorder: "rgba(46,212,122,0.28)",
+  red: "#FF4757",    redLight: "rgba(255,71,87,0.09)",
+  navy: "#1B1E2B", offWhite: "#FAFAFC", white: "#FFFFFF",
+  muted: "#717182", border: "rgba(0,0,0,0.07)", inputBg: "#F3F3F7",
+  indigoDeep: "#4228D4", yellowGlow: "rgba(255,201,60,0.5)",
+};
 
-  interface Student {
-    id: string; name: string; initials: string;
-    perfLevel: "High" | "Medium" | "Low"; score: number; team: string;
-    avatarColor: string; isReady?: boolean; isHost?: boolean;
+interface Student {
+  id: string; name: string; initials: string;
+  perfLevel: "High" | "Medium" | "Low"; score: number; team: string;
+  avatarColor: string; isReady?: boolean; isHost?: boolean;
+}
+
+// ─── Lobby Type ────────────────────────────────────────────────────────────────
+type LobbyType = "individual" | "team" | "royale";
+
+const LOBBY_TYPES: { id: LobbyType; label: string; emoji: string; desc: string }[] = [
+  { id: "individual", label: "Individual", emoji: "⚡", desc: "Solo play — go live now or schedule for later." },
+  { id: "team", label: "Team", emoji: "🛡️", desc: "Students are grouped into teams of a fixed size." },
+  { id: "royale", label: "Battle Royale", emoji: "👑", desc: "Elimination mode. Always live — no scheduling." },
+];
+
+interface QuestionItem {
+  id: number | string;
+  text: string;
+  topic?: string;
+  choices?: string[];
+  answer: string;
+  type?: string;
+}
+
+// Cryptographically secure random room code generator
+function generateSecureRoomCode(length = 6) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  const randomArray = new Uint8Array(length);
+  window.crypto.getRandomValues(randomArray);
+  for (let i = 0; i < length; i++) {
+    result += chars[randomArray[i] % chars.length];
   }
+  return result;
+}
 
-  interface QuestionItem {
-    id: number | string;
-    text: string;
-    topic?: string;
-    choices?: string[];
-    answer: string;
-    type?: string;
+const AVATAR_COLORS = ["#5B3DF6","#FF6B4A","#FFC93C","#2ED47A","#FF4757","#5BC8F6","#B06EF6","#FF9F40","#E040FB","#00BCD4"];
+const CAPACITY = 40;
+
+function shuffleArray<T>(array: T[]): T[] {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
+  return arr;
+}
 
-  // Cryptographically secure random room code generator
-  function generateSecureRoomCode(length = 6) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let result = '';
-    const randomArray = new Uint8Array(length);
-    window.crypto.getRandomValues(randomArray);
-    for (let i = 0; i < length; i++) {
-      result += chars[randomArray[i] % chars.length];
-    }
-    return result;
-  }
+function ToggleSwitch({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <button type="button" disabled={disabled} onClick={() => !disabled && onChange(!on)} style={{
+      width: 44, height: 24, borderRadius: 50, border: "none", cursor: disabled ? "not-allowed" : "pointer", padding: 0,
+      background: on ? C.indigo : "#CBD0D8", position: "relative", opacity: disabled ? 0.6 : 1, transition: "background 0.2s", flexShrink: 0,
+    }}>
+      <span style={{
+        position: "absolute", top: 3, left: on ? 23 : 3,
+        width: 18, height: 18, borderRadius: "50%", background: "#fff",
+        boxShadow: "0 1px 4px rgba(0,0,0,0.2)", transition: "left 0.2s",
+      }} />
+    </button>
+  );
+}
 
-  const AVATAR_COLORS = ["#5B3DF6","#FF6B4A","#FFC93C","#2ED47A","#FF4757","#5BC8F6","#B06EF6","#FF9F40","#E040FB","#00BCD4"];
-  const CAPACITY = 40;
-
-  function shuffleArray<T>(array: T[]): T[] {
-    const arr = [...array];
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
-  }
-
-  function ToggleSwitch({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-    return (
-      <button type="button" disabled={disabled} onClick={() => !disabled && onChange(!on)} style={{
-        width: 44, height: 24, borderRadius: 50, border: "none", cursor: disabled ? "not-allowed" : "pointer", padding: 0,
-        background: on ? C.indigo : "#CBD0D8", position: "relative", opacity: disabled ? 0.6 : 1, transition: "background 0.2s", flexShrink: 0,
+function Dropdown({ value, options, onChange, width, disabled }:
+  { value: { id: string; name: string }; options: { id: string; name: string }[]; onChange: (v: { id: string; name: string }) => void; width?: number | string; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  return (
+    <div ref={ref} style={{ position: "relative", width, opacity: disabled ? 0.6 : 1, pointerEvents: disabled ? "none" : "auto" }}>
+      <button type="button" disabled={disabled} onClick={() => setOpen(v => !v)} style={{
+        width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
+        background: C.white, border: `1.5px solid ${open ? C.indigo : C.border}`, borderRadius: 11,
+        padding: "8px 12px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600,
+        color: C.navy, cursor: disabled ? "not-allowed" : "pointer", whiteSpace: "nowrap",
       }}>
-        <span style={{
-          position: "absolute", top: 3, left: on ? 23 : 3,
-          width: 18, height: 18, borderRadius: "50%", background: "#fff",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.2)", transition: "left 0.2s",
-        }} />
+        {value?.name || "Select..."}
+        <ChevronDown size={13} color={C.muted} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
       </button>
-    );
-  }
-
-  function Dropdown({ value, options, onChange, width, disabled }:
-    { value: { id: string; name: string }; options: { id: string; name: string }[]; onChange: (v: { id: string; name: string }) => void; width?: number | string; disabled?: boolean }) {
-    const [open, setOpen] = useState(false);
-    const ref = useRef<HTMLDivElement>(null);
-    return (
-      <div ref={ref} style={{ position: "relative", width, opacity: disabled ? 0.6 : 1, pointerEvents: disabled ? "none" : "auto" }}>
-        <button type="button" disabled={disabled} onClick={() => setOpen(v => !v)} style={{
-          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6,
-          background: C.white, border: `1.5px solid ${open ? C.indigo : C.border}`, borderRadius: 11,
-          padding: "8px 12px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600,
-          color: C.navy, cursor: disabled ? "not-allowed" : "pointer", whiteSpace: "nowrap",
-        }}>
-          {value?.name || "Select..."}
-          <ChevronDown size={13} color={C.muted} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
-        </button>
-        {open && (
-          <div style={{ position: "absolute", top: "calc(100% + 5px)", left: 0, width: "100%", minWidth: 200, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 13, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 120, padding: "5px", maxHeight: 240, overflowY: "auto" }}>
-            {options.map(opt => (
-              <button key={opt.id} type="button" onClick={() => { onChange(opt); setOpen(false); }} style={{
-                width: "100%", background: opt.id === value?.id ? C.indigoLight : "transparent", border: "none",
-                borderRadius: 8, padding: "8px 11px", fontFamily: "Manrope, sans-serif", fontSize: 13,
-                fontWeight: opt.id === value?.id ? 700 : 500, color: opt.id === value?.id ? C.indigo : C.navy,
-                cursor: "pointer", textAlign: "left",
-              }}>{opt.name}</button>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  function PlayerChip({ player, animate }: { player: Student; animate?: boolean }) {
-    return (
-      <div style={{
-        display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-        animation: animate ? "popIn 0.35s cubic-bezier(0.34,1.56,0.64,1)" : undefined
-      }}>
-        <div style={{ position: "relative" }}>
-          <div style={{
-            width: 60, height: 60, borderRadius: "50%",
-            background: `linear-gradient(145deg, ${player.avatarColor}, ${player.avatarColor}cc)`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontFamily: "Fredoka, sans-serif", fontSize: 18, fontWeight: 700, color: "#fff",
-            boxShadow: player.isReady
-              ? `0 0 0 3px ${C.green}, 0 4px 16px ${player.avatarColor}55`
-              : `0 0 0 3px rgba(255,255,255,0.15), 0 4px 12px rgba(0,0,0,0.3)`,
-            transition: "box-shadow 0.3s",
-          }}>
-            {player.initials}
-          </div>
-          <div style={{
-            position: "absolute", bottom: 1, right: 1, width: 14, height: 14,
-            borderRadius: "50%", background: player.isReady ? C.green : "rgba(255,255,255,0.2)",
-            border: "2px solid #1B1E2B", transition: "background 0.3s"
-          }} />
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 5px)", left: 0, width: "100%", minWidth: 200, background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 13, boxShadow: "0 8px 24px rgba(0,0,0,0.1)", zIndex: 120, padding: "5px", maxHeight: 240, overflowY: "auto" }}>
+          {options.map(opt => (
+            <button key={opt.id} type="button" onClick={() => { onChange(opt); setOpen(false); }} style={{
+              width: "100%", background: opt.id === value?.id ? C.indigoLight : "transparent", border: "none",
+              borderRadius: 8, padding: "8px 11px", fontFamily: "Manrope, sans-serif", fontSize: 13,
+              fontWeight: opt.id === value?.id ? 700 : 500, color: opt.id === value?.id ? C.indigo : C.navy,
+              cursor: "pointer", textAlign: "left",
+            }}>{opt.name}</button>
+          ))}
         </div>
-        <span style={{
-          fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
-          color: "rgba(255,255,255,0.75)", textAlign: "center", maxWidth: 68,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
-        }}>
-          {player.name}
-        </span>
-      </div>
-    );
-  }
+      )}
+    </div>
+  );
+}
 
-  function EmptySlot() {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+function LobbyTypeCard({ type, selected, onClick, disabled }:
+  { type: typeof LOBBY_TYPES[number]; selected: boolean; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button type="button" disabled={disabled} onClick={onClick} style={{
+      flex: 1, minWidth: 0, textAlign: "left", cursor: disabled ? "not-allowed" : "pointer",
+      background: selected ? C.indigoLight : C.offWhite,
+      border: `1.5px solid ${selected ? C.indigo : C.border}`,
+      borderRadius: 16, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 6,
+      opacity: disabled ? 0.6 : 1, transition: "border 0.15s, background 0.15s",
+    }}>
+      <span style={{ fontSize: 22, lineHeight: 1 }}>{type.emoji}</span>
+      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 800, color: selected ? C.indigo : C.navy }}>{type.label}</span>
+      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 500, color: C.muted, lineHeight: 1.4 }}>{type.desc}</span>
+    </button>
+  );
+}
+
+function PlayerChip({ player, animate }: { player: Student; animate?: boolean }) {
+  return (
+    <div style={{
+      display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+      animation: animate ? "popIn 0.35s cubic-bezier(0.34,1.56,0.64,1)" : undefined
+    }}>
+      <div style={{ position: "relative" }}>
         <div style={{
           width: 60, height: 60, borderRadius: "50%",
-          border: "2px dashed rgba(255,255,255,0.12)", display: "flex",
-          alignItems: "center", justifyContent: "center"
+          background: `linear-gradient(145deg, ${player.avatarColor}, ${player.avatarColor}cc)`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontFamily: "Fredoka, sans-serif", fontSize: 18, fontWeight: 700, color: "#fff",
+          boxShadow: player.isReady
+            ? `0 0 0 3px ${C.green}, 0 4px 16px ${player.avatarColor}55`
+            : `0 0 0 3px rgba(255,255,255,0.15), 0 4px 12px rgba(0,0,0,0.3)`,
+          transition: "box-shadow 0.3s",
         }}>
-          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 20, color: "rgba(255,255,255,0.1)", fontWeight: 700 }}>+</span>
+          {player.initials}
         </div>
-        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.18)" }}>waiting…</span>
+        <div style={{
+          position: "absolute", bottom: 1, right: 1, width: 14, height: 14,
+          borderRadius: "50%", background: player.isReady ? C.green : "rgba(255,255,255,0.2)",
+          border: "2px solid #1B1E2B", transition: "background 0.3s"
+        }} />
       </div>
-    );
-  }
+      <span style={{
+        fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700,
+        color: "rgba(255,255,255,0.75)", textAlign: "center", maxWidth: 68,
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
+      }}>
+        {player.name}
+      </span>
+    </div>
+  );
+}
 
-  // ─── Main Page Component ───────────────────────────────────────────────────────
-  export function Matchmaking({ professorId }: { professorId?: string }) {
-    const supabase = createBrowserSupabaseClient();
-    const [sectionsList, setSectionsList] = useState<{ id: string; name: string }[]>([]);
-    const [selectedSection, setSelectedSection] = useState<{ id: string; name: string }>({ id: '', name: 'Loading...' });
-    
-    const [questionBanks, setQuestionBanks] = useState<{ id: string; name: string }[]>([]);
-    const [selectedBank, setSelectedBank] = useState<{ id: string; name: string }>({ id: '', name: 'Select Question Bank...' });
+function EmptySlot() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+      <div style={{
+        width: 60, height: 60, borderRadius: "50%",
+        border: "2px dashed rgba(255,255,255,0.12)", display: "flex",
+        alignItems: "center", justifyContent: "center"
+      }}>
+        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 20, color: "rgba(255,255,255,0.1)", fontWeight: 700 }}>+</span>
+      </div>
+      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.18)" }}>waiting…</span>
+    </div>
+  );
+}
 
-    const [isLive, setIsLive] = useState(true);
-    const [deadline, setDeadline] = useState('');
-    const [adaptive, setAdaptive] = useState(true);
-    const [teamSize, setTeamSize] = useState(3);
-    const [previewed, setPreviewed] = useState(false);
-    
-    const [inLobby, setInLobby] = useState(false);
-    const [activeSessionExists, setActiveSessionExists] = useState(false);
-    
-    // State for globally unique session routing
-    const [sessionId, setSessionId] = useState<string>('');
-    const [roomCode, setRoomCode] = useState(() => generateSecureRoomCode());
-    
-    const [joinedStudents, setJoinedStudents] = useState<Student[]>([]);
-    const [copied, setCopied] = useState(false);
-    const [battleStarted, setBattleStarted] = useState(false);
-    const [currentIndex, setCurrentIndex] = useState(0);
-    const [timeRemaining, setTimeRemaining] = useState(60);
-    const [liveFeed, setLiveFeed] = useState<any[]>([]);
+// ─── Main Page Component ───────────────────────────────────────────────────────
+export function Matchmaking({ professorId }: { professorId?: string }) {
+  const supabase = createBrowserSupabaseClient();
+  const [sectionsList, setSectionsList] = useState<{ id: string; name: string }[]>([]);
+  const [selectedSection, setSelectedSection] = useState<{ id: string; name: string }>({ id: '', name: 'Loading...' });
+  
+  const [questionBanks, setQuestionBanks] = useState<{ id: string; name: string }[]>([]);
+  const [selectedBank, setSelectedBank] = useState<{ id: string; name: string }>({ id: '', name: 'Select Question Bank...' });
 
-    const [randomizedQuestions, setRandomizedQuestions] = useState<QuestionItem[]>([]);
-    const wsRef = useRef<WebSocket | null>(null);
+  const [lobbyType, setLobbyType] = useState<LobbyType>("individual");
+  const [isLive, setIsLive] = useState(true);
+  const [deadline, setDeadline] = useState('');
+  const [adaptive, setAdaptive] = useState(true);
+  const [teamSize, setTeamSize] = useState(3);
+  const [previewed, setPreviewed] = useState(false);
+  const [isDeploying, setIsDeploying] = useState(false);
 
-    // Use sessionId here instead of selectedSection.id to ensure isolated routing
-    const { spawnBots, cleanupBots } = useBotSimulator(sessionId, roomCode, randomizedQuestions, 'LIVE', teamSize);
-
-    // 1. Fetch active session scoped exclusively to THIS professor
-    useEffect(() => {
-      const checkActiveSession = async () => {
-        const { data: { user } } = await supabase.auth.getUser();
-        const currentProfId = professorId || user?.id;
-        
-        if (!currentProfId) return;
-
-        const { data } = await supabase
-          .from('quiz_sessions')
-          .select('id, section_id, status, is_live, room_code') 
-          .eq('status', 'ACTIVE')
-          .eq('is_live', true)
-          .eq('professor_id', currentProfId) // Prevents overlapping views
-          .limit(1);
-
-        if (data && data.length > 0) {
-          setSessionId(data[0].id); // Grab the exact session UUID
-          setRoomCode(data[0].room_code);
-          setActiveSessionExists(true);
-          setInLobby(true);
-          setBattleStarted(false); 
-        }
-      };
-      checkActiveSession();
-    }, [supabase, professorId]);
-
-    // Load Sections and Question Banks from API
-   useEffect(() => {
-  const fetchSectionsAndBanks = async () => {
-
-   const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      console.error("No authenticated user found:", authError);
-      setSectionsList([{ id: 'none', name: 'Please Log In' }]);
-      setSelectedSection({ id: 'none', name: 'Please Log In' });
-      setQuestionBanks([{ id: 'default', name: 'Default Question Bank' }]);
-      setSelectedBank({ id: 'default', name: 'Default Question Bank' });
-      return;
+  // Battle Royale is always live — force it and clear any scheduled deadline whenever selected.
+  useEffect(() => {
+    if (lobbyType === "royale") {
+      setIsLive(true);
+      setDeadline('');
     }
+  }, [lobbyType]);
+  
+  const [inLobby, setInLobby] = useState(false);
+  const [activeSessionExists, setActiveSessionExists] = useState(false);
+  const [roomCode, setRoomCode] = useState(() => generateSecureRoomCode());
+  
+  // State for globally unique session routing
+  const [sessionId, setSessionId] = useState<string>('');
+  
+  const [joinedStudents, setJoinedStudents] = useState<Student[]>([]);
+  const [copied, setCopied] = useState(false);
+  const [battleStarted, setBattleStarted] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [timeRemaining, setTimeRemaining] = useState(60);
+  const [liveFeed, setLiveFeed] = useState<any[]>([]);
 
-    const currentUserId = user.id
+  // ─── PROFESSOR GROUP MANAGEMENT STATE (ONLY FOR TEAM MODE) ───
+  const [groups, setGroups] = useState<string[]>(['Team 1', 'Team 2']);
 
-   const { data: secData, error: secError } = await supabase
-      .from('sections')
-      .select('id, name')
-      .eq('professor_id', currentUserId); // Change 'professor_id' to 'user_id' if your table column is user_id
-
-    if (secError) {
-      console.error("Error fetching sections:", secError);
-    }
-
-    if (secData && secData.length > 0) {
-      setSectionsList(secData);
-      setSelectedSection(secData[0]);
-    } else {
-      setSectionsList([{ id: 'none', name: 'No Sections Found' }]);
-      setSelectedSection({ id: 'none', name: 'No Sections Found' });
-    }
-    // 2. Fetch question banks filtered strictly by professorId via API query params
-    try {
-      const res = await fetch(`/api/questions?professor_id=${encodeURIComponent(professorId)}`);
-      if (res.ok) {
-        const qData = await res.json();
-        if (qData && qData.length > 0) {
-          const uniqueTopics = Array.from(new Set(qData.map((q: any) => q.topic).filter(Boolean)));
-          const banks = uniqueTopics.map((topicName, idx) => ({ id: `bank-${idx}`, name: String(topicName) }));
-          setQuestionBanks(banks);
-          if (banks.length > 0) setSelectedBank(banks[0]);
-        } else {
-          setQuestionBanks([{ id: 'default', name: 'Default Question Bank' }]);
-          setSelectedBank({ id: 'default', name: 'Default Question Bank' });
-        }
-      }
-    } catch (err) {
-      console.error("Failed to load question banks from API:", err);
-    }
+  const handleAddGroup = () => {
+    setGroups(prev => {
+      const existingNums = prev
+        .map(g => parseInt(g.replace('Team ', '')))
+        .filter(n => !isNaN(n));
+      const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+      return [...prev, `Team ${nextNum}`];
+    });
   };
 
-  fetchSectionsAndBanks();
-}, [professorId, supabase]);
+  const handleRemoveGroup = (groupName: string) => {
+    setGroups(prev => prev.filter(g => g !== groupName));
+  };
 
-    // Load and randomize questions
-    useEffect(() => {
-      async function loadAndRandomizeQuestions() {
-        try {
-          const res = await fetch('/api/questions');
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && data.length > 0) {
-              const formatted = data.map((q: any) => {
-                let parsedChoices: string[] = [];
-                try {
-                  let rawChoices = q.choices;
-                  if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
-                  if (Array.isArray(rawChoices)) {
-                    parsedChoices = rawChoices.map((c: any) => {
-                      if (typeof c === 'string') return c;
-                      if (typeof c === 'object' && c !== null) return c.text || c.label || String(c);
-                      return String(c);
-                    });
-                  }
-                } catch (e) {
-                  parsedChoices = [];
-                }
-                return { ...q, choices: parsedChoices };
-              });
+  const [randomizedQuestions, setRandomizedQuestions] = useState<QuestionItem[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
 
-              const filtered = selectedBank.name && selectedBank.name !== 'Select Question Bank...'
-                ? formatted.filter((q: QuestionItem) => q.topic?.trim().toLowerCase() === selectedBank.name.trim().toLowerCase())
-                : formatted;
+  // Hook handles bots entering channels, voting, chatting and answering dynamically
+  const { spawnBots, cleanupBots } = useBotSimulator(sessionId, roomCode, randomizedQuestions, 'LIVE', teamSize);
 
-              const targetQuestions = filtered.length > 0 ? filtered : formatted;
-              const shuffled = shuffleArray(targetQuestions);
-              const fullyRandomized = shuffled.map((q: QuestionItem) => ({
-                ...q,
-                choices: q.choices && q.choices.length > 0 ? shuffleArray(q.choices) : []
-              }));
-
-              setRandomizedQuestions(fullyRandomized);
-            }
-          }
-        } catch (err) {
-          console.error("Error loading randomized questions for session:", err);
-        }
-      }
-      loadAndRandomizeQuestions();
-    }, [selectedBank]);
-
-    // WebSocket Connection Handler
-    useEffect(() => {
-      // We strictly wait until we have a sessionId mapped before connecting
-      if (!inLobby || !sessionId) return;
+  // 1. Fetch active session scoped exclusively to THIS professor
+  useEffect(() => {
+    const checkActiveSession = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      const currentProfId = professorId || user?.id;
       
-      let ws: WebSocket | null = null;
-      let isMounted = true;
+      if (!currentProfId) return;
 
-      function connectWs() {
-        if (!isMounted) return;
-        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
-        ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
+      const { data } = await supabase
+        .from('quiz_sessions')
+        .select('id, section_id, status, is_live, room_code, mode') 
+        .eq('status', 'ACTIVE')
+        .eq('is_live', true)
+        .eq('professor_id', currentProfId)
+        .limit(1);
 
-        ws.onopen = () => {
-          ws?.send(JSON.stringify({
-            type: 'JOIN_BATTLE',
-            battleId: sessionId, // Isolated session channel
-            totalQuestions: randomizedQuestions.length || 37,
-            timeLimit: 60,
-            sender: 'Professor'
-          }));
-        };
+      if (data && data.length > 0) {
+        setSessionId(data[0].id); 
+        setRoomCode(data[0].room_code);
+        setLobbyType(data[0].mode as LobbyType || "individual");
+        setActiveSessionExists(true);
+        setInLobby(true);
+        setBattleStarted(false); 
+      }
+    };
+    checkActiveSession();
+  }, [supabase, professorId]);
 
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            
-           if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'SCORE_UPDATED') {
+  // Load Sections and Question Banks from API
+  useEffect(() => {
+    const fetchSectionsAndBanks = async () => {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        console.error("No authenticated user found:", authError);
+        setSectionsList([{ id: 'none', name: 'Please Log In' }]);
+        setSelectedSection({ id: 'none', name: 'Please Log In' });
+        setQuestionBanks([{ id: 'default', name: 'Default Question Bank' }]);
+        setSelectedBank({ id: 'default', name: 'Default Question Bank' });
+        return;
+      }
+
+      const currentUserId = user.id;
+
+      const { data: secData, error: secError } = await supabase
+        .from('sections')
+        .select('id, name')
+        .eq('professor_id', currentUserId); 
+
+      if (secError) {
+        console.error("Error fetching sections:", secError);
+      }
+
+      if (secData && secData.length > 0) {
+        setSectionsList(secData);
+        setSelectedSection(secData[0]);
+      } else {
+        setSectionsList([{ id: 'none', name: 'No Sections Found' }]);
+        setSelectedSection({ id: 'none', name: 'No Sections Found' });
+      }
+
+      try {
+        const res = await fetch(`/api/questions?professor_id=${encodeURIComponent(professorId || currentUserId)}`);
+        if (res.ok) {
+          const qData = await res.json();
+          if (qData && qData.length > 0) {
+            const uniqueTopics = Array.from(new Set(qData.map((q: any) => q.topic).filter(Boolean)));
+            const banks = uniqueTopics.map((topicName, idx) => ({ id: `bank-${idx}`, name: String(topicName) }));
+            setQuestionBanks(banks);
+            if (banks.length > 0) setSelectedBank(banks[0]);
+          } else {
+            setQuestionBanks([{ id: 'default', name: 'Default Question Bank' }]);
+            setSelectedBank({ id: 'default', name: 'Default Question Bank' });
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load question banks from API:", err);
+      }
+    };
+    fetchSectionsAndBanks();
+  }, [professorId, supabase]);
+
+  // Load and randomize questions
+  useEffect(() => {
+    async function loadAndRandomizeQuestions() {
+      try {
+        const res = await fetch('/api/questions');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const formatted = data.map((q: any) => {
+              let parsedChoices: string[] = [];
+              try {
+                let rawChoices = q.choices;
+                if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
+                if (Array.isArray(rawChoices)) {
+                  parsedChoices = rawChoices.map((c: any) => {
+                    if (typeof c === 'string') return c;
+                    if (typeof c === 'object' && c !== null) return c.text || c.label || String(c);
+                    return String(c);
+                  });
+                }
+              } catch (e) {
+                parsedChoices = [];
+              }
+              return { ...q, choices: parsedChoices };
+            });
+
+            const filtered = selectedBank.name && selectedBank.name !== 'Select Question Bank...'
+              ? formatted.filter((q: QuestionItem) => q.topic?.trim().toLowerCase() === selectedBank.name.trim().toLowerCase())
+              : formatted;
+
+            const targetQuestions = filtered.length > 0 ? filtered : formatted;
+            const shuffled = shuffleArray(targetQuestions);
+            const fullyRandomized = shuffled.map((q: QuestionItem) => ({
+              ...q,
+              choices: q.choices && q.choices.length > 0 ? shuffleArray(q.choices) : []
+            }));
+
+            setRandomizedQuestions(fullyRandomized);
+          }
+        }
+      } catch (err) {
+        console.error("Error loading randomized questions for session:", err);
+      }
+    }
+    loadAndRandomizeQuestions();
+  }, [selectedBank]);
+
+  // WebSocket Connection Handler
+  useEffect(() => {
+    if (!inLobby || !sessionId) return;
+    
+    let ws: WebSocket | null = null;
+    let isMounted = true;
+
+    function connectWs() {
+      if (!isMounted) return;
+      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
+      ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        ws?.send(JSON.stringify({
+          type: 'JOIN_BATTLE',
+          battleId: sessionId,
+          totalQuestions: randomizedQuestions.length || 37,
+          timeLimit: 60,
+          sender: 'Professor'
+        }));
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'SCORE_UPDATED') {
             if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
             if (data.history) setLiveFeed(data.history);
             
@@ -8572,13 +8625,13 @@ export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElemen
                 return updated;
               });
             }
-          }
-            else if (data.type === 'BATTLE_ACTION') {
+          } 
+          else if (data.type === 'BATTLE_ACTION') {
             const uniqueId = data.userId || data.sender;
             const rawName = data.rawName || data.sender;
             const isJoinEvent = data.isJoinEvent || (data.message && data.message.includes('joined'));
 
-            // 1. Deduplicate the chat feed to prevent repeating join messages
+            // Deduplicate the chat feed to prevent repeating join messages
             setLiveFeed(prev => {
               if (isJoinEvent && data.sender !== 'Professor') {
                 const alreadyInFeed = prev.some(msg => 
@@ -8590,7 +8643,7 @@ export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElemen
               return [data, ...prev];
             });
             
-            // 2. Extract Team Property and maintain unique students
+            // Extract Team Property and maintain unique students
             if (isJoinEvent && data.sender !== 'Professor') {
               setJoinedStudents(prev => {
                 if (prev.some(s => s.id === uniqueId || s.name === rawName)) return prev;
@@ -8608,55 +8661,60 @@ export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElemen
               });
             } 
           }
-              
-         
-          } catch (err) {
-            console.error("WS message parse error:", err);
-          }
-        };
-
-        ws.onclose = () => {
-          if (isMounted && inLobby) {
-            setTimeout(connectWs, 2000);
-          }
-        };
-      }
-
-      connectWs();
-
-      return () => {
-        isMounted = false;
-        if (ws) ws.close();
+        } catch (err) {
+          console.error("WS message parse error:", err);
+        }
       };
-    }, [inLobby, sessionId, randomizedQuestions.length]);
 
-    useEffect(() => {
-      if (!battleStarted) return;
-      const timer = setInterval(() => {
-        setTimeRemaining(prev => {
-          if (prev <= 1) {
-            handleNextQuestion();
-            return 60; 
-          }
-          return prev - 1;
-        });
-      }, 1000);
-      return () => clearInterval(timer);
-    }, [battleStarted, currentIndex, randomizedQuestions.length]);
-    
-    async function handleConfirmAndDeploy() {
-      if (activeSessionExists) {
-        return toast.error("A live quiz session is currently active. You must end it before deploying a new one.");
-      }
-      if (!selectedSection.id || selectedSection.id === 'none') {
-        return toast.error("Please select a valid section.");
-      }
+      ws.onclose = () => {
+        if (isMounted && inLobby) {
+          setTimeout(connectWs, 2000);
+        }
+      };
+    }
 
+    connectWs();
+
+    return () => {
+      isMounted = false;
+      if (ws) ws.close();
+    };
+  }, [inLobby, sessionId, randomizedQuestions.length]);
+
+  useEffect(() => {
+    if (!battleStarted) return;
+    const timer = setInterval(() => {
+      setTimeRemaining(prev => {
+        if (prev <= 1) {
+          handleNextQuestion();
+          return 60; 
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [battleStarted, currentIndex, randomizedQuestions.length]);
+   
+async function handleConfirmAndDeploy() {
+    if (activeSessionExists) {
+      return toast.error("A live quiz session is currently active. You must end it before deploying a new one.");
+    }
+    if (!selectedSection.id || selectedSection.id === 'none') {
+      return toast.error("Please select a valid section.");
+    }
+    if (lobbyType === "individual" && !isLive && !deadline) {
+      return toast.error("Please pick a date/time for this scheduled lobby.");
+    }
+
+    setIsDeploying(true);
+
+    try {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       const currentProfId = professorId || user?.id;
 
       if (!currentProfId || authError) {
-        return toast.error("Authentication error: Could not verify your professor identity.");
+        toast.error("Authentication error: Could not verify your professor identity.");
+        return;
       }
 
       // Collision Check Algorithm
@@ -8678,19 +8736,46 @@ export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElemen
       }
       setRoomCode(finalRoomCode); 
 
-      // Insert and fetch returning session ID
-      const { data: sessionData, error: sessionError } = await supabase
+      // Insert payload, falling back to legacy schema if PGRST204 occurs
+      let payload: any = {
+        section_id: selectedSection.id,
+        professor_id: currentProfId, 
+        room_code: finalRoomCode, 
+        is_live: isLive,
+        status: isLive ? 'ACTIVE' : 'PENDING',
+        deadline: isLive ? null : deadline || null,
+        mode: lobbyType,
+        team_size: lobbyType === "team" ? teamSize : null,
+      };
+
+      let { data: sessionData, error: sessionError } = await supabase
         .from('quiz_sessions')
-        .insert([{
+        .insert([payload])
+        .select('id')
+        .maybeSingle();
+
+      if (sessionError && sessionError.code === 'PGRST204') {
+        console.warn("Missing 'mode' or 'team_size' columns. Falling back to basic schema.");
+        toast.warning("Database schema needs updating. Launching in compatibility mode.");
+        
+        payload = {
           section_id: selectedSection.id,
-          professor_id: currentProfId, // Establish ownership
+          professor_id: currentProfId, 
           room_code: finalRoomCode, 
           is_live: isLive,
           status: isLive ? 'ACTIVE' : 'PENDING',
           deadline: isLive ? null : deadline || null
-        }])
-        .select('id')
-        .single();
+        };
+
+        const fallbackResponse = await supabase
+          .from('quiz_sessions')
+          .insert([payload])
+          .select('id')
+          .maybeSingle();
+          
+        sessionData = fallbackResponse.data;
+        sessionError = fallbackResponse.error;
+      }
 
       if (sessionError) {
         toast.error("Failed to save match session to database.");
@@ -8699,170 +8784,188 @@ export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElemen
       }
 
       if (isLive && sessionData) {
-        setSessionId(sessionData.id); // Isolate the WebSocket with this UUID
+        setSessionId(sessionData.id); 
         setActiveSessionExists(true);
         setInLobby(true);
         setJoinedStudents([]); 
-        toast.success(`Live Match Session initialized using bank: ${selectedBank.name}! Session Locked.`);
+        const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "team" ? "Team" : "Individual";
+        toast.success(`${modeLabel} Live Session initialized using bank: ${selectedBank.name}! Session Locked.`);
       } else {
-        toast.success("Own-pace session successfully deployed!");
+        toast.success("Quiz created!");
       }
+    } finally {
+      setIsDeploying(false);
     }
+  }
 
-    const handleStartBattle = () => {
-      setBattleStarted(true);
-      setCurrentIndex(0);
+  const handleStartBattle = () => {
+    setBattleStarted(true);
+    setCurrentIndex(0);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'PROF_START_BATTLE',
+        battleId: sessionId, 
+        bankId: selectedBank.id,
+        forceReset: true,
+        questions: randomizedQuestions 
+      }));
+    }
+  };
+
+  const handleNextQuestion = () => {
+    const totalQCount = randomizedQuestions.length || 1;
+    const nextIdx = currentIndex + 1;
+
+    if (nextIdx < totalQCount) {
+      setCurrentIndex(nextIdx);
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
-          type: 'PROF_START_BATTLE',
-          battleId: sessionId, // Use UUID
-          bankId: selectedBank.id,
-          forceReset: true,
-          questions: randomizedQuestions 
+          type: 'ADVANCE_QUESTION',
+          battleId: sessionId,
+          currentIndex: nextIdx,
+          nextTimeLimit: 60,
+          isLastQuestion: false
         }));
       }
-    };
-
-    const handleNextQuestion = () => {
-      const totalQCount = randomizedQuestions.length || 1;
-      const nextIdx = currentIndex + 1;
-
-      if (nextIdx < totalQCount) {
-        setCurrentIndex(nextIdx);
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: 'ADVANCE_QUESTION',
-            battleId: sessionId, // Use UUID
-            currentIndex: nextIdx,
-            nextTimeLimit: 60,
-            isLastQuestion: false
-          }));
-        }
-      } else {
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: 'ADVANCE_QUESTION',
-            battleId: sessionId, // Use UUID
-            currentIndex: currentIndex,
-            isLastQuestion: true
-          }));
-        }
+    } else {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'ADVANCE_QUESTION',
+          battleId: sessionId, 
+          currentIndex: currentIndex,
+          isLastQuestion: true
+        }));
       }
-      setTimeRemaining(60);
-    };
+    }
+    setTimeRemaining(60);
+  };
 
-    useEffect(() => {
-      return () => cleanupBots();
-    }, [cleanupBots]);
+ const handleEndSession = async () => {
+    if (window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
+      if (wsRef.current) wsRef.current.close();
+      cleanupBots(); 
+      
+      await supabase
+        .from('quiz_sessions')
+        .update({ status: 'COMPLETED' })
+        .eq('id', sessionId); 
 
-  const handleEndSession = async () => {
-      if (window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
-        if (wsRef.current) wsRef.current.close();
-        cleanupBots(); 
-        
-        await supabase
-          .from('quiz_sessions')
-          .update({ status: 'COMPLETED' })
-          .eq('id', sessionId); // Cleanly update by UUID
+      setInLobby(false);
+      setActiveSessionExists(false);
+      setBattleStarted(false);
+      setJoinedStudents([]);
+      setCurrentIndex(0);
+      setSessionId(''); 
+      setRoomCode(generateSecureRoomCode());
+      
+      toast.success("Live session ended successfully. Configuration unlocked.");
+    }
+  };
 
-        setInLobby(false);
-        setActiveSessionExists(false);
-        setBattleStarted(false);
-        setJoinedStudents([]);
-        setCurrentIndex(0);
-        setSessionId(''); // Clear UUID
-        
-        setRoomCode(generateSecureRoomCode());
-        
-        toast.success("Live session ended successfully. Configuration unlocked.");
-      }
-    };
+  const currentActiveQuestion = randomizedQuestions[currentIndex];
+  const totalQCount = randomizedQuestions.length > 0 ? randomizedQuestions.length : 1;
 
-    const currentActiveQuestion = randomizedQuestions[currentIndex];
-    const totalQCount = randomizedQuestions.length > 0 ? randomizedQuestions.length : 1;
-
-    const studentsByTeam = joinedStudents.reduce((acc, student) => {
+  // Calculate Rankings & Groups based on LobbyType
+  const sortedStudents = [...joinedStudents].sort((a, b) => b.score - a.score);
+  
+  const studentsByTeam: Record<string, Student[]> = {};
+  if (lobbyType === "team") {
+    groups.forEach(g => { studentsByTeam[g] = []; });
+    joinedStudents.forEach(student => {
       const t = student.team || 'Unassigned';
-      if (!acc[t]) acc[t] = [];
-      acc[t].push(student);
-      return acc;
-    }, {} as Record<string, Student[]>);
+      if (!studentsByTeam[t]) studentsByTeam[t] = [];
+      studentsByTeam[t].push(student);
+    });
+  }
 
-    const teamScores = Object.entries(studentsByTeam).map(([team, members]) => {
-      const totalScore = members.reduce((sum, m) => sum + (m.score || 0), 0);
-      return { team, score: totalScore, members };
-    }).sort((a, b) => b.score - a.score);
+  const teamScores = lobbyType === "team" ? Object.entries(studentsByTeam).map(([team, members]) => {
+    const totalScore = members.reduce((sum, m) => sum + (m.score || 0), 0);
+    return { team, score: totalScore, members };
+  }).sort((a, b) => b.score - a.score) : [];
 
-    if (inLobby) {
-      return (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", background: C.navy, overflow: "hidden" }}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflowY: "auto", padding: 32, color: "#fff" }}>
-            
-            <div style={{ background: "rgba(255,71,87,0.2)", border: "1px solid rgba(255,71,87,0.4)", borderRadius: 12, padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-              <span style={{ fontSize: 12, fontFamily: "Manrope, sans-serif", color: C.yellow, fontWeight: 700 }}>🔒 STRICT SESSION LOCK</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Bank: {selectedBank.name} ({randomizedQuestions.length} Total Loaded)</span>
-                <button type="button" onClick={handleEndSession} style={{ background: C.red, border: "none", borderRadius: 8, padding: "5px 12px", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                  End Session & Unlock
-                </button>
-              </div>
+
+  if (inLobby) {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", background: C.navy, overflow: "hidden" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflowY: "auto", padding: 32, color: "#fff" }}>
+          
+          <div style={{ background: "rgba(255,71,87,0.2)", border: "1px solid rgba(255,71,87,0.4)", borderRadius: 12, padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <span style={{ fontSize: 12, fontFamily: "Manrope, sans-serif", color: C.yellow, fontWeight: 700 }}>🔒 STRICT SESSION LOCK</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Bank: {selectedBank.name} ({randomizedQuestions.length} Total Loaded)</span>
+              <button type="button" onClick={handleEndSession} style={{ background: C.red, border: "none", borderRadius: 8, padding: "5px 12px", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                End Session & Unlock
+              </button>
             </div>
+          </div>
 
-            {!battleStarted ? (
-              <div style={{ maxWidth: 900, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 24 }}>
-                <style>{`
-                  @keyframes popIn { 0%{opacity:0;transform:scale(0.4)} 100%{opacity:1;transform:scale(1)} }
-                  @keyframes dotPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.35;transform:scale(0.75)} }
-                `}</style>
+          {!battleStarted ? (
+            <div style={{ maxWidth: 900, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 24 }}>
+              <style>{`
+                @keyframes popIn { 0%{opacity:0;transform:scale(0.4)} 100%{opacity:1;transform:scale(1)} }
+                @keyframes dotPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.35;transform:scale(0.75)} }
+              `}</style>
 
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,201,60,0.15)", border: "1.5px solid rgba(255,201,60,0.3)", borderRadius: 20, padding: "5px 16px", marginBottom: 12 }}>
-                    <Zap size={13} fill={C.yellow} color="transparent" />
-                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: C.yellow, letterSpacing: "0.1em", textTransform: "uppercase" }}>Live Fullscreen Session Lobby</span>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,201,60,0.15)", border: "1.5px solid rgba(255,201,60,0.3)", borderRadius: 20, padding: "5px 16px", marginBottom: 12 }}>
+                  <Zap size={13} fill={C.yellow} color="transparent" />
+                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: C.yellow, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                    Live Fullscreen Session Lobby ({lobbyType.toUpperCase()})
+                  </span>
+                </div>
+                <h1 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 42, fontWeight: 700, margin: 0 }}>{selectedSection.name} - Waiting Room</h1>
+              </div>
+
+              {/* Room Code Card */}
+              <div style={{ background: "rgba(255,255,255,0.05)", border: "1.5px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "22px 24px" }}>
+                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.45)", textAlign: "center", textTransform: "uppercase", marginBottom: 10, letterSpacing: "0.1em" }}>External Student Room Code</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
+                  <div style={{ background: "rgba(255,255,255,0.06)", border: "2px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: "10px 24px" }}>
+                    <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 36, fontWeight: 700, color: C.yellow, letterSpacing: "0.15em" }}>{roomCode}</span>
                   </div>
-                  <h1 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 42, fontWeight: 700, margin: 0 }}>{selectedSection.name} - Waiting Room</h1>
+                  <button type="button" onClick={() => { navigator.clipboard.writeText(roomCode); setCopied(true); setTimeout(() => setCopied(false), 2000); }} style={{ width: 48, height: 48, borderRadius: 14, background: copied ? "rgba(46,212,122,0.2)" : "rgba(255,255,255,0.08)", border: `2px solid ${copied ? C.green : "rgba(255,255,255,0.12)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: copied ? C.green : "#fff" }}>
+                    {copied ? <Check size={18} /> : <Copy size={18} />}
+                  </button>
+                </div>
+                
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: 18 }}>
+                  <button 
+                    type="button" 
+                    onClick={() => spawnBots(lobbyType === 'team' ? (teamSize * 3) : 10)} 
+                    style={{ background: C.indigo, border: "none", borderRadius: 12, padding: "10px 20px", color: "#fff", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
+                  >
+                    🤖 Spawn {lobbyType === 'team' ? (teamSize * 3) : 10} Test Bots
+                  </button>
+                </div>
+              </div>
+
+              {/* Joined Student Profiles Grid */}
+              <div style={{ width: "100%" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Users size={14} color="rgba(255,255,255,0.5)" strokeWidth={2} />
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                      Joined Participants ({joinedStudents.length}/{CAPACITY})
+                    </span>
+                    {lobbyType === 'team' && (
+                      <button
+                        type="button"
+                        onClick={handleAddGroup}
+                        style={{ background: "rgba(91,61,246,0.2)", border: `1px solid ${C.indigo}`, borderRadius: 8, padding: "4px 10px", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", marginLeft: 8 }}
+                      >
+                        + Add Group
+                      </button>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.yellow, animation: "dotPulse 1.2s ease-in-out infinite" }} />
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.4)" }}>
+                      Waiting for students to join…
+                    </span>
+                  </div>
                 </div>
 
-                {/* Room Code Card */}
-                <div style={{ background: "rgba(255,255,255,0.05)", border: "1.5px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "22px 24px" }}>
-                  <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.45)", textAlign: "center", textTransform: "uppercase", marginBottom: 10, letterSpacing: "0.1em" }}>External Student Room Code</p>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center" }}>
-                    <div style={{ background: "rgba(255,255,255,0.06)", border: "2px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: "10px 24px" }}>
-                      <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 36, fontWeight: 700, color: C.yellow, letterSpacing: "0.15em" }}>{roomCode}</span>
-                    </div>
-                    <button type="button" onClick={() => { navigator.clipboard.writeText(roomCode); setCopied(true); setTimeout(() => setCopied(false), 2000); }} style={{ width: 48, height: 48, borderRadius: 14, background: copied ? "rgba(46,212,122,0.2)" : "rgba(255,255,255,0.08)", border: `2px solid ${copied ? C.green : "rgba(255,255,255,0.12)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: copied ? C.green : "#fff" }}>
-                      {copied ? <Check size={18} /> : <Copy size={18} />}
-                    </button>
-                  </div>
-                  
-                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: 18 }}>
-                    <button 
-                      type="button" 
-                      onClick={() => spawnBots(teamSize * 3)} 
-                      style={{ background: C.indigo, border: "none", borderRadius: 12, padding: "10px 20px", color: "#fff", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
-                    >
-                      🤖 Spawn {teamSize * 3} Test Bots ({teamSize} per team)
-                    </button>
-                  </div>
-                </div>
-
-                {/* Joined Student Profiles Grid */}
-                <div style={{ width: "100%" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <Users size={14} color="rgba(255,255,255,0.5)" strokeWidth={2} />
-                      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-                        Joined Participants ({joinedStudents.length}/{CAPACITY})
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.yellow, animation: "dotPulse 1.2s ease-in-out infinite" }} />
-                      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.4)" }}>
-                        Waiting for students to join…
-                      </span>
-                    </div>
-                  </div>
-
+                {lobbyType === 'team' ? (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20 }}>
                     {Object.entries(studentsByTeam).map(([teamName, members], idx) => (
                       <div key={teamName} style={{ 
@@ -8882,9 +8985,20 @@ export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElemen
                           <h4 style={{ color: "#fff", fontFamily: "Fredoka, sans-serif", margin: 0, fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
                             🛡️ {teamName}
                           </h4>
-                          <span style={{ fontSize: 12, background: "rgba(255,255,255,0.1)", padding: "2px 8px", borderRadius: 12, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>
-                            {members.length} / {teamSize}
-                          </span>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            {members.length === 0 && teamName !== 'Unassigned' && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveGroup(teamName)}
+                                style={{ background: "rgba(255,71,87,0.1)", border: `1px solid ${C.red}`, borderRadius: 8, padding: "3px 8px", color: C.red, fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+                              >
+                                Remove
+                              </button>
+                            )}
+                            <span style={{ fontSize: 12, background: "rgba(255,255,255,0.1)", padding: "2px 8px", borderRadius: 12, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>
+                              {members.length} / {teamSize}
+                            </span>
+                          </div>
                         </div>
 
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(60px, 1fr))", gap: 12 }}>
@@ -8897,94 +9011,102 @@ export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElemen
                         </div>
                       </div>
                     ))}
-                    
+                  </div>
+                ) : (
+                  <div style={{ 
+                    background: "linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))", 
+                    border: "1px solid rgba(255,255,255,0.1)", 
+                    borderRadius: 20, 
+                    padding: 20, 
+                    display: "grid", 
+                    gridTemplateColumns: "repeat(auto-fill, minmax(60px, 1fr))", 
+                    gap: 16
+                  }}>
+                    {joinedStudents.map(student => (
+                      <PlayerChip key={student.id} player={student} animate={true} />
+                    ))}
                     {joinedStudents.length === 0 && (
-                      <div style={{ 
-                        background: "linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))", 
-                        border: "1px dashed rgba(255,255,255,0.2)", 
-                        borderRadius: 20, padding: 20, display: "flex", flexDirection: "column"
-                      }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(60px, 1fr))", gap: 12 }}>
-                          {Array.from({ length: teamSize }).map((_, i) => <EmptySlot key={`empty-${i}`} />)}
-                        </div>
+                      <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 13, gridColumn: "1 / -1", textAlign: "center" }}>No students have joined yet.</span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <button type="button" onClick={handleStartBattle} style={{ width: "100%", background: `linear-gradient(135deg, ${C.indigo}, ${C.indigoDeep})`, border: "none", borderRadius: 20, padding: "18px 0", fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 8px 32px rgba(91,61,246,0.5)" }}>
+                Start Live Battle Now! ⚡
+              </button>
+            </div>
+          ) : (
+            <div style={{ maxWidth: 1000, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.05)", padding: "20px 24px", borderRadius: 20, border: "1px solid rgba(255,255,255,0.1)" }}>
+                <div>
+                  <p style={{ color: C.yellow, fontSize: 12, textTransform: "uppercase", fontWeight: 700, margin: 0 }}>Active Bank: {selectedBank.name}</p>
+                  <h2 style={{ color: "#fff", fontSize: 26, fontFamily: "Fredoka, sans-serif", margin: "4px 0 0" }}>Question {currentIndex + 1} of {totalQCount}</h2>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+                  <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 18px", borderRadius: 14, textAlign: "center" }}>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block" }}>Timer</span>
+                    <span style={{ fontSize: 22, fontFamily: "Fredoka, sans-serif", color: timeRemaining <= 10 ? C.coral : C.yellow }}>{timeRemaining}s</span>
+                  </div>
+                  <button type="button" onClick={handleNextQuestion} style={{ background: C.coral, border: "none", borderRadius: 14, padding: "12px 24px", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: "#fff", cursor: "pointer" }}>
+                    {currentIndex >= totalQCount - 1 ? 'Finish Quiz' : 'Next Question →'}
+                  </button>
+                </div>
+              </div>
+
+              {/* LIVE INSPECTION CARD WITH FULL DATABASE QUESTION & CHOICES */}
+              <div style={{ background: "rgba(91,61,246,0.15)", border: `2px solid ${C.indigo}`, borderRadius: 20, padding: "24px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <Eye size={18} color={C.yellow} />
+                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800, color: C.yellow, textTransform: "uppercase" }}>
+                    Professor Testing Panel (Synchronized Live Item)
+                  </span>
+                </div>
+
+                {currentActiveQuestion ? (
+                  <div>
+                    <p style={{ fontSize: 18, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>
+                      {currentActiveQuestion.text}
+                    </p>
+
+                    {currentActiveQuestion.choices && currentActiveQuestion.choices.length > 0 ? (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        {currentActiveQuestion.choices.map((choice, i) => {
+                          const isCorrect = choice === currentActiveQuestion.answer;
+                          return (
+                            <div key={i} style={{
+                              background: isCorrect ? "rgba(46,212,122,0.25)" : "rgba(0,0,0,0.3)",
+                              border: `1.5px solid ${isCorrect ? C.green : "rgba(255,255,255,0.1)"}`,
+                              padding: "12px 16px", borderRadius: 12, fontSize: 14,
+                              color: isCorrect ? C.green : "rgba(255,255,255,0.85)", fontWeight: isCorrect ? 700 : 500,
+                              display: "flex", alignItems: "center", justifyContent: "space-between"
+                            }}>
+                              <span><b>{["A", "B", "C", "D"][i]}.</b> {choice}</span>
+                              {isCorrect && <span style={{ fontSize: 10, background: C.green, color: "#fff", padding: "2px 6px", borderRadius: 4 }}>Correct</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ background: "rgba(46,212,122,0.2)", border: `1px solid ${C.green}`, padding: "12px 16px", borderRadius: 12 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: C.green, display: "block", marginBottom: 4 }}>Expected Answer:</span>
+                        <span style={{ fontFamily: "monospace", fontSize: 16, color: "#fff", fontWeight: 700 }}>{currentActiveQuestion.answer}</span>
                       </div>
                     )}
                   </div>
-                </div>
-
-                <button type="button" onClick={handleStartBattle} style={{ width: "100%", background: `linear-gradient(135deg, ${C.indigo}, ${C.indigoDeep})`, border: "none", borderRadius: 20, padding: "18px 0", fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 8px 32px rgba(91,61,246,0.5)" }}>
-                  Start Live Battle Now! ⚡
-                </button>
+                ) : (
+                  <p style={{ color: "rgba(255,255,255,0.4)", fontStyle: "italic", margin: 0 }}>Loading questions from selected bank...</p>
+                )}
               </div>
-            ) : (
-              <div style={{ maxWidth: 1000, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 20 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.05)", padding: "20px 24px", borderRadius: 20, border: "1px solid rgba(255,255,255,0.1)" }}>
-                  <div>
-                    <p style={{ color: C.yellow, fontSize: 12, textTransform: "uppercase", fontWeight: 700, margin: 0 }}>Active Bank: {selectedBank.name}</p>
-                    <h2 style={{ color: "#fff", fontSize: 26, fontFamily: "Fredoka, sans-serif", margin: "4px 0 0" }}>Question {currentIndex + 1} of {totalQCount}</h2>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-                    <div style={{ background: "rgba(0,0,0,0.3)", padding: "10px 18px", borderRadius: 14, textAlign: "center" }}>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block" }}>Timer</span>
-                      <span style={{ fontSize: 22, fontFamily: "Fredoka, sans-serif", color: timeRemaining <= 10 ? C.coral : C.yellow }}>{timeRemaining}s</span>
-                    </div>
-                    <button type="button" onClick={handleNextQuestion} style={{ background: C.coral, border: "none", borderRadius: 14, padding: "12px 24px", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: "#fff", cursor: "pointer" }}>
-                      {currentIndex >= totalQCount - 1 ? 'Finish Quiz' : 'Next Question →'}
-                    </button>
-                  </div>
-                </div>
 
-                <div style={{ background: "rgba(91,61,246,0.15)", border: `2px solid ${C.indigo}`, borderRadius: 20, padding: "24px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                    <Eye size={18} color={C.yellow} />
-                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800, color: C.yellow, textTransform: "uppercase" }}>
-                      Professor Testing Panel (Synchronized Live Item)
-                    </span>
-                  </div>
-
-                  {currentActiveQuestion ? (
-                    <div>
-                      <p style={{ fontSize: 18, fontWeight: 700, color: "#fff", margin: "0 0 16px" }}>
-                        {currentActiveQuestion.text}
-                      </p>
-
-                      {currentActiveQuestion.choices && currentActiveQuestion.choices.length > 0 ? (
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                          {currentActiveQuestion.choices.map((choice, i) => {
-                            const isCorrect = choice === currentActiveQuestion.answer;
-                            return (
-                              <div key={i} style={{
-                                background: isCorrect ? "rgba(46,212,122,0.25)" : "rgba(0,0,0,0.3)",
-                                border: `1.5px solid ${isCorrect ? C.green : "rgba(255,255,255,0.1)"}`,
-                                padding: "12px 16px", borderRadius: 12, fontSize: 14,
-                                color: isCorrect ? C.green : "rgba(255,255,255,0.85)", fontWeight: isCorrect ? 700 : 500,
-                                display: "flex", alignItems: "center", justifyContent: "space-between"
-                              }}>
-                                <span><b>{["A", "B", "C", "D"][i]}.</b> {choice}</span>
-                                {isCorrect && <span style={{ fontSize: 10, background: C.green, color: "#fff", padding: "2px 6px", borderRadius: 4 }}>Correct</span>}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div style={{ background: "rgba(46,212,122,0.2)", border: `1px solid ${C.green}`, padding: "12px 16px", borderRadius: 12 }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: C.green, display: "block", marginBottom: 4 }}>Expected Answer:</span>
-                          <span style={{ fontFamily: "monospace", fontSize: 16, color: "#fff", fontWeight: 700 }}>{currentActiveQuestion.answer}</span>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <p style={{ color: "rgba(255,255,255,0.4)", fontStyle: "italic", margin: 0 }}>Loading questions from selected bank...</p>
-                  )}
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-                  <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 20, padding: 20, border: "1px solid rgba(255,255,255,0.08)" }}>
-                    <h3 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, marginTop: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                      <Trophy size={18} color={C.yellow} /> Live Team Rankings
-                    </h3>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: 350, overflowY: "auto" }}>
-                      {teamScores.map((ts, idx) => (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+                <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 20, padding: 20, border: "1px solid rgba(255,255,255,0.08)" }}>
+                  <h3 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, marginTop: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                    <Trophy size={18} color={C.yellow} /> {lobbyType === 'team' ? "Live Team Rankings" : "Live Rankings"}
+                  </h3>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: 350, overflowY: "auto" }}>
+                    {lobbyType === 'team' ? (
+                      teamScores.map((ts, idx) => (
                         <div key={ts.team} style={{ background: "rgba(255,255,255,0.06)", borderRadius: 12, padding: 14 }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -9001,148 +9123,203 @@ export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElemen
                             ))}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 20, padding: 20, border: "1px solid rgba(255,255,255,0.08)" }}>
-                    <h3 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, marginTop: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                      <Sparkles size={18} color={C.yellow} /> Match Stream
-                    </h3>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 350, overflowY: "auto", fontFamily: "monospace", fontSize: 12 }}>
-                      {liveFeed.length === 0 ? (
-                        <p style={{ color: "rgba(255,255,255,0.3)", textAlign: "center", marginTop: 40 }}>Waiting for student activity...</p>
-                      ) : (
-                        liveFeed.map((f, i) => (
-                          <div key={i} style={{ background: "rgba(0,0,0,0.3)", padding: "8px 12px", borderRadius: 8, color: "rgba(255,255,255,0.8)" }}>
-                            <span style={{ color: C.yellow }}>[{new Date().toLocaleTimeString()}]</span> <b>{f.sender || 'Student'}</b> {f.message || 'completed a question.'}
+                      ))
+                    ) : (
+                      sortedStudents.map((student, idx) => (
+                        <div key={student.id} style={{ background: "rgba(255,255,255,0.06)", borderRadius: 12, padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: idx === 0 ? C.yellow : "rgba(255,255,255,0.5)" }}>#{idx + 1}</span>
+                            <span style={{ fontWeight: 700, fontFamily: "Fredoka, sans-serif", fontSize: 16 }}>{student.name}</span>
                           </div>
-                        ))
-                      )}
-                    </div>
+                          <span style={{ color: C.green, fontWeight: 700, fontFamily: "Fredoka, sans-serif", fontSize: 16 }}>{student.score} pts</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
-              </div>
-            )}
 
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div style={{ display: "flex", height: "100vh", background: C.offWhite, overflow: "hidden", position: "relative" }}>
-        {activeSessionExists && (
-          <div style={{ position: "absolute", inset: 0, background: "rgba(27,30,43,0.75)", backdropFilter: "blur(4px)", zIndex: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
-            <div style={{ background: C.navy, border: `2px solid ${C.red}`, borderRadius: 24, padding: "32px 40px", maxWidth: 500, boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
-              <Lock size={48} color={C.red} style={{ marginBottom: 16 }} />
-              <h2 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 24, color: "#fff", margin: "0 0 10px" }}>Session Locked</h2>
-              <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, color: "rgba(255,255,255,0.7)", margin: "0 0 24px", lineHeight: 1.5 }}>
-                A live quiz session is currently running on the network. Configuration and match creation are locked until the active session concludes or is explicitly terminated.
-              </p>
-              <button type="button" onClick={() => setInLobby(true)} style={{ background: C.indigo, border: "none", borderRadius: 12, padding: "12px 24px", color: "#fff", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(91,61,246,0.4)" }}>
-                Return to Active Lobby ⚡
-              </button>
-            </div>
-          </div>
-        )}
-
-        <ProfSidebar />
-
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, opacity: activeSessionExists ? 0.3 : 1, pointerEvents: activeSessionExists ? "none" : "auto" }}>
-          <div style={{ background: C.white, borderBottom: `1.5px solid ${C.border}`, padding: "0 28px", height: 62, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, gap: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(91,61,246,0.08)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Users size={17} color={C.indigo} strokeWidth={2} />
-              </div>
-              <div>
-                <h1 style={{ fontFamily: "Manrope, sans-serif", fontSize: 18, fontWeight: 800, color: C.navy, margin: 0 }}>Matchmaking</h1>
-                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600, color: C.muted, margin: 0 }}>Adaptive team balancing for fair quiz battles</p>
+                <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 20, padding: 20, border: "1px solid rgba(255,255,255,0.08)" }}>
+                  <h3 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, marginTop: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                    <Sparkles size={18} color={C.yellow} /> Match Stream
+                  </h3>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 350, overflowY: "auto", fontFamily: "monospace", fontSize: 12 }}>
+                    {liveFeed.length === 0 ? (
+                      <p style={{ color: "rgba(255,255,255,0.3)", textAlign: "center", marginTop: 40 }}>Waiting for student activity...</p>
+                    ) : (
+                      liveFeed.map((f, i) => (
+                        <div key={i} style={{ background: "rgba(0,0,0,0.3)", padding: "8px 12px", borderRadius: 8, color: "rgba(255,255,255,0.8)" }}>
+                          <span style={{ color: C.yellow }}>[{new Date().toLocaleTimeString()}]</span> <b>{f.sender || 'Student'}</b> {f.message || 'completed a question.'}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px", display: "flex", flexDirection: "column", gap: 20 }}>
-            <div style={{ background: C.white, borderRadius: 22, border: `1.5px solid ${C.border}`, boxShadow: "0 2px 16px rgba(0,0,0,0.04)", overflow: "hidden" }}>
-              <div style={{ padding: "18px 24px 14px", borderBottom: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 10, background: C.indigoLight, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <Zap size={15} color={C.indigo} strokeWidth={2} />
-                  </div>
-                  <div>
-                    <h2 style={{ fontFamily: "Manrope, sans-serif", fontSize: 15, fontWeight: 800, color: C.navy, margin: 0 }}>Matchmaking Configuration</h2>
-                    <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted, margin: 0, fontWeight: 500 }}>Configure class section and live/own-pace execution mode</p>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
-                  <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${adaptive ? C.indigoBorder : C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Adaptive Randomization</span>
-                      <ToggleSwitch on={adaptive} onChange={v => setAdaptive(v)} disabled={activeSessionExists} />
-                    </div>
-                  </div>
-
-                  <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
-                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Team Size</span>
-                  <div style={{ display: "flex", alignItems: "center", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, width: "fit-content" }}>
-
-    <button type="button" disabled={activeSessionExists} onClick={() => setTeamSize(v => Math.max(3, v - 1))} style={{ width: 38, height: 38, background: "none", border: "none", cursor: "pointer", fontWeight: 700 }}>−</button>
-    <span style={{ width: 52, textAlign: "center", fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: C.indigo }}>{teamSize}</span>
-    <button type="button" disabled={activeSessionExists} onClick={() => setTeamSize(v => Math.min(7, v + 1))} style={{ width: 38, height: 38, background: "none", border: "none", cursor: "pointer", fontWeight: 700 }}>+</button>
-  </div>
-                  </div>
-
-                  <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
-                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Target Class Section</span>
-                    <Dropdown value={selectedSection} options={sectionsList} onChange={v => setSelectedSection(v)} disabled={activeSessionExists} />
-                  </div>
-                </div>
-
-                <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <Database size={15} color={C.indigo} />
-                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Dynamic Question Bank Source</span>
-                  </div>
-                  <Dropdown value={selectedBank} options={questionBanks} onChange={v => setSelectedBank(v)} disabled={activeSessionExists} />
-                </div>
-
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button type="button" disabled={activeSessionExists} onClick={() => setPreviewed(true)} style={{
-                    background: C.coral, border: "none", borderRadius: 13, padding: "11px 22px", fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 700, color: "#fff", cursor: activeSessionExists ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 14px rgba(255,107,74,0.3)"
-                  }}>
-                    <Users size={16} strokeWidth={2.5} />Preview Team Assignments
-                    <ArrowRight size={15} strokeWidth={2.5} />
-                  </button>
-                </div>
-              </div>
-
-              {previewed && !activeSessionExists && (
-                <div style={{ borderTop: `1.5px solid ${C.border}`, padding: "20px 24px" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <h3 style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 800, color: C.navy, margin: 0 }}>Team Preview</h3>
-                    </div>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button type="button" onClick={handleConfirmAndDeploy} style={{
-                        display: "inline-flex", alignItems: "center", gap: 5, background: C.coral, border: "none", borderRadius: 9, padding: "9px 18px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer"
-                      }}>
-                        <CheckCircle2 size={15} /> Confirm & Launch Live Lobby
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
         </div>
       </div>
     );
   }
 
-  export default Matchmaking;
+  return (
+    <div style={{ display: "flex", height: "100vh", background: C.offWhite, overflow: "hidden", position: "relative" }}>
+      {activeSessionExists && (
+        <div style={{ position: "absolute", inset: 0, background: "rgba(27,30,43,0.75)", backdropFilter: "blur(4px)", zIndex: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
+          <div style={{ background: C.navy, border: `2px solid ${C.red}`, borderRadius: 24, padding: "32px 40px", maxWidth: 500, boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }}>
+            <Lock size={48} color={C.red} style={{ marginBottom: 16 }} />
+            <h2 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 24, color: "#fff", margin: "0 0 10px" }}>Session Locked</h2>
+            <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, color: "rgba(255,255,255,0.7)", margin: "0 0 24px", lineHeight: 1.5 }}>
+              A live quiz session is currently running on the network. Configuration and match creation are locked until the active session concludes or is explicitly terminated.
+            </p>
+            <button type="button" onClick={() => setInLobby(true)} style={{ background: C.indigo, border: "none", borderRadius: 12, padding: "12px 24px", color: "#fff", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(91,61,246,0.4)" }}>
+              Return to Active Lobby ⚡
+            </button>
+          </div>
+        </div>
+      )}
+
+      <ProfSidebar />
+
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, opacity: activeSessionExists ? 0.3 : 1, pointerEvents: activeSessionExists ? "none" : "auto" }}>
+        <div style={{ background: C.white, borderBottom: `1.5px solid ${C.border}`, padding: "0 28px", height: 62, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(91,61,246,0.08)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Users size={17} color={C.indigo} strokeWidth={2} />
+            </div>
+            <div>
+              <h1 style={{ fontFamily: "Manrope, sans-serif", fontSize: 18, fontWeight: 800, color: C.navy, margin: 0 }}>Matchmaking</h1>
+              <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600, color: C.muted, margin: 0 }}>Adaptive team balancing for fair quiz battles</p>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px", display: "flex", flexDirection: "column", gap: 20 }}>
+          <div style={{ background: C.white, borderRadius: 22, border: `1.5px solid ${C.border}`, boxShadow: "0 2px 16px rgba(0,0,0,0.04)", overflow: "hidden" }}>
+            <div style={{ padding: "18px 24px 14px", borderBottom: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 10, background: C.indigoLight, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Zap size={15} color={C.indigo} strokeWidth={2} />
+                </div>
+                <div>
+                  <h2 style={{ fontFamily: "Manrope, sans-serif", fontSize: 15, fontWeight: 800, color: C.navy, margin: 0 }}>Matchmaking Configuration</h2>
+                  <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted, margin: 0, fontWeight: 500 }}>Configure class section and live/own-pace execution mode</p>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
+
+              {/* Lobby Type Selector */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Lobby Type</span>
+                <div style={{ display: "flex", gap: 12 }}>
+                  {LOBBY_TYPES.map(t => (
+                    <LobbyTypeCard key={t.id} type={t} selected={lobbyType === t.id} onClick={() => setLobbyType(t.id)} disabled={activeSessionExists} />
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: lobbyType === "individual" ? "1fr 1fr 1fr" : "1fr 1fr", gap: 20 }}>
+                <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${adaptive ? C.indigoBorder : C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Adaptive Randomization</span>
+                    <ToggleSwitch on={adaptive} onChange={v => setAdaptive(v)} disabled={activeSessionExists} />
+                  </div>
+                </div>
+
+                {/* Individual lobby: choose Live now vs Scheduled for a later timeframe */}
+                {lobbyType === "individual" && (
+                  <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>{isLive ? "Live Now" : "Scheduled"}</span>
+                      <ToggleSwitch on={isLive} onChange={v => setIsLive(v)} disabled={activeSessionExists} />
+                    </div>
+                    {!isLive && (
+                      <input
+                        type="datetime-local"
+                        value={deadline}
+                        onChange={e => setDeadline(e.target.value)}
+                        disabled={activeSessionExists}
+                        style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "8px 10px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600, color: C.navy }}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Team lobby: choose members per team */}
+                {lobbyType === "team" && (
+                  <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Members Per Team</span>
+                    <div style={{ display: "flex", alignItems: "center", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, width: "fit-content" }}>
+                      <button type="button" disabled={activeSessionExists} onClick={() => setTeamSize(v => Math.max(2, v - 1))} style={{ width: 38, height: 38, background: "none", border: "none", cursor: "pointer", fontWeight: 700 }}>−</button>
+                      <span style={{ width: 52, textAlign: "center", fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: C.indigo }}>{teamSize}</span>
+                      <button type="button" disabled={activeSessionExists} onClick={() => setTeamSize(v => Math.min(7, v + 1))} style={{ width: 38, height: 38, background: "none", border: "none", cursor: "pointer", fontWeight: 700 }}>+</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Battle Royale: always live, nothing to configure — just a status note */}
+                {lobbyType === "royale" && (
+                  <div style={{ background: C.yellowLight, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.yellowBorder}`, display: "flex", flexDirection: "column", gap: 6, justifyContent: "center" }}>
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Execution Mode</span>
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: C.navy }}>👑 Always Live — cannot be scheduled</span>
+                  </div>
+                )}
+
+                <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Target Class Section</span>
+                  <Dropdown value={selectedSection} options={sectionsList} onChange={v => setSelectedSection(v)} disabled={activeSessionExists} />
+                </div>
+              </div>
+
+              <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Database size={15} color={C.indigo} />
+                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Dynamic Question Bank Source</span>
+                </div>
+                <Dropdown value={selectedBank} options={questionBanks} onChange={v => setSelectedBank(v)} disabled={activeSessionExists} />
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button type="button" disabled={activeSessionExists} onClick={() => setPreviewed(true)} style={{
+                  background: C.coral, border: "none", borderRadius: 13, padding: "11px 22px", fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 700, color: "#fff", cursor: activeSessionExists ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 14px rgba(255,107,74,0.3)"
+                }}>
+                  <Users size={16} strokeWidth={2.5} />Preview Team Assignments
+                  <ArrowRight size={15} strokeWidth={2.5} />
+                </button>
+              </div>
+            </div>
+
+            {previewed && !activeSessionExists && (
+              <div style={{ borderTop: `1.5px solid ${C.border}`, padding: "20px 24px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <h3 style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 800, color: C.navy, margin: 0 }}>Team Preview</h3>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <style>{`
+                      @keyframes spin { to { transform: rotate(360deg); } }
+                    `}</style>
+                    <button type="button" onClick={handleConfirmAndDeploy} disabled={isDeploying} style={{
+                      display: "inline-flex", alignItems: "center", gap: 5, background: C.coral, border: "none", borderRadius: 9, padding: "9px 18px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: "#fff", cursor: isDeploying ? "not-allowed" : "pointer", opacity: isDeploying ? 0.7 : 1
+                    }}>
+                      {isDeploying ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle2 size={15} />}
+                      {isDeploying ? "Deploying..." : (isLive ? "Confirm & Launch Live Lobby" : "Confirm & Create Quiz")}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default Matchmaking;
 
 --- FILE: src\components\profonly\AIQuestionGenerator.tsx ---
 
@@ -13731,1009 +13908,6 @@ export function SectionsDashboard({ professorId }: { professorId?: string }) {
 
 export default SectionsDashboard;
 
---- FILE: src\components\profonly\SolutionAnalyzer.tsx ---
-
-import { useState, useRef } from "react";
-import { ProfSidebar } from "../shared/ProfSidebar";
-import {
-  Upload, FileText, Code2, CheckCircle2, XCircle, AlertTriangle,
-  ChevronDown, ChevronRight, MessageSquare, Download, Filter,
-  BarChart2, BookOpen, Brain, Sparkles, Image, Loader2,
-  Info, Tag, Users, RotateCcw, ZoomIn, ZoomOut,
-} from "lucide-react";
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell,
-} from "recharts";
-
-// ── Design tokens ──────────────────────────────────────────────────────────────
-const C = {
-  indigo:      "#5B3DF6", indigoDeep: "#4228D4",
-  indigoLight: "rgba(91,61,246,0.08)", indigoBorder: "rgba(91,61,246,0.2)",
-  coral:       "#FF6B4A", coralDeep: "#D44A2A",
-  coralLight:  "rgba(255,107,74,0.09)", coralBorder: "rgba(255,107,74,0.22)",
-  yellow:      "#FFC93C", yellowLight: "rgba(255,201,60,0.1)",
-  green:       "#2ED47A", greenLight:  "rgba(46,212,122,0.1)", greenBorder: "rgba(46,212,122,0.25)",
-  red:         "#FF4757", redLight:    "rgba(255,71,87,0.09)",  redBorder:   "rgba(255,71,87,0.22)",
-  navy:        "#1B1E2B",
-  white:       "#FFFFFF",
-  bg:          "#F7F8FC",
-  surface:     "#FFFFFF",
-  border:      "#E8EAF0",
-  borderStrong:"#D0D4E0",
-  text:        "#1B1E2B",
-  textMid:     "#4A4E6A",
-  textMuted:   "#8A8EA8",
-  sidebar:     "#1B1E2B",
-};
-
-// ── Sidebar nav (shared) ───────────────────────────────────────────────────────
-const NAV = [
-  { icon:"📋", label:"My Sections" },
-  { icon:"❓", label:"Question Bank" },
-  { icon:"✨", label:"AI Generator"  },
-  { icon:"⚔️",  label:"Matchmaking"  },
-  { icon:"🔬", label:"Solution Analyzer", active:true },
-  { icon:"📊", label:"Analytics"     },
-  { icon:"⚙️",  label:"Settings"     },
-];
-
-function Sidebar() { return <ProfSidebar />;
-  return (
-    <aside style={{ width:220, minWidth:220, background:C.sidebar, display:"flex",
-      flexDirection:"column", padding:"20px 0", borderRight:"none", flexShrink:0 }}>
-      <div style={{ padding:"0 20px 24px", borderBottom:"1px solid rgba(255,255,255,0.07)" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:9 }}>
-          <div style={{ width:34, height:34, borderRadius:10, background:C.indigo,
-            display:"flex", alignItems:"center", justifyContent:"center", fontSize:17 }}>🏆</div>
-          <span style={{ fontFamily:"Fredoka, sans-serif", fontSize:21, fontWeight:700,
-            color:"#fff" }}>QuizArena</span>
-        </div>
-        <p style={{ fontFamily:"Manrope, sans-serif", fontSize:11, fontWeight:600,
-          color:"rgba(255,255,255,0.3)", margin:"8px 0 0", letterSpacing:"0.05em",
-          textTransform:"uppercase" }}>Professor Portal</p>
-      </div>
-      <nav style={{ flex:1, padding:"14px 10px", display:"flex", flexDirection:"column", gap:2 }}>
-        {NAV.map(item => (
-          <div key={item.label} style={{
-            display:"flex", alignItems:"center", gap:10, padding:"9px 12px", borderRadius:10,
-            background: item.active ? "rgba(91,61,246,0.25)" : "transparent",
-            border: item.active ? "1px solid rgba(91,61,246,0.35)" : "1px solid transparent",
-            cursor:"pointer", transition:"background 0.15s",
-          }}>
-            <span style={{ fontSize:15 }}>{item.icon}</span>
-            <span style={{ fontFamily:"Manrope, sans-serif", fontSize:13, fontWeight:item.active?700:500,
-              color: item.active ? "#fff" : "rgba(255,255,255,0.45)" }}>{item.label}</span>
-          </div>
-        ))}
-      </nav>
-      <div style={{ padding:"14px 16px", borderTop:"1px solid rgba(255,255,255,0.07)" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:9 }}>
-          <div style={{ width:32, height:32, borderRadius:"50%", background:C.indigo,
-            display:"flex", alignItems:"center", justifyContent:"center",
-            fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:800, color:"#fff" }}>PR</div>
-          <div>
-            <p style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:700,
-              color:"#fff", margin:0 }}>Prof. Reyes</p>
-            <p style={{ fontFamily:"Manrope, sans-serif", fontSize:10,
-              color:"rgba(255,255,255,0.35)", margin:0 }}>CS Department</p>
-          </div>
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-// ── Misconception category chips ──────────────────────────────────────────────
-const MISCONCEPTION_TYPES = [
-  { label:"Sign Error",           bg:"#FFF0F0", color:"#D64242", border:"#FFD0D0" },
-  { label:"Off-by-One",           bg:"#FFF5E8", color:"#C47A00", border:"#FFE0A0" },
-  { label:"Syntax Error",         bg:"#F0F0FF", color:"#5044CC", border:"#C8C4FF" },
-  { label:"Logical Error",        bg:"#F0FBF4", color:"#1A8C4E", border:"#A8E8C0" },
-  { label:"Computational Mistake",bg:"#FFF0FA", color:"#A0359A", border:"#F0B0E8" },
-  { label:"Conceptual Gap",       bg:"#F0F8FF", color:"#1A72A8", border:"#A8D4F0" },
-];
-
-function MisconceptionBadge({ type, size = "md" }: { type: string; size?: "sm"|"md" }) {
-  const t = MISCONCEPTION_TYPES.find(x => x.label === type) ?? MISCONCEPTION_TYPES[0];
-  const pad = size==="sm" ? "2px 8px" : "4px 11px";
-  const fs  = size==="sm" ? 10 : 12;
-  return (
-    <span style={{ background:t.bg, color:t.color, border:`1.5px solid ${t.border}`,
-      borderRadius:20, padding:pad, fontFamily:"Manrope, sans-serif",
-      fontSize:fs, fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>
-      {type}
-    </span>
-  );
-}
-
-// ── Stat card ─────────────────────────────────────────────────────────────────
-function StatCard({ label, value, sub, color }: { label:string; value:string|number; sub?:string; color:string }) {
-  return (
-    <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:14,
-      padding:"14px 18px", flex:1, minWidth:130,
-      boxShadow:"0 2px 8px rgba(0,0,0,0.04)" }}>
-      <p style={{ fontFamily:"Manrope, sans-serif", fontSize:11, fontWeight:700,
-        color:C.textMuted, margin:"0 0 5px", textTransform:"uppercase",
-        letterSpacing:"0.06em" }}>{label}</p>
-      <p style={{ fontFamily:"Fredoka, sans-serif", fontSize:28, fontWeight:700,
-        color, margin:"0 0 2px", lineHeight:1 }}>{value}</p>
-      {sub && <p style={{ fontFamily:"Manrope, sans-serif", fontSize:11,
-        color:C.textMuted, margin:0 }}>{sub}</p>}
-    </div>
-  );
-}
-
-// ── Tab 1: Submission ─────────────────────────────────────────────────────────
-type SubmitMode = "image" | "code";
-type SubmitStatus = "idle" | "uploading" | "pending" | "analyzed";
-
-const MOCK_CODE = `def binary_search(arr, target):
-    left, right = 0, len(arr)  # Bug: should be len(arr) - 1
-    while left <= right:
-        mid = (left + right) // 2
-        if arr[mid] == target:
-            return mid
-        elif arr[mid] < target:
-            left = mid + 1
-        else:
-            right = mid - 1  # Bug: off-by-one
-    return -1`;
-
-function SubmissionTab() {
-  const [mode, setMode]         = useState<SubmitMode>("code");
-  const [code, setCode]         = useState(MOCK_CODE);
-  const [status, setStatus]     = useState<SubmitStatus>("pending");
-  const [dragging, setDragging] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  function handleAnalyze() {
-    setStatus("uploading");
-    setTimeout(() => setStatus("analyzed"), 2400);
-  }
-
-  const statusConfig: Record<SubmitStatus, { label:string; bg:string; color:string; border:string }> = {
-    idle:     { label:"No File",   bg:"#F5F5F5", color:C.textMuted,  border:"#E0E0E0" },
-    uploading:{ label:"Analyzing…",bg:C.yellowLight, color:"#A07000", border:"rgba(255,201,60,0.3)" },
-    pending:  { label:"Pending",   bg:C.yellowLight, color:"#A07000", border:"rgba(255,201,60,0.3)" },
-    analyzed: { label:"Analyzed",  bg:C.greenLight,  color:C.greenDeep ?? C.green, border:C.greenBorder },
-  };
-  const sc = statusConfig[status];
-
-  return (
-    <div style={{ display:"flex", gap:20, flex:1, minHeight:0, overflow:"hidden" }}>
-      {/* Left: input panel */}
-      <div style={{ flex:1, display:"flex", flexDirection:"column", gap:16, overflow:"auto" }}>
-
-        {/* Mode selector */}
-        <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16,
-          padding:"16px 20px", boxShadow:"0 2px 8px rgba(0,0,0,0.04)" }}>
-          <p style={{ fontFamily:"Manrope, sans-serif", fontSize:13, fontWeight:800,
-            color:C.text, margin:"0 0 12px" }}>Submission Type</p>
-          <div style={{ display:"flex", gap:10 }}>
-            {([["image","📷","Handwritten / Image"],["code","💻","Code / Text"]] as const).map(([v,icon,label])=>(
-              <button key={v} type="button" onClick={()=>setMode(v)} style={{
-                flex:1, padding:"11px 16px", borderRadius:12, cursor:"pointer",
-                background: mode===v ? C.indigoLight : C.bg,
-                border: `2px solid ${mode===v ? C.indigo : C.border}`,
-                display:"flex", alignItems:"center", gap:8, transition:"all 0.15s",
-              }}>
-                <span style={{ fontSize:18 }}>{icon}</span>
-                <span style={{ fontFamily:"Manrope, sans-serif", fontSize:13, fontWeight:700,
-                  color: mode===v ? C.indigo : C.textMid }}>{label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Upload zone or code editor */}
-        {mode === "image" ? (
-          <div
-            onDragOver={e=>{e.preventDefault();setDragging(true);}}
-            onDragLeave={()=>setDragging(false)}
-            onDrop={e=>{e.preventDefault();setDragging(false);setStatus("pending");}}
-            onClick={()=>fileRef.current?.click()}
-            style={{ background: dragging ? C.indigoLight : C.surface,
-              border:`2px dashed ${dragging ? C.indigo : C.borderStrong}`,
-              borderRadius:16, padding:"48px 28px",
-              display:"flex", flexDirection:"column", alignItems:"center",
-              justifyContent:"center", gap:12, cursor:"pointer",
-              transition:"all 0.15s", boxShadow:"0 2px 8px rgba(0,0,0,0.04)" }}>
-            <input ref={fileRef} type="file" accept="image/*" style={{ display:"none" }}
-              onChange={()=>setStatus("pending")}/>
-            <div style={{ width:56, height:56, borderRadius:16, background:C.indigoLight,
-              display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <Image size={26} color={C.indigo} strokeWidth={1.8}/>
-            </div>
-            <div style={{ textAlign:"center" }}>
-              <p style={{ fontFamily:"Manrope, sans-serif", fontSize:15, fontWeight:800,
-                color:C.text, margin:"0 0 4px" }}>
-                {dragging ? "Drop to upload" : "Drop image here, or click to browse"}
-              </p>
-              <p style={{ fontFamily:"Manrope, sans-serif", fontSize:12,
-                color:C.textMuted, margin:0 }}>
-                PNG, JPG, PDF — max 10 MB. Supports handwritten math & diagrams.
-              </p>
-            </div>
-            <div style={{ display:"flex", gap:8, marginTop:4 }}>
-              {["Math Equations","Flowcharts","Code Snippets","Diagrams"].map(t=>(
-                <span key={t} style={{ background:C.bg, border:`1px solid ${C.border}`,
-                  borderRadius:20, padding:"3px 10px", fontFamily:"Manrope, sans-serif",
-                  fontSize:11, fontWeight:600, color:C.textMuted }}>{t}</span>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16,
-            overflow:"hidden", boxShadow:"0 2px 8px rgba(0,0,0,0.04)", flex:1, display:"flex",
-            flexDirection:"column", minHeight:280 }}>
-            {/* Editor header */}
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-              padding:"10px 16px", background:"#1E2130",
-              borderBottom:"1px solid rgba(255,255,255,0.08)" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <Code2 size={14} color="rgba(255,255,255,0.4)" strokeWidth={2}/>
-                <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:700,
-                  color:"rgba(255,255,255,0.5)" }}>student_submission.py</span>
-              </div>
-              <div style={{ display:"flex", gap:6 }}>
-                {["Python","JavaScript","Java","C++","Math"].map(lang=>(
-                  <span key={lang} style={{ padding:"2px 8px", borderRadius:6,
-                    background:lang==="Python"?"rgba(91,61,246,0.35)":"rgba(255,255,255,0.06)",
-                    border:`1px solid ${lang==="Python"?"rgba(91,61,246,0.5)":"transparent"}`,
-                    fontFamily:"Manrope, sans-serif", fontSize:10, fontWeight:700,
-                    color:lang==="Python"?"#A08FFF":"rgba(255,255,255,0.4)",
-                    cursor:"pointer" }}>{lang}</span>
-                ))}
-              </div>
-            </div>
-            {/* Code area */}
-            <textarea value={code} onChange={e=>setCode(e.target.value)}
-              spellCheck={false}
-              style={{ flex:1, padding:"16px 20px", background:"#1A1D2E", border:"none",
-                fontFamily:"'Courier New', monospace", fontSize:13, lineHeight:1.7,
-                color:"#C8D3F5", resize:"none", outline:"none",
-                minHeight:220 }} />
-          </div>
-        )}
-
-        {/* Analyze button */}
-        <button type="button" onClick={handleAnalyze} disabled={status==="uploading"}
-          style={{ background: status==="uploading"
-            ? "rgba(91,61,246,0.5)" : `linear-gradient(135deg,${C.indigo},${C.indigoDeep})`,
-            border:"none", borderRadius:14, padding:"14px 28px",
-            fontFamily:"Fredoka, sans-serif", fontSize:19, fontWeight:700, color:"#fff",
-            cursor: status==="uploading"?"not-allowed":"pointer",
-            display:"flex", alignItems:"center", justifyContent:"center", gap:10,
-            boxShadow: status!=="uploading" ? "0 4px 16px rgba(91,61,246,0.35)" : "none",
-            transition:"all 0.15s" }}>
-          {status==="uploading"
-            ? <><Loader2 size={18} strokeWidth={2.5}
-                style={{ animation:"spin 1s linear infinite" }}/> Analyzing…</>
-            : <><Sparkles size={18} strokeWidth={2}/> Analyze Submission</>}
-        </button>
-      </div>
-
-      {/* Right: preview + status */}
-      <div style={{ width:280, display:"flex", flexDirection:"column", gap:14 }}>
-        {/* Status */}
-        <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16,
-          padding:"16px 18px", boxShadow:"0 2px 8px rgba(0,0,0,0.04)" }}>
-          <p style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:700,
-            color:C.textMuted, margin:"0 0 10px", textTransform:"uppercase",
-            letterSpacing:"0.06em" }}>Status</p>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <span style={{ background:sc.bg, color:sc.color, border:`1.5px solid ${sc.border}`,
-              borderRadius:20, padding:"5px 14px",
-              fontFamily:"Manrope, sans-serif", fontSize:13, fontWeight:700 }}>
-              {sc.label}
-            </span>
-            {status==="analyzed" && <CheckCircle2 size={18} color={C.green} strokeWidth={2.5}/>}
-            {status==="uploading" && <Loader2 size={18} color={C.yellow}
-              style={{ animation:"spin 1s linear infinite" }} strokeWidth={2}/>}
-          </div>
-          {status==="analyzed" && (
-            <div style={{ marginTop:12, display:"flex", flexDirection:"column", gap:6 }}>
-              {[["Questions graded","1"],["Steps analyzed","6"],["Errors found","2"],
-                ["Confidence","94%"]].map(([k,v])=>(
-                <div key={k} style={{ display:"flex", justifyContent:"space-between",
-                  padding:"5px 0", borderBottom:`1px solid ${C.border}` }}>
-                  <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12,
-                    color:C.textMuted }}>{k}</span>
-                  <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12,
-                    fontWeight:700, color:C.text }}>{v}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Thumbnail preview */}
-        <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16,
-          padding:"16px 18px", boxShadow:"0 2px 8px rgba(0,0,0,0.04)", flex:1 }}>
-          <p style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:700,
-            color:C.textMuted, margin:"0 0 10px", textTransform:"uppercase",
-            letterSpacing:"0.06em" }}>Preview</p>
-          {/* Synthetic code preview card */}
-          <div style={{ background:"#1A1D2E", borderRadius:12, padding:"14px",
-            border:"1px solid rgba(255,255,255,0.07)", fontSize:11, lineHeight:1.7,
-            fontFamily:"'Courier New', monospace" }}>
-            {MOCK_CODE.split("\n").slice(0,6).map((line, i) => (
-              <div key={i} style={{ display:"flex", gap:10 }}>
-                <span style={{ color:"rgba(255,255,255,0.2)", minWidth:16, textAlign:"right",
-                  userSelect:"none" }}>{i+1}</span>
-                <span style={{ color: i===1||i===6 ? "#FF6B8A" : "#C8D3F5",
-                  background: i===1||i===6 ? "rgba(255,71,87,0.08)":"transparent",
-                  borderRadius:3, paddingInline:2 }}>{line}</span>
-              </div>
-            ))}
-            <div style={{ color:"rgba(255,255,255,0.2)", marginTop:4 }}>···</div>
-          </div>
-          <div style={{ marginTop:10, display:"flex", gap:8, flexWrap:"wrap" }}>
-            <span style={{ background:C.indigoLight, color:C.indigo, border:`1px solid ${C.indigoBorder}`,
-              borderRadius:20, padding:"2px 9px", fontFamily:"Manrope, sans-serif",
-              fontSize:10, fontWeight:700 }}>Python</span>
-            <span style={{ background:C.bg, color:C.textMuted, border:`1px solid ${C.border}`,
-              borderRadius:20, padding:"2px 9px", fontFamily:"Manrope, sans-serif",
-              fontSize:10, fontWeight:600 }}>14 lines</span>
-            <span style={{ background:C.redLight, color:C.red, border:`1px solid ${C.redBorder}`,
-              borderRadius:20, padding:"2px 9px", fontFamily:"Manrope, sans-serif",
-              fontSize:10, fontWeight:700 }}>2 errors</span>
-          </div>
-        </div>
-
-        {/* Student info */}
-        <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16,
-          padding:"14px 18px", boxShadow:"0 2px 8px rgba(0,0,0,0.04)" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ width:36, height:36, borderRadius:"50%", background:"#5B3DF6",
-              display:"flex", alignItems:"center", justifyContent:"center",
-              fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:800, color:"#fff" }}>
-              AC
-            </div>
-            <div>
-              <p style={{ fontFamily:"Manrope, sans-serif", fontSize:13, fontWeight:700,
-                color:C.text, margin:0 }}>Ana Cruz</p>
-              <p style={{ fontFamily:"Manrope, sans-serif", fontSize:11,
-                color:C.textMuted, margin:0 }}>CS201-A · Q3 · Binary Search</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Tab 2: Grading ─────────────────────────────────────────────────────────────
-interface Step {
-  num: number; label: string; code: string;
-  status: "correct"|"incorrect"|"warning";
-  feedback?: string; errLine?: number;
-}
-const STEPS: Step[] = [
-  { num:1, label:"Function definition & parameters",
-    code:"def binary_search(arr, target):",
-    status:"correct" },
-  { num:2, label:"Pointer initialization",
-    code:"left, right = 0, len(arr)",
-    status:"incorrect",
-    feedback:"right should be initialized to len(arr) - 1. Using len(arr) as the upper bound causes an index-out-of-range error when arr[mid] is accessed with mid = (0 + len(arr)) // 2.",
-    errLine:0 },
-  { num:3, label:"While loop condition",
-    code:"while left <= right:",
-    status:"correct" },
-  { num:4, label:"Midpoint calculation",
-    code:"mid = (left + right) // 2",
-    status:"correct" },
-  { num:5, label:"Comparison & pointer update",
-    code:"elif arr[mid] < target:\n    left = mid + 1\nelse:\n    right = mid - 1",
-    status:"warning",
-    feedback:"The right = mid - 1 update is correct here, but because of the initialization error in Step 2, the search range is off by one, causing incorrect results on edge-case inputs.",
-    errLine:3 },
-  { num:6, label:"Return statement",
-    code:"return -1",
-    status:"correct" },
-];
-
-const GRADE_CONFIG = { grade:"C+", score:68, color:C.yellow, bg:C.yellowLight,
-  border:"rgba(255,201,60,0.35)" };
-
-function GradingTab() {
-  const [expanded, setExpanded] = useState<number[]>([2, 5]);
-  const [zoom, setZoom]         = useState(1);
-  const toggle = (n:number) =>
-    setExpanded(e => e.includes(n) ? e.filter(x=>x!==n) : [...e,n]);
-
-  const statusIcon = (s:Step["status"]) => {
-    if (s==="correct")   return <CheckCircle2 size={18} color={C.green} strokeWidth={2.5}/>;
-    if (s==="incorrect") return <XCircle      size={18} color={C.red}   strokeWidth={2.5}/>;
-    return                      <AlertTriangle size={18} color={C.yellow} strokeWidth={2.5}/>;
-  };
-  const statusBg = (s:Step["status"]) =>
-    s==="correct" ? C.greenLight : s==="incorrect" ? C.redLight : C.yellowLight;
-  const statusBorder = (s:Step["status"]) =>
-    s==="correct" ? C.greenBorder : s==="incorrect" ? C.redBorder : "rgba(255,201,60,0.3)";
-
-  return (
-    <div style={{ display:"flex", gap:20, flex:1, overflow:"hidden" }}>
-      {/* Left: step-by-step */}
-      <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:10 }}>
-        {/* Header strip */}
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-          background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16,
-          padding:"14px 20px", boxShadow:"0 2px 8px rgba(0,0,0,0.04)", flexShrink:0 }}>
-          <div>
-            <p style={{ fontFamily:"Manrope, sans-serif", fontSize:11, fontWeight:700,
-              color:C.textMuted, margin:"0 0 3px", textTransform:"uppercase",
-              letterSpacing:"0.06em" }}>Step-by-Step Review</p>
-            <p style={{ fontFamily:"Manrope, sans-serif", fontSize:14, fontWeight:700,
-              color:C.text, margin:0 }}>Binary Search · Ana Cruz · CS201-A</p>
-          </div>
-          <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-            {[["correct",C.green,"2 Correct"],["incorrect",C.red,"1 Error"],
-              ["warning",C.yellow,"1 Warning"]].map(([s,c,l])=>(
-              <div key={s as string} style={{ display:"flex", alignItems:"center", gap:5 }}>
-                {statusIcon(s as Step["status"])}
-                <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:700,
-                  color:c as string }}>{l}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Steps */}
-        {STEPS.map(step => {
-          const isOpen = expanded.includes(step.num);
-          const hasDetail = !!step.feedback;
-          return (
-            <div key={step.num} style={{ background:C.surface,
-              border:`1.5px solid ${hasDetail ? statusBorder(step.status) : C.border}`,
-              borderRadius:16, overflow:"hidden",
-              boxShadow: hasDetail ? `0 2px 12px ${statusBg(step.status)}` : "0 2px 8px rgba(0,0,0,0.03)" }}>
-              {/* Step header */}
-              <div onClick={()=>hasDetail&&toggle(step.num)}
-                style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"14px 18px",
-                  cursor:hasDetail?"pointer":"default",
-                  background: isOpen ? statusBg(step.status) : "transparent",
-                  transition:"background 0.15s" }}>
-                {/* Number badge */}
-                <div style={{ width:28, height:28, borderRadius:8, background:C.bg,
-                  border:`1.5px solid ${C.border}`, display:"flex", alignItems:"center",
-                  justifyContent:"center", flexShrink:0,
-                  fontFamily:"Fredoka, sans-serif", fontSize:15, fontWeight:700,
-                  color:C.textMid, marginTop:1 }}>
-                  {step.num}
-                </div>
-                {/* Status icon */}
-                <div style={{ flexShrink:0, marginTop:3 }}>{statusIcon(step.status)}</div>
-                {/* Label + code snippet */}
-                <div style={{ flex:1, minWidth:0 }}>
-                  <p style={{ fontFamily:"Manrope, sans-serif", fontSize:14, fontWeight:700,
-                    color:C.text, margin:"0 0 5px" }}>{step.label}</p>
-                  <div style={{ background:"#1A1D2E", borderRadius:8, padding:"7px 12px",
-                    fontFamily:"'Courier New', monospace", fontSize:12, color:"#C8D3F5",
-                    lineHeight:1.6, display:"flex", flexDirection:"column" }}>
-                    {step.code.split("\n").map((ln, i) => (
-                      <span key={i} style={{
-                        background: i === (step.errLine ?? -1)
-                          ? "rgba(255,71,87,0.18)" : "transparent",
-                        borderRadius:4, paddingInline:2,
-                        color: i === (step.errLine ?? -1) ? "#FF8090" : "#C8D3F5",
-                      }}>{ln}</span>
-                    ))}
-                  </div>
-                </div>
-                {hasDetail && (
-                  <div style={{ flexShrink:0, marginTop:3, color:C.textMuted }}>
-                    {isOpen ? <ChevronDown size={16} strokeWidth={2.5}/>
-                             : <ChevronRight size={16} strokeWidth={2.5}/>}
-                  </div>
-                )}
-              </div>
-
-              {/* Expanded feedback bubble */}
-              {isOpen && step.feedback && (
-                <div style={{ padding:"0 18px 16px 18px" }}>
-                  <div style={{ display:"flex", gap:10, background:statusBg(step.status),
-                    border:`1.5px solid ${statusBorder(step.status)}`,
-                    borderRadius:12, padding:"12px 14px" }}>
-                    <MessageSquare size={15} strokeWidth={2}
-                      color={step.status==="incorrect"?C.red:C.yellow} style={{ flexShrink:0, marginTop:2 }}/>
-                    <div>
-                      <p style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:800,
-                        color:step.status==="incorrect"?C.red:C.yellow, margin:"0 0 4px" }}>
-                        {step.status==="incorrect" ? "Error Detected" : "Warning"}
-                      </p>
-                      <p style={{ fontFamily:"Manrope, sans-serif", fontSize:13, fontWeight:500,
-                        color:C.textMid, margin:0, lineHeight:1.65 }}>
-                        {step.feedback}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Right: annotated viewer + grade */}
-      <div style={{ width:300, display:"flex", flexDirection:"column", gap:14, overflowY:"auto" }}>
-        {/* Grade badge */}
-        <div style={{ background:C.surface, border:`2px solid ${GRADE_CONFIG.border}`,
-          borderRadius:18, padding:"18px 20px",
-          background:GRADE_CONFIG.bg,
-          boxShadow:`0 4px 16px ${GRADE_CONFIG.bg}` } as React.CSSProperties}>
-          <p style={{ fontFamily:"Manrope, sans-serif", fontSize:11, fontWeight:700,
-            color:C.textMuted, margin:"0 0 8px", textTransform:"uppercase",
-            letterSpacing:"0.06em" }}>Overall Grade</p>
-          <div style={{ display:"flex", alignItems:"baseline", gap:10 }}>
-            <span style={{ fontFamily:"Fredoka, sans-serif", fontSize:52, fontWeight:700,
-              color:GRADE_CONFIG.color, lineHeight:1 }}>{GRADE_CONFIG.grade}</span>
-            <span style={{ fontFamily:"Fredoka, sans-serif", fontSize:28, fontWeight:700,
-              color:"rgba(0,0,0,0.3)" }}>{GRADE_CONFIG.score}/100</span>
-          </div>
-          <div style={{ marginTop:12, display:"flex", flexDirection:"column", gap:4 }}>
-            {[["Logic & Approach","80%",C.green],
-              ["Correctness","55%",C.red],
-              ["Code Quality","70%",C.yellow]].map(([label,pct,color])=>(
-              <div key={label as string}>
-                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
-                  <span style={{ fontFamily:"Manrope, sans-serif", fontSize:11,
-                    color:C.textMid, fontWeight:600 }}>{label}</span>
-                  <span style={{ fontFamily:"Manrope, sans-serif", fontSize:11,
-                    fontWeight:700, color:color as string }}>{pct}</span>
-                </div>
-                <div style={{ height:5, background:"rgba(0,0,0,0.08)", borderRadius:50 }}>
-                  <div style={{ height:"100%", width:pct as string, background:color as string,
-                    borderRadius:50, transition:"width 0.6s ease-out" }}/>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Annotated code viewer */}
-        <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16,
-          overflow:"hidden", boxShadow:"0 2px 8px rgba(0,0,0,0.04)", flex:1 }}>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-            padding:"10px 14px", borderBottom:`1px solid ${C.border}`, background:C.bg }}>
-            <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:800,
-              color:C.text }}>Annotated View</span>
-            <div style={{ display:"flex", gap:5 }}>
-              <button type="button" onClick={()=>setZoom(z=>Math.max(0.75,z-0.1))}
-                style={{ width:26, height:26, borderRadius:6, border:`1px solid ${C.border}`,
-                  background:"transparent", cursor:"pointer", display:"flex", alignItems:"center",
-                  justifyContent:"center", color:C.textMuted }}>
-                <ZoomOut size={12} strokeWidth={2}/>
-              </button>
-              <span style={{ fontFamily:"Manrope, sans-serif", fontSize:11, fontWeight:700,
-                color:C.textMuted, lineHeight:"26px" }}>{Math.round(zoom*100)}%</span>
-              <button type="button" onClick={()=>setZoom(z=>Math.min(1.5,z+0.1))}
-                style={{ width:26, height:26, borderRadius:6, border:`1px solid ${C.border}`,
-                  background:"transparent", cursor:"pointer", display:"flex", alignItems:"center",
-                  justifyContent:"center", color:C.textMuted }}>
-                <ZoomIn size={12} strokeWidth={2}/>
-              </button>
-            </div>
-          </div>
-          <div style={{ padding:"12px", background:"#1A1D2E", overflow:"auto",
-            transformOrigin:"top left" }}>
-            <div style={{ transform:`scale(${zoom})`, transformOrigin:"top left",
-              transition:"transform 0.15s" }}>
-              {MOCK_CODE.split("\n").map((line, i) => {
-                const isErr = i===1 || i===7;
-                const isWarn = i===7;
-                return (
-                  <div key={i} style={{ display:"flex", gap:8, position:"relative",
-                    background:isErr?"rgba(255,71,87,0.1)":"transparent",
-                    borderLeft:isErr?`3px solid ${isWarn?C.yellow:C.red}`:"3px solid transparent",
-                    paddingLeft:4, marginLeft:-4 }}>
-                    <span style={{ color:"rgba(255,255,255,0.2)", minWidth:18,
-                      fontFamily:"'Courier New', monospace", fontSize:12, userSelect:"none",
-                      flexShrink:0 }}>{i+1}</span>
-                    <span style={{ fontFamily:"'Courier New', monospace", fontSize:12,
-                      color: isErr ? (isWarn?"#FFD080":"#FF8090") : "#C8D3F5",
-                      lineHeight:1.7, flex:1 }}>{line || " "}</span>
-                    {isErr && (
-                      <div style={{ position:"absolute", right:-4, top:2,
-                        width:16, height:16, borderRadius:"50%",
-                        background:isWarn?C.yellow:C.red, display:"flex",
-                        alignItems:"center", justifyContent:"center" }}>
-                        <span style={{ color:"#fff", fontSize:9, fontWeight:800 }}>!</span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          {/* Error legend */}
-          <div style={{ padding:"10px 14px", borderTop:`1px solid ${C.border}`,
-            display:"flex", flexDirection:"column", gap:5 }}>
-            {[{color:C.red,label:"Line 2 — Index out of bounds (right = len(arr))"},
-              {color:C.yellow,label:"Line 8 — Edge case failure due to Step 2 error"}].map(e=>(
-              <div key={e.label} style={{ display:"flex", alignItems:"flex-start", gap:7 }}>
-                <div style={{ width:8, height:8, borderRadius:"50%", background:e.color,
-                  marginTop:4, flexShrink:0 }}/>
-                <span style={{ fontFamily:"Manrope, sans-serif", fontSize:11,
-                  color:C.textMid, lineHeight:1.5 }}>{e.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Tab 3: Misconception Analysis ─────────────────────────────────────────────
-interface MisconceptionRow {
-  id:number; student:string; initials:string; color:string;
-  question:string; type:string; quiz:string; topic:string; date:string;
-}
-const MISCONCEPTION_ROWS: MisconceptionRow[] = [
-  { id:1,  student:"Ana Cruz",      initials:"AC", color:"#5B3DF6", question:"Q3 Binary Search",  type:"Off-by-One",            quiz:"Quiz 4", topic:"Searching", date:"Jul 24" },
-  { id:2,  student:"Carlos Bato",   initials:"CB", color:"#FF6B4A", question:"Q1 Loop Condition", type:"Logical Error",         quiz:"Quiz 4", topic:"Loops",     date:"Jul 24" },
-  { id:3,  student:"Maria Santos",  initials:"MS", color:"#2ED47A", question:"Q5 Recursion Base", type:"Off-by-One",            quiz:"Quiz 4", topic:"Recursion", date:"Jul 24" },
-  { id:4,  student:"Juan Dela T.",  initials:"JD", color:"#FFC93C", question:"Q2 Pointer Init",   type:"Sign Error",            quiz:"Quiz 4", topic:"Searching", date:"Jul 24" },
-  { id:5,  student:"Bea Reyes",     initials:"BR", color:"#B06EF6", question:"Q4 Merge Sort",     type:"Computational Mistake", quiz:"Quiz 3", topic:"Sorting",   date:"Jul 20" },
-  { id:6,  student:"Leo Tan",       initials:"LT", color:"#5BC8F6", question:"Q1 Array Access",   type:"Off-by-One",            quiz:"Quiz 3", topic:"Arrays",    date:"Jul 20" },
-  { id:7,  student:"Ana Cruz",      initials:"AC", color:"#5B3DF6", question:"Q2 Factorial",      type:"Logical Error",         quiz:"Quiz 3", topic:"Recursion", date:"Jul 20" },
-  { id:8,  student:"Maria Santos",  initials:"MS", color:"#2ED47A", question:"Q3 Stack Push",     type:"Syntax Error",          quiz:"Quiz 3", topic:"Stacks",    date:"Jul 20" },
-  { id:9,  student:"Carlos Bato",   initials:"CB", color:"#FF6B4A", question:"Q5 Bubble Sort",    type:"Computational Mistake", quiz:"Quiz 2", topic:"Sorting",   date:"Jul 15" },
-  { id:10, student:"Juan Dela T.",  initials:"JD", color:"#FFC93C", question:"Q4 Queue Dequeue",  type:"Conceptual Gap",        quiz:"Quiz 2", topic:"Queues",    date:"Jul 15" },
-];
-
-const CHART_DATA = [
-  { name:"Off-by-One",  count:14, color:"#C47A00" },
-  { name:"Logical Error",count:11, color:"#1A8C4E" },
-  { name:"Sign Error",  count:8,  color:"#D64242"  },
-  { name:"Syntax Error",count:7,  color:"#5044CC"  },
-  { name:"Comp. Mistake",count:6, color:"#A0359A"  },
-  { name:"Conceptual Gap",count:4,color:"#1A72A8"  },
-];
-
-const FILTER_CLASSES  = ["All Classes","CS201-A","CS201-B","CS301-A"];
-const FILTER_TOPICS   = ["All Topics","Searching","Sorting","Recursion","Arrays","Loops"];
-const FILTER_QUIZZES  = ["All Quizzes","Quiz 2","Quiz 3","Quiz 4"];
-const FILTER_TYPES    = ["All Types","Off-by-One","Logical Error","Sign Error","Syntax Error","Computational Mistake","Conceptual Gap"];
-
-interface CustomTooltipProps { active?:boolean; payload?:{value:number}[]; label?:string; }
-function CustomBarTooltip({ active, payload, label }: CustomTooltipProps) {
-  if (!active||!payload?.length) return null;
-  return (
-    <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:10,
-      padding:"8px 12px", boxShadow:"0 4px 12px rgba(0,0,0,0.12)" }}>
-      <p style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:700,
-        color:C.text, margin:"0 0 2px" }}>{label}</p>
-      <p style={{ fontFamily:"Fredoka, sans-serif", fontSize:18, fontWeight:700,
-        color:C.indigo, margin:0 }}>{payload[0].value} instances</p>
-    </div>
-  );
-}
-
-function MisconceptionTab() {
-  const [classFilter, setClassFilter]   = useState("All Classes");
-  const [topicFilter, setTopicFilter]   = useState("All Topics");
-  const [quizFilter, setQuizFilter]     = useState("All Quizzes");
-  const [typeFilter, setTypeFilter]     = useState("All Types");
-  const [exportHover, setExportHover]   = useState(false);
-
-  const filtered = MISCONCEPTION_ROWS.filter(r =>
-    (quizFilter==="All Quizzes" || r.quiz===quizFilter) &&
-    (topicFilter==="All Topics" || r.topic===topicFilter) &&
-    (typeFilter==="All Types"   || r.type===typeFilter)
-  );
-
-  return (
-    <div style={{ display:"flex", gap:20, flex:1, overflow:"hidden" }}>
-      {/* Left: student answer + AI summary */}
-      <div style={{ width:300, display:"flex", flexDirection:"column", gap:14,
-        overflowY:"auto", flexShrink:0 }}>
-        {/* Student answer */}
-        <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16,
-          padding:"16px 18px", boxShadow:"0 2px 8px rgba(0,0,0,0.04)" }}>
-          <p style={{ fontFamily:"Manrope, sans-serif", fontSize:11, fontWeight:700,
-            color:C.textMuted, margin:"0 0 10px", textTransform:"uppercase",
-            letterSpacing:"0.06em" }}>Student Answer</p>
-          <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:12 }}>
-            <div style={{ width:34, height:34, borderRadius:"50%", background:"#5B3DF6",
-              display:"flex", alignItems:"center", justifyContent:"center",
-              fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:800, color:"#fff" }}>AC</div>
-            <div>
-              <p style={{ fontFamily:"Manrope, sans-serif", fontSize:13, fontWeight:700,
-                color:C.text, margin:0 }}>Ana Cruz</p>
-              <p style={{ fontFamily:"Manrope, sans-serif", fontSize:11,
-                color:C.textMuted, margin:0 }}>Q3 Binary Search · Quiz 4</p>
-            </div>
-          </div>
-          <div style={{ background:"#1A1D2E", borderRadius:10, padding:"10px 12px",
-            fontFamily:"'Courier New', monospace", fontSize:12, lineHeight:1.7 }}>
-            {MOCK_CODE.split("\n").slice(0,4).map((l,i)=>(
-              <div key={i} style={{
-                background:i===1?"rgba(255,71,87,0.12)":"transparent",
-                borderRadius:3, paddingInline:2,
-                color:i===1?"#FF8090":"#C8D3F5" }}>{l}</div>
-            ))}
-            <div style={{ color:"rgba(255,255,255,0.2)" }}>···</div>
-          </div>
-        </div>
-
-        {/* AI Misconception card */}
-        <div style={{ background:`linear-gradient(145deg,rgba(91,61,246,0.07),rgba(91,61,246,0.02))`,
-          border:`2px solid ${C.indigoBorder}`, borderRadius:16,
-          padding:"16px 18px", boxShadow:"0 4px 16px rgba(91,61,246,0.07)" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
-            <Brain size={16} color={C.indigo} strokeWidth={2}/>
-            <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:800,
-              color:C.indigo, textTransform:"uppercase", letterSpacing:"0.06em" }}>
-              AI Analysis
-            </span>
-          </div>
-          <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
-            <MisconceptionBadge type="Off-by-One"/>
-            <MisconceptionBadge type="Sign Error"/>
-          </div>
-          <p style={{ fontFamily:"Manrope, sans-serif", fontSize:13, fontWeight:500,
-            color:C.textMid, margin:"0 0 12px", lineHeight:1.7 }}>
-            The student initialized <code style={{ background:C.bg, borderRadius:4,
-              padding:"1px 5px", fontFamily:"'Courier New', monospace", fontSize:11 }}>
-              right = len(arr)</code> instead of <code style={{ background:C.bg, borderRadius:4,
-              padding:"1px 5px", fontFamily:"'Courier New', monospace", fontSize:11 }}>
-              len(arr) - 1</code>, a classic off-by-one boundary error. This suggests the student
-            understands the binary search concept but has an incomplete mental model of
-            zero-indexed array bounds.
-          </p>
-          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-            <p style={{ fontFamily:"Manrope, sans-serif", fontSize:11, fontWeight:800,
-              color:C.text, margin:"0 0 4px", textTransform:"uppercase",
-              letterSpacing:"0.05em" }}>Suggested Remediation</p>
-            {["Review 0-indexed array boundary rules",
-              "Practice tracing invariants with dry-runs",
-              "Assign off-by-one targeted exercises"].map(s=>(
-              <div key={s} style={{ display:"flex", alignItems:"flex-start", gap:7 }}>
-                <div style={{ width:5, height:5, borderRadius:"50%", background:C.indigo,
-                  marginTop:5, flexShrink:0 }}/>
-                <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12,
-                  color:C.textMid, lineHeight:1.5 }}>{s}</span>
-              </div>
-            ))}
-          </div>
-          <div style={{ marginTop:12, padding:"8px 12px", background:C.indigoLight,
-            border:`1px solid ${C.indigoBorder}`, borderRadius:10,
-            display:"flex", alignItems:"center", gap:7 }}>
-            <Sparkles size={13} color={C.indigo} strokeWidth={2}/>
-            <span style={{ fontFamily:"Manrope, sans-serif", fontSize:11, fontWeight:700,
-              color:C.indigo }}>Confidence: 94% · GPT-4o analysis</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Right: chart + table */}
-      <div style={{ flex:1, display:"flex", flexDirection:"column", gap:14, overflowY:"auto" }}>
-        {/* Filters + export row */}
-        <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", flexShrink:0 }}>
-          <Filter size={14} color={C.textMuted} strokeWidth={2}/>
-          {([
-            [classFilter, setClassFilter, FILTER_CLASSES],
-            [topicFilter, setTopicFilter, FILTER_TOPICS],
-            [quizFilter,  setQuizFilter,  FILTER_QUIZZES],
-            [typeFilter,  setTypeFilter,  FILTER_TYPES],
-          ] as const).map(([val, setter, options], fi) => (
-            <div key={fi} style={{ position:"relative" }}>
-              <select value={val as string}
-                onChange={e => (setter as (v:string)=>void)(e.target.value)}
-                style={{ appearance:"none", background:C.surface, border:`1.5px solid ${C.border}`,
-                  borderRadius:20, padding:"6px 28px 6px 12px", fontFamily:"Manrope, sans-serif",
-                  fontSize:12, fontWeight:700, color:C.text, cursor:"pointer", outline:"none",
-                  boxShadow:"0 1px 4px rgba(0,0,0,0.04)" }}>
-                {(options as readonly string[]).map(o=>(
-                  <option key={o} value={o}>{o}</option>
-                ))}
-              </select>
-              <ChevronDown size={12} color={C.textMuted} style={{ position:"absolute",
-                right:9, top:"50%", transform:"translateY(-50%)", pointerEvents:"none" }}/>
-            </div>
-          ))}
-          <button type="button"
-            onMouseEnter={()=>setExportHover(true)}
-            onMouseLeave={()=>setExportHover(false)}
-            style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:7,
-              padding:"7px 16px", borderRadius:20, cursor:"pointer",
-              background: exportHover ? C.indigoLight : "transparent",
-              border:`1.5px solid ${exportHover ? C.indigo : C.borderStrong}`,
-              fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:700,
-              color: exportHover ? C.indigo : C.textMid, transition:"all 0.15s" }}>
-            <Download size={13} strokeWidth={2.5}/>
-            Export Analytics
-          </button>
-        </div>
-
-        {/* Bar chart card */}
-        <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16,
-          padding:"18px 20px", boxShadow:"0 2px 8px rgba(0,0,0,0.04)", flexShrink:0 }}>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-            marginBottom:16 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              <BarChart2 size={16} color={C.indigo} strokeWidth={2}/>
-              <span style={{ fontFamily:"Manrope, sans-serif", fontSize:14, fontWeight:800,
-                color:C.text }}>Common Misconceptions This Class</span>
-            </div>
-            <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:600,
-              color:C.textMuted }}>CS201-A · All Quizzes</span>
-          </div>
-          <ResponsiveContainer width="100%" height={190}>
-            <BarChart key="misconception-bar" data={CHART_DATA} layout="vertical"
-              margin={{ top:0, right:40, bottom:0, left:20 }}>
-              <CartesianGrid key="grid" strokeDasharray="3 3"
-                horizontal={false} stroke={C.border}/>
-              <XAxis key="x" type="number" tick={{ fontFamily:"Manrope, sans-serif",
-                fontSize:11, fill:C.textMuted }} axisLine={false} tickLine={false}/>
-              <YAxis key="y" dataKey="name" type="category" width={110}
-                tick={{ fontFamily:"Manrope, sans-serif", fontSize:11, fill:C.textMid }}
-                axisLine={false} tickLine={false}/>
-              <Tooltip key="tooltip" content={<CustomBarTooltip/>}/>
-              <Bar key="bar" dataKey="count" radius={[0,6,6,0]} barSize={18}>
-                {CHART_DATA.map((entry, i) => (
-                  <Cell key={`cell-${i}`} fill={entry.color} fillOpacity={0.82}/>
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* History table */}
-        <div style={{ background:C.surface, border:`1.5px solid ${C.border}`, borderRadius:16,
-          overflow:"hidden", boxShadow:"0 2px 8px rgba(0,0,0,0.04)", flex:1 }}>
-          {/* Table header */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1.4fr 1fr 1fr 80px",
-            gap:0, padding:"11px 18px",
-            background:C.bg, borderBottom:`1.5px solid ${C.border}` }}>
-            {["Student","Question","Type","Quiz","Date"].map((h,i)=>(
-              <span key={h} style={{ fontFamily:"Manrope, sans-serif", fontSize:11, fontWeight:700,
-                color:C.textMuted, textTransform:"uppercase", letterSpacing:"0.05em",
-                textAlign:i===4?"center":"left" }}>{h}</span>
-            ))}
-          </div>
-
-          {/* Rows */}
-          <div style={{ overflowY:"auto" }}>
-            {filtered.map((row, idx) => (
-              <div key={row.id} style={{
-                display:"grid", gridTemplateColumns:"1fr 1.4fr 1fr 1fr 80px",
-                gap:0, padding:"11px 18px", alignItems:"center",
-                borderBottom: idx < filtered.length-1 ? `1px solid ${C.border}` : "none",
-                background: idx%2===0 ? C.surface : C.bg,
-                transition:"background 0.1s",
-              }}
-                onMouseEnter={e=>(e.currentTarget as HTMLElement).style.background="#EFF1FC"}
-                onMouseLeave={e=>(e.currentTarget as HTMLElement).style.background=idx%2===0?C.surface:C.bg}
-              >
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <div style={{ width:28, height:28, borderRadius:"50%", background:row.color,
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    fontFamily:"Manrope, sans-serif", fontSize:10, fontWeight:800, color:"#fff",
-                    flexShrink:0 }}>{row.initials}</div>
-                  <span style={{ fontFamily:"Manrope, sans-serif", fontSize:13, fontWeight:600,
-                    color:C.text, overflow:"hidden", textOverflow:"ellipsis",
-                    whiteSpace:"nowrap" }}>{row.student}</span>
-                </div>
-                <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12,
-                  color:C.textMid, overflow:"hidden", textOverflow:"ellipsis",
-                  whiteSpace:"nowrap" }}>{row.question}</span>
-                <div><MisconceptionBadge type={row.type} size="sm"/></div>
-                <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12,
-                  color:C.textMuted, fontWeight:500 }}>{row.quiz}</span>
-                <span style={{ fontFamily:"Manrope, sans-serif", fontSize:11,
-                  color:C.textMuted, textAlign:"center" }}>{row.date}</span>
-              </div>
-            ))}
-            {filtered.length === 0 && (
-              <div style={{ padding:"32px", textAlign:"center" }}>
-                <p style={{ fontFamily:"Manrope, sans-serif", fontSize:14,
-                  color:C.textMuted }}>No records match the selected filters.</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Root Component ─────────────────────────────────────────────────────────────
-type TabId = "submission" | "grading" | "analysis";
-const TABS: { id:TabId; icon:React.ReactNode; label:string; sub:string }[] = [
-  { id:"submission", icon:<Upload size={15} strokeWidth={2}/>,    label:"Submission",             sub:"Upload & preview" },
-  { id:"grading",    icon:<CheckCircle2 size={15} strokeWidth={2}/>, label:"Grading",             sub:"Step-by-step review" },
-  { id:"analysis",   icon:<Brain size={15} strokeWidth={2}/>,     label:"Misconception Analysis", sub:"AI-powered insights" },
-];
-
-export function SolutionAnalyzer() {
-  const [tab, setTab] = useState<TabId>("submission");
-
-  return (
-    <>
-      <style>{`
-        @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
-        @keyframes fadeIn{ 0%{opacity:0;transform:translateY(6px)} 100%{opacity:1;transform:translateY(0)} }
-        select option { background: #fff; color: #1B1E2B; }
-      `}</style>
-      <div style={{ display:"flex", height:"100vh", overflow:"hidden",
-        fontFamily:"Manrope, sans-serif", background:C.bg }}>
-        <Sidebar/>
-
-        {/* Main content */}
-        <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
-          {/* Top bar */}
-          <div style={{ background:C.surface, borderBottom:`1.5px solid ${C.border}`,
-            padding:"14px 28px", display:"flex", alignItems:"center",
-            justifyContent:"space-between", flexShrink:0 }}>
-            <div>
-              <h1 style={{ fontFamily:"Manrope, sans-serif", fontSize:22, fontWeight:800,
-                color:C.text, margin:0 }}>Solution Analyzer</h1>
-              <p style={{ fontFamily:"Manrope, sans-serif", fontSize:13, color:C.textMuted,
-                margin:"3px 0 0" }}>
-                AI-powered grading &amp; misconception detection
-              </p>
-            </div>
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:7,
-                background:C.indigoLight, border:`1.5px solid ${C.indigoBorder}`,
-                borderRadius:20, padding:"6px 14px" }}>
-                <Sparkles size={13} color={C.indigo} strokeWidth={2}/>
-                <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:700,
-                  color:C.indigo }}>AI Grading Active</span>
-              </div>
-              <div style={{ display:"flex", alignItems:"center", gap:7,
-                background:C.bg, border:`1.5px solid ${C.border}`,
-                borderRadius:20, padding:"6px 14px" }}>
-                <Users size={13} color={C.textMuted} strokeWidth={2}/>
-                <span style={{ fontFamily:"Manrope, sans-serif", fontSize:12, fontWeight:600,
-                  color:C.textMid }}>CS201-A · 32 students</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Tab bar */}
-          <div style={{ background:C.surface, borderBottom:`1.5px solid ${C.border}`,
-            padding:"0 28px", display:"flex", gap:4, flexShrink:0 }}>
-            {TABS.map(t => (
-              <button key={t.id} type="button" onClick={()=>setTab(t.id)} style={{
-                padding:"13px 20px", border:"none", background:"transparent",
-                cursor:"pointer", display:"flex", alignItems:"center", gap:8,
-                borderBottom:`3px solid ${tab===t.id ? C.indigo : "transparent"}`,
-                transition:"border-color 0.15s", marginBottom:-1,
-              }}>
-                <span style={{ color: tab===t.id ? C.indigo : C.textMuted }}>{t.icon}</span>
-                <div style={{ textAlign:"left" }}>
-                  <p style={{ fontFamily:"Manrope, sans-serif", fontSize:13, fontWeight:800,
-                    color: tab===t.id ? C.indigo : C.textMid, margin:0, lineHeight:1.2 }}>
-                    {t.label}
-                  </p>
-                  <p style={{ fontFamily:"Manrope, sans-serif", fontSize:11,
-                    color:C.textMuted, margin:0, lineHeight:1.2 }}>{t.sub}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          {/* Tab content */}
-          <div style={{ flex:1, padding:"20px 28px", overflow:"hidden", display:"flex",
-            flexDirection:"column", animation:"fadeIn 0.25s ease-out" }}
-            key={tab}>
-            {tab==="submission" && <SubmissionTab/>}
-            {tab==="grading"    && <GradingTab/>}
-            {tab==="analysis"   && <MisconceptionTab/>}
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-
 --- FILE: src\components\shared\ProfSidebar.tsx ---
 
 "use client";
@@ -14758,7 +13932,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "questions",    icon: <Library         size={17} strokeWidth={2}/>, label: "Question Bank"     },
   { id: "aigen",        icon: <Sparkles        size={17} strokeWidth={2}/>, label: "AI Generator"      },
   { id: "matchmaking",  icon: <Swords          size={17} strokeWidth={2}/>, label: "Matchmaking"       },
-  { id: "analyzer",     icon: <FlaskConical    size={17} strokeWidth={2}/>, label: "Solution Analyzer" },
+
 ];
 
 export function ProfSidebar() {

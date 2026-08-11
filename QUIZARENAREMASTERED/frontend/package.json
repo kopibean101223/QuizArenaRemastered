@@ -6,7 +6,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "dev": "next dev",
+    "dev": "next dev -H 0.0.0.0 -p 3000",
     "server": "tsx watch server.ts"
   },
   "dependencies": {

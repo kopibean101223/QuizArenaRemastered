@@ -9,8 +9,9 @@ import liveBattleHandler, { BattlePayload } from './handlers/LiveBattle';
 import selfPacedBattleHandler, { SelfPacedPayload } from './handlers/OwnPace';
 
 const PORT = Number(process.env.PORT) || 8080;
-const wss = new WebSocketServer({ port: PORT });
+const wss = new WebSocketServer({ port: PORT, host: '0.0.0.0' });
 
+console.log(`Battle WS Server running on port ${PORT}`);
 // Configure Redis options or connection string
 const redisConfig: string | RedisOptions = process.env.REDIS_URL
   ? process.env.REDIS_URL

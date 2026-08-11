@@ -6,11 +6,61 @@ import {
   Trophy, LayoutDashboard, Library, BarChart2, Settings,
   Layers, LogOut, Sparkles, Users, Shuffle, CheckCircle2,
   Download, ChevronDown, Info, AlertTriangle, Zap,
-  ArrowRight, RefreshCw, Shield, TrendingUp, Clock, Copy, Check, Crown, User, Star, Database, Lock, Eye, Loader2
+  ArrowRight, RefreshCw, Shield, TrendingUp, Clock, Copy, Check, Crown, User, Star, Database, Lock, Eye, Loader2, Award, Medal, Wifi
 } from "lucide-react";
 import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
 import { useBotSimulator } from "@/hooks/useBotSimulator";
+
+// ─── Offline Queue Utilities ──────────────────────────────────────────────────
+const OFFLINE_SESSIONS_KEY = "offline_pending_sessions";
+const OFFLINE_RESULTS_KEY = "offline_pending_results";
+
+export function queueOfflineSession(payload: any) {
+  const existing = JSON.parse(localStorage.getItem(OFFLINE_SESSIONS_KEY) || "[]");
+  existing.push({ ...payload, queuedAt: new Date().toISOString() });
+  localStorage.setItem(OFFLINE_SESSIONS_KEY, JSON.stringify(existing));
+}
+
+export function queueOfflineResult(sessionId: string, resultData: any) {
+  const existing = JSON.parse(localStorage.getItem(OFFLINE_RESULTS_KEY) || "[]");
+  existing.push({ sessionId, resultData, queuedAt: new Date().toISOString() });
+  localStorage.setItem(OFFLINE_RESULTS_KEY, JSON.stringify(existing));
+}
+
+export async function processOfflineQueue(supabase: any) {
+  if (typeof window === "undefined" || !navigator.onLine) return;
+
+  // 1. Sync pending sessions created offline
+  const pendingSessions = JSON.parse(localStorage.getItem(OFFLINE_SESSIONS_KEY) || "[]");
+  if (pendingSessions.length > 0) {
+    const remainingSessions = [];
+    for (const session of pendingSessions) {
+      const { queuedAt, ...cleanPayload } = session;
+      const { error } = await supabase.from('quiz_sessions').insert([cleanPayload]);
+      if (error) {
+        remainingSessions.push(session);
+      }
+    }
+    localStorage.setItem(OFFLINE_SESSIONS_KEY, JSON.stringify(remainingSessions));
+  }
+
+  // 2. Sync pending session completions/results
+  const pendingResults = JSON.parse(localStorage.getItem(OFFLINE_RESULTS_KEY) || "[]");
+  if (pendingResults.length > 0) {
+    const remainingResults = [];
+    for (const item of pendingResults) {
+      const { error } = await supabase
+        .from('quiz_sessions')
+        .update({ status: 'COMPLETED' })
+        .eq('id', item.sessionId);
+      if (error) {
+        remainingResults.push(item);
+      }
+    }
+    localStorage.setItem(OFFLINE_RESULTS_KEY, JSON.stringify(remainingResults));
+  }
+}
 
 // ─── Tokens ────────────────────────────────────────────────────────────────────
 const C = {
@@ -23,6 +73,7 @@ const C = {
   navy: "#1B1E2B", offWhite: "#FAFAFC", white: "#FFFFFF",
   muted: "#717182", border: "rgba(0,0,0,0.07)", inputBg: "#F3F3F7",
   indigoDeep: "#4228D4", yellowGlow: "rgba(255,201,60,0.5)",
+  gold: "#FFD700", silver: "#C0C0C0", bronze: "#CD7F32"
 };
 
 interface Student {
@@ -204,6 +255,25 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [previewed, setPreviewed] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
 
+  const [isLanMode, setIsLanMode] = useState(false);
+
+  // Auto-sync queued offline items when connectivity is restored
+useEffect(() => {
+  const handleOnline = () => {
+    toast.info("Network restored! Syncing offline sessions...");
+    processOfflineQueue(supabase);
+  };
+
+  window.addEventListener('online', handleOnline);
+  
+  // Initial check on mount
+  if (navigator.onLine) {
+    processOfflineQueue(supabase);
+  }
+
+  return () => window.removeEventListener('online', handleOnline);
+}, [supabase]);
+
   // Battle Royale is always live — force it and clear any scheduled deadline whenever selected.
   useEffect(() => {
     if (lobbyType === "royale") {
@@ -222,6 +292,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [joinedStudents, setJoinedStudents] = useState<Student[]>([]);
   const [copied, setCopied] = useState(false);
   const [battleStarted, setBattleStarted] = useState(false);
+  const [isCompleted, setIsCompleted] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [timeRemaining, setTimeRemaining] = useState(60);
   const [liveFeed, setLiveFeed] = useState<any[]>([]);
@@ -249,7 +320,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   // Hook handles bots entering channels, voting, chatting and answering dynamically
   const { spawnBots, cleanupBots } = useBotSimulator(sessionId, roomCode, randomizedQuestions, 'LIVE', teamSize);
 
-  // 1. Fetch active session scoped exclusively to THIS professor
+  // 1. Fetch active session scoped exclusively to THIS professor (With Session Storage check)
   useEffect(() => {
     const checkActiveSession = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -257,21 +328,34 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       
       if (!currentProfId) return;
 
-      const { data } = await supabase
-        .from('quiz_sessions')
-        .select('id, section_id, status, is_live, room_code, mode') 
-        .eq('status', 'ACTIVE')
-        .eq('is_live', true)
-        .eq('professor_id', currentProfId)
-        .limit(1);
+      const storedSessionId = sessionStorage.getItem('prof_active_session_id');
+
+      let query = supabase.from('quiz_sessions').select('id, section_id, status, is_live, room_code, mode');
+      
+      if (storedSessionId) {
+          query = query.eq('id', storedSessionId);
+      } else {
+          query = query.eq('status', 'ACTIVE').eq('is_live', true).eq('professor_id', currentProfId).limit(1);
+      }
+
+      const { data } = await query;
 
       if (data && data.length > 0) {
-        setSessionId(data[0].id); 
-        setRoomCode(data[0].room_code);
-        setLobbyType(data[0].mode as LobbyType || "individual");
-        setActiveSessionExists(true);
+        const session = data[0];
+        setSessionId(session.id); 
+        setRoomCode(session.room_code);
+        setLobbyType(session.mode as LobbyType || "individual");
+        setActiveSessionExists(session.status === 'ACTIVE');
         setInLobby(true);
-        setBattleStarted(false); 
+        
+        if (!storedSessionId && session.status === 'ACTIVE') {
+            sessionStorage.setItem('prof_active_session_id', session.id);
+        }
+
+        const storedQuestions = sessionStorage.getItem(`prof_questions_${session.id}`);
+        if (storedQuestions) {
+            setRandomizedQuestions(JSON.parse(storedQuestions));
+        }
       }
     };
     checkActiveSession();
@@ -283,7 +367,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
 
       if (authError || !user) {
-        console.error("No authenticated user found:", authError);
         setSectionsList([{ id: 'none', name: 'Please Log In' }]);
         setSelectedSection({ id: 'none', name: 'Please Log In' });
         setQuestionBanks([{ id: 'default', name: 'Default Question Bank' }]);
@@ -293,14 +376,10 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
 
       const currentUserId = user.id;
 
-      const { data: secData, error: secError } = await supabase
+      const { data: secData } = await supabase
         .from('sections')
         .select('id, name')
         .eq('professor_id', currentUserId); 
-
-      if (secError) {
-        console.error("Error fetching sections:", secError);
-      }
 
       if (secData && secData.length > 0) {
         setSectionsList(secData);
@@ -331,54 +410,72 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     fetchSectionsAndBanks();
   }, [professorId, supabase]);
 
-  // Load and randomize questions
-  useEffect(() => {
+  // Load and randomize questions (Avoid desync if reloading from session)
+useEffect(() => {
     async function loadAndRandomizeQuestions() {
+      if (sessionId && sessionStorage.getItem(`prof_questions_${sessionId}`)) {
+        return; 
+      }
       try {
         const res = await fetch('/api/questions');
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length > 0) {
-            const formatted = data.map((q: any) => {
-              let parsedChoices: string[] = [];
-              try {
-                let rawChoices = q.choices;
-                if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
-                if (Array.isArray(rawChoices)) {
-                  parsedChoices = rawChoices.map((c: any) => {
-                    if (typeof c === 'string') return c;
-                    if (typeof c === 'object' && c !== null) return c.text || c.label || String(c);
-                    return String(c);
-                  });
-                }
-              } catch (e) {
-                parsedChoices = [];
+        if (!res.ok) throw new Error("Network response was not ok");
+        
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const formatted = data.map((q: any) => {
+            let parsedChoices: string[] = [];
+            try {
+              let rawChoices = q.choices;
+              if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
+              if (Array.isArray(rawChoices)) {
+                parsedChoices = rawChoices.map((c: any) => {
+                  if (typeof c === 'string') return c;
+                  if (typeof c === 'object' && c !== null) return c.text || c.label || String(c);
+                  return String(c);
+                });
               }
-              return { ...q, choices: parsedChoices };
-            });
+            } catch (e) {
+              parsedChoices = [];
+            }
+            return { ...q, choices: parsedChoices };
+          });
 
-            const filtered = selectedBank.name && selectedBank.name !== 'Select Question Bank...'
-              ? formatted.filter((q: QuestionItem) => q.topic?.trim().toLowerCase() === selectedBank.name.trim().toLowerCase())
-              : formatted;
+          const filtered = selectedBank.name && selectedBank.name !== 'Select Question Bank...'
+            ? formatted.filter((q: QuestionItem) => q.topic?.trim().toLowerCase() === selectedBank.name.trim().toLowerCase())
+            : formatted;
 
-            const targetQuestions = filtered.length > 0 ? filtered : formatted;
-            const shuffled = shuffleArray(targetQuestions);
-            const fullyRandomized = shuffled.map((q: QuestionItem) => ({
-              ...q,
-              choices: q.choices && q.choices.length > 0 ? shuffleArray(q.choices) : []
-            }));
+          const targetQuestions = filtered.length > 0 ? filtered : formatted;
+          const shuffled = shuffleArray(targetQuestions);
+          const fullyRandomized = shuffled.map((q: QuestionItem) => ({
+            ...q,
+            choices: q.choices && q.choices.length > 0 ? shuffleArray(q.choices) : []
+          }));
 
-            setRandomizedQuestions(fullyRandomized);
-          }
+          // ✅ CACHE ONLINE FETCH TO LOCALSTORAGE
+          localStorage.setItem("cached_prof_questions", JSON.stringify(fullyRandomized));
+          setRandomizedQuestions(fullyRandomized);
         }
       } catch (err) {
-        console.error("Error loading randomized questions for session:", err);
+        console.warn("📴 Offline detected. Loading questions from browser local cache...");
+        
+        // 🔍 FALLBACK: READ FROM LOCALSTORAGE WHEN OFFLINE
+        const cachedData = localStorage.getItem("cached_prof_questions");
+        if (cachedData) {
+          const parsedCache = JSON.parse(cachedData);
+          setRandomizedQuestions(parsedCache);
+        } else {
+          // Ultimate fallback if nothing is cached yet
+          setRandomizedQuestions([
+            { id: 1, text: "Offline Fallback: What is the local IP?", choices: ["192.168.x.x", "127.0.0.1", "0.0.0.0", "All of the above"], answer: "All of the above", topic: "Networking" }
+          ]);
+        }
       }
     }
     loadAndRandomizeQuestions();
-  }, [selectedBank]);
+  }, [selectedBank, sessionId]);
 
   // WebSocket Connection Handler
+// WebSocket Connection Handler
   useEffect(() => {
     if (!inLobby || !sessionId) return;
     
@@ -387,7 +484,10 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
 
     function connectWs() {
       if (!isMounted) return;
-      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
+     const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+
+const wsUrl = process.env.NEXT_PUBLIC_WS_URL || `ws://${host}:8080`;
+const apiUrl = process.env.NEXT_PUBLIC_API_URL || `http://${host}:8000`;
       ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -405,11 +505,31 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
         try {
           const data = JSON.parse(event.data);
           
-          if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'SCORE_UPDATED') {
+          if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'SCORE_UPDATED' || data.type === 'PROF_START_BATTLE') {
             if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
             if (data.history) setLiveFeed(data.history);
             
-            // Handle Live Points Update to populate and sort the Ranking Leaderboard dynamically
+            // --- NEW: Sync Timer on Refresh / Advance ---
+            if (data.startedAt) {
+              const limit = data.timeLimit || 60;
+              const elapsedSeconds = Math.floor((Date.now() - data.startedAt) / 1000);
+              const remaining = Math.max(0, limit - elapsedSeconds);
+              setTimeRemaining(remaining);
+            }
+            
+            if (data.type === 'ROOM_STATE_SYNC') {
+               if (data.status === 'active') {
+                   setBattleStarted(true);
+                   setIsCompleted(false);
+               } else if (data.status === 'completed') {
+                   setBattleStarted(true);
+                   setIsCompleted(true);
+               } else {
+                   setBattleStarted(false);
+                   setIsCompleted(false);
+               }
+            }
+
             if (data.leaderboard && Array.isArray(data.leaderboard)) {
               setJoinedStudents(prev => {
                 const updated = [...prev];
@@ -421,7 +541,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                   if (idx !== -1) {
                     updated[idx] = { ...updated[idx], score: player.score || 0 };
                   } else if (playerId && playerName) {
-                    // Populate missing students immediately on score updates to ensure visual sync
                     updated.push({
                       id: playerId,
                       name: playerName,
@@ -443,7 +562,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
             const rawName = data.rawName || data.sender;
             const isJoinEvent = data.isJoinEvent || (data.message && data.message.includes('joined'));
 
-            // Deduplicate the chat feed to prevent repeating join messages
             setLiveFeed(prev => {
               if (isJoinEvent && data.sender !== 'Professor') {
                 const alreadyInFeed = prev.some(msg => 
@@ -455,7 +573,6 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
               return [data, ...prev];
             });
             
-            // Extract Team Property and maintain unique students
             if (isJoinEvent && data.sender !== 'Professor') {
               setJoinedStudents(prev => {
                 if (prev.some(s => s.id === uniqueId || s.name === rawName)) return prev;
@@ -472,6 +589,20 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                 }];
               });
             } 
+          }
+          else if (data.type === 'QUIZ_COMPLETED' || data.type === 'TEAM_BATTLE_COMPLETED') {
+            setIsCompleted(true);
+            if (data.leaderboard && Array.isArray(data.leaderboard)) {
+              setJoinedStudents(prev => {
+                const updated = [...prev];
+                data.leaderboard.forEach((player: any) => {
+                  const playerId = player.id || player.userId;
+                  const idx = updated.findIndex(p => p.id === playerId);
+                  if (idx !== -1) updated[idx] = { ...updated[idx], score: player.score || 0 };
+                });
+                return updated;
+              });
+            }
           }
         } catch (err) {
           console.error("WS message parse error:", err);
@@ -494,7 +625,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   }, [inLobby, sessionId, randomizedQuestions.length]);
 
   useEffect(() => {
-    if (!battleStarted) return;
+    if (!battleStarted || isCompleted) return;
     const timer = setInterval(() => {
       setTimeRemaining(prev => {
         if (prev <= 1) {
@@ -505,114 +636,132 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [battleStarted, currentIndex, randomizedQuestions.length]);
-   
-async function handleConfirmAndDeploy() {
-    if (activeSessionExists) {
-      return toast.error("A live quiz session is currently active. You must end it before deploying a new one.");
-    }
-    if (!selectedSection.id || selectedSection.id === 'none') {
-      return toast.error("Please select a valid section.");
-    }
-    if (lobbyType === "individual" && !isLive && !deadline) {
-      return toast.error("Please pick a date/time for this scheduled lobby.");
-    }
+  }, [battleStarted, isCompleted, currentIndex, randomizedQuestions.length]);
 
-    setIsDeploying(true);
 
-    try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      const currentProfId = professorId || user?.id;
+  function fetchWithTimeout<T>(promise: Promise<T>, ms = 2500): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("Network timeout")), ms))
+  ]);
+}
 
-      if (!currentProfId || authError) {
-        toast.error("Authentication error: Could not verify your professor identity.");
-        return;
+ async function handleConfirmAndDeploy() {
+  if (activeSessionExists) {
+    return toast.error("A live quiz session is currently active. You must end it before deploying a new one.");
+  }
+  if (!selectedSection.id || selectedSection.id === 'none') {
+    return toast.error("Please select a valid section.");
+  }
+  if (lobbyType === "individual" && !isLive && !deadline) {
+    return toast.error("Please pick a date/time for this scheduled lobby.");
+  }
+
+  setIsDeploying(true);
+
+  try {
+    let currentProfId = professorId;
+    const isOnline = typeof window !== 'undefined' && navigator.onLine;
+
+    if (isOnline) {
+      try {
+        const authRes = await fetchWithTimeout(supabase.auth.getUser(), 2000);
+        if (authRes.data?.user) {
+          currentProfId = currentProfId || authRes.data.user.id;
+        }
+      } catch (authErr) {
+        console.warn("📴 Supabase auth timed out. Fallback to offline mode.");
       }
+    }
 
-      // Collision Check Algorithm
-      let finalRoomCode = roomCode;
-      let isCodeUnique = false;
+    if (!currentProfId) {
+      currentProfId = "offline-lan-professor-id";
+    }
 
-      while (!isCodeUnique) {
-        const { data: existingSession } = await supabase
-          .from('quiz_sessions')
-          .select('id')
-          .eq('room_code', finalRoomCode)
-          .maybeSingle();
+    let finalRoomCode = roomCode;
+    let isCodeUnique = false;
 
-        if (existingSession) {
+    // Check code uniqueness online; skip if offline
+    if (isOnline) {
+      try {
+        const dbCheck = await fetchWithTimeout(
+          supabase.from('quiz_sessions').select('id').eq('room_code', finalRoomCode).maybeSingle(),
+          2000
+        );
+        if (dbCheck.data) {
           finalRoomCode = generateSecureRoomCode();
         } else {
           isCodeUnique = true;
         }
+      } catch (err) {
+        isCodeUnique = true;
       }
-      setRoomCode(finalRoomCode); 
-
-      // Insert payload, falling back to legacy schema if PGRST204 occurs
-      let payload: any = {
-        section_id: selectedSection.id,
-        professor_id: currentProfId, 
-        room_code: finalRoomCode, 
-        is_live: isLive,
-        status: isLive ? 'ACTIVE' : 'PENDING',
-        deadline: isLive ? null : deadline || null,
-        mode: lobbyType,
-        team_size: lobbyType === "team" ? teamSize : null,
-      };
-
-      let { data: sessionData, error: sessionError } = await supabase
-        .from('quiz_sessions')
-        .insert([payload])
-        .select('id')
-        .maybeSingle();
-
-      if (sessionError && sessionError.code === 'PGRST204') {
-        console.warn("Missing 'mode' or 'team_size' columns. Falling back to basic schema.");
-        toast.warning("Database schema needs updating. Launching in compatibility mode.");
-        
-        payload = {
-          section_id: selectedSection.id,
-          professor_id: currentProfId, 
-          room_code: finalRoomCode, 
-          is_live: isLive,
-          status: isLive ? 'ACTIVE' : 'PENDING',
-          deadline: isLive ? null : deadline || null
-        };
-
-        const fallbackResponse = await supabase
-          .from('quiz_sessions')
-          .insert([payload])
-          .select('id')
-          .maybeSingle();
-          
-        sessionData = fallbackResponse.data;
-        sessionError = fallbackResponse.error;
-      }
-
-      if (sessionError) {
-        toast.error("Failed to save match session to database.");
-        console.error(sessionError);
-        return;
-      }
-
-      if (isLive && sessionData) {
-        setSessionId(sessionData.id); 
-        setActiveSessionExists(true);
-        setInLobby(true);
-        setJoinedStudents([]); 
-        const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "team" ? "Team" : "Individual";
-        toast.success(`${modeLabel} Live Session initialized using bank: ${selectedBank.name}! Session Locked.`);
-      } else {
-        toast.success("Quiz created!");
-      }
-    } finally {
-      setIsDeploying(false);
     }
+
+    setRoomCode(finalRoomCode);
+
+    const payload: any = {
+      section_id: selectedSection.id,
+      professor_id: currentProfId,
+      room_code: finalRoomCode,
+      is_live: isLive,
+      status: isLive ? 'ACTIVE' : 'PENDING',
+      deadline: isLive ? null : deadline || null,
+      mode: lobbyType,
+      team_size: lobbyType === "team" ? teamSize : null,
+    };
+
+    let sessionData: any = null;
+    let sessionError: any = null;
+
+    if (isOnline) {
+      try {
+        const res = await fetchWithTimeout(
+          supabase.from('quiz_sessions').insert([payload]).select('id').maybeSingle(),
+          3000
+        );
+        sessionData = res.data;
+        sessionError = res.error;
+      } catch (err) {
+        sessionError = err;
+      }
+    } else {
+      sessionError = new Error("Offline mode active");
+    }
+
+    // 📴 OFFLINE LAN FALLBACK
+    if (sessionError || !sessionData) {
+      console.warn("📴 Storing session locally and running offline LAN lobby.");
+      sessionData = { id: `offline-session-${Date.now()}` };
+      
+      // Queue locally to sync when connection re-establishes
+      queueOfflineSession({ ...payload, id: sessionData.id });
+    }
+
+    if (isLive && sessionData) {
+      setSessionId(sessionData.id);
+      sessionStorage.setItem('prof_active_session_id', sessionData.id);
+      setActiveSessionExists(true);
+      setInLobby(true);
+      setIsCompleted(false);
+      setJoinedStudents([]);
+      const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "team" ? "Team" : "Individual";
+      toast.success(`${modeLabel} Live Session initialized using bank: ${selectedBank.name}!`);
+    } else {
+      toast.success("Quiz created!");
+    }
+  } catch (err) {
+    console.error("Unhandled deployment error:", err);
+    toast.error("Failed to deploy lobby. Check local network.");
+  } finally {
+    setIsDeploying(false); // Guarantees button unlocks regardless of network failure
   }
+}
 
   const handleStartBattle = () => {
     setBattleStarted(true);
     setCurrentIndex(0);
+    sessionStorage.setItem(`prof_questions_${sessionId}`, JSON.stringify(randomizedQuestions));
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'PROF_START_BATTLE',
@@ -639,6 +788,7 @@ async function handleConfirmAndDeploy() {
           isLastQuestion: false
         }));
       }
+      setTimeRemaining(60);
     } else {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
@@ -648,32 +798,43 @@ async function handleConfirmAndDeploy() {
           isLastQuestion: true
         }));
       }
-    }
-    setTimeRemaining(60);
-  };
-
- const handleEndSession = async () => {
-    if (window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
-      if (wsRef.current) wsRef.current.close();
-      cleanupBots(); 
-      
-      await supabase
-        .from('quiz_sessions')
-        .update({ status: 'COMPLETED' })
-        .eq('id', sessionId); 
-
-      setInLobby(false);
-      setActiveSessionExists(false);
-      setBattleStarted(false);
-      setJoinedStudents([]);
-      setCurrentIndex(0);
-      setSessionId(''); 
-      setRoomCode(generateSecureRoomCode());
-      
-      toast.success("Live session ended successfully. Configuration unlocked.");
+      setIsCompleted(true);
     }
   };
 
+const handleEndSession = async () => {
+  if (window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
+    if (wsRef.current) wsRef.current.close();
+    cleanupBots();
+
+    if (navigator.onLine) {
+      try {
+        await fetchWithTimeout(
+          supabase.from('quiz_sessions').update({ status: 'COMPLETED' }).eq('id', sessionId),
+          2500
+        );
+      } catch (err) {
+        queueOfflineResult(sessionId, { status: 'COMPLETED' });
+      }
+    } else {
+      queueOfflineResult(sessionId, { status: 'COMPLETED' });
+    }
+
+    sessionStorage.removeItem('prof_active_session_id');
+    sessionStorage.removeItem(`prof_questions_${sessionId}`);
+
+    setInLobby(false);
+    setActiveSessionExists(false);
+    setBattleStarted(false);
+    setIsCompleted(false);
+    setJoinedStudents([]);
+    setCurrentIndex(0);
+    setSessionId('');
+    setRoomCode(generateSecureRoomCode());
+
+    toast.success("Live session ended successfully. Configuration unlocked.");
+  }
+};
   const currentActiveQuestion = randomizedQuestions[currentIndex];
   const totalQCount = randomizedQuestions.length > 0 ? randomizedQuestions.length : 1;
 
@@ -682,7 +843,10 @@ async function handleConfirmAndDeploy() {
   
   const studentsByTeam: Record<string, Student[]> = {};
   if (lobbyType === "team") {
-    groups.forEach(g => { studentsByTeam[g] = []; });
+    const uniqueTeams = Array.from(new Set(joinedStudents.map(s => s.team).filter(t => t && t !== 'Unassigned')));
+    const allGroups = Array.from(new Set([...groups, ...uniqueTeams]));
+    
+    allGroups.forEach(g => { studentsByTeam[g] = []; });
     joinedStudents.forEach(student => {
       const t = student.team || 'Unassigned';
       if (!studentsByTeam[t]) studentsByTeam[t] = [];
@@ -695,6 +859,13 @@ async function handleConfirmAndDeploy() {
     return { team, score: totalScore, members };
   }).sort((a, b) => b.score - a.score) : [];
 
+  // Post-Match Formatting
+  const finalResults = lobbyType === 'team'
+    ? teamScores.map(t => ({ name: t.team, score: t.score, id: t.team }))
+    : sortedStudents.map(s => ({ name: s.name, score: s.score, id: s.id }));
+
+  const top3 = finalResults.slice(0, 3);
+  while (top3.length < 3) top3.push({ name: '-', score: 0, id: Math.random().toString() });
 
   if (inLobby) {
     return (
@@ -739,6 +910,18 @@ async function handleConfirmAndDeploy() {
                     {copied ? <Check size={18} /> : <Copy size={18} />}
                   </button>
                 </div>
+
+                {isLanMode && (
+                  <div style={{ marginTop: 16, background: "rgba(46,212,122,0.15)", border: `1px solid ${C.greenBorder}`, borderRadius: 12, padding: "12px", textAlign: "center" }}>
+                    <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 14, color: C.green, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                      <Wifi size={16} /> LAN MODE ACTIVE
+                    </span>
+                    <p style={{ margin: "6px 0 0", fontSize: 12, color: "rgba(255,255,255,0.8)", fontFamily: "Manrope, sans-serif" }}>
+                      Ensure students are connected to the same Wi-Fi network. Have them navigate to <br/>
+                      <strong style={{ color: "#fff", background: "rgba(0,0,0,0.3)", padding: "2px 6px", borderRadius: 4 }}>http://{window.location.hostname}:3000</strong>
+                    </p>
+                  </div>
+                )}
                 
                 <div style={{ display: 'flex', justifyContent: 'center', marginTop: 18 }}>
                   <button 
@@ -846,6 +1029,75 @@ async function handleConfirmAndDeploy() {
 
               <button type="button" onClick={handleStartBattle} style={{ width: "100%", background: `linear-gradient(135deg, ${C.indigo}, ${C.indigoDeep})`, border: "none", borderRadius: 20, padding: "18px 0", fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 8px 32px rgba(91,61,246,0.5)" }}>
                 Start Live Battle Now! ⚡
+              </button>
+            </div>
+          ) : isCompleted ? (
+            <div style={{ maxWidth: 900, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 24, paddingBottom: 40 }}>
+              <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                <Crown size={64} color={C.yellow} style={{ margin: '0 auto', filter: 'drop-shadow(0 0 20px rgba(255,201,60,0.6))' }} />
+                <h1 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 48, fontWeight: 700, margin: '10px 0 0' }}>Match Completed!</h1>
+                <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 16 }}>The results have been successfully saved.</p>
+              </div>
+
+              {/* Podium View */}
+            {/* Podium View */}
+<div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: 16, height: 350, marginTop: 20, marginBottom: 40 }}>
+  
+  {/* 2nd Place (Silver) */}
+  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 140 }}>
+    <div style={{ background: 'rgba(192,192,192,0.15)', border: `2px solid ${C.silver}`, borderRadius: '50%', width: 70, height: 70, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12, boxShadow: `0 0 20px ${C.silver}44` }}>
+      <Medal size={32} color={C.silver} />
+    </div>
+    <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, fontWeight: 700, textAlign: 'center', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{top3[1].name}</span>
+    <span style={{ color: C.silver, fontWeight: 700, fontSize: 14, marginBottom: 8 }}>{top3[1].score} pts</span>
+    <div style={{ background: `linear-gradient(to top, ${C.silver}44, transparent)`, border: `2px solid ${C.silver}`, borderBottom: 'none', borderRadius: '16px 16px 0 0', width: '100%', height: 140, display: 'flex', justifyContent: 'center', paddingTop: 16 }}>
+      <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 40, fontWeight: 700, color: C.silver }}>2</span>
+    </div>
+  </div>
+
+  {/* 1st Place (Gold) */}
+  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 160, zIndex: 10 }}>
+    <div style={{ background: 'rgba(255,215,0,0.15)', border: `2px solid ${C.gold}`, borderRadius: '50%', width: 90, height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12, boxShadow: `0 0 30px ${C.gold}66` }}>
+      <Trophy size={42} color={C.gold} />
+    </div>
+    <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 22, fontWeight: 700, color: C.gold, textAlign: 'center', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{top3[0].name}</span>
+    <span style={{ color: C.gold, fontWeight: 700, fontSize: 16, marginBottom: 8 }}>{top3[0].score} pts</span>
+    <div style={{ background: `linear-gradient(to top, ${C.gold}55, transparent)`, border: `2px solid ${C.gold}`, borderBottom: 'none', borderRadius: '16px 16px 0 0', width: '100%', height: 180, display: 'flex', justifyContent: 'center', paddingTop: 16 }}>
+      <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 48, fontWeight: 700, color: C.gold }}>1</span>
+    </div>
+  </div>
+
+  {/* 3rd Place (Bronze) */}
+  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 140 }}>
+    <div style={{ background: 'rgba(205,127,50,0.15)', border: `2px solid ${C.bronze}`, borderRadius: '50%', width: 60, height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12, boxShadow: `0 0 15px ${C.bronze}44` }}>
+      <Award size={28} color={C.bronze} />
+    </div>
+    <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, textAlign: 'center', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{top3[2].name}</span>
+    <span style={{ color: C.bronze, fontWeight: 700, fontSize: 14, marginBottom: 8 }}>{top3[2].score} pts</span>
+    <div style={{ background: `linear-gradient(to top, ${C.bronze}44, transparent)`, border: `2px solid ${C.bronze}`, borderBottom: 'none', borderRadius: '16px 16px 0 0', width: '100%', height: 100, display: 'flex', justifyContent: 'center', paddingTop: 16 }}>
+      <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 32, fontWeight: 700, color: C.bronze }}>3</span>
+    </div>
+  </div>
+
+</div>
+              {/* Remaining Leaderboard */}
+              <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 20, padding: 24, border: "1px solid rgba(255,255,255,0.1)" }}>
+                <h3 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 20, marginTop: 0, marginBottom: 16 }}>Full Leaderboard</h3>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: 300, overflowY: "auto" }}>
+                  {finalResults.map((res, idx) => (
+                    <div key={res.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(0,0,0,0.2)", padding: "14px 20px", borderRadius: 12 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                        <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, fontWeight: 700, color: idx < 3 ? C.yellow : "rgba(255,255,255,0.5)", width: 30 }}>#{idx + 1}</span>
+                        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 16, fontWeight: 700 }}>{res.name}</span>
+                      </div>
+                      <span style={{ color: C.green, fontWeight: 700, fontFamily: "Fredoka, sans-serif", fontSize: 18 }}>{res.score} pts</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <button type="button" onClick={handleEndSession} style={{ width: "100%", background: C.red, border: "none", borderRadius: 16, padding: "18px 0", fontFamily: "Fredoka, sans-serif", fontSize: 20, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 8px 32px rgba(255,71,87,0.3)", marginTop: 10 }}>
+                End Session & Close Lobby
               </button>
             </div>
           ) : (
@@ -1041,6 +1293,18 @@ async function handleConfirmAndDeploy() {
                   </div>
                 </div>
 
+                <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${isLanMode ? C.greenBorder : C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>LAN Host Mode</span>
+                    <ToggleSwitch on={isLanMode} onChange={v => setIsLanMode(v)} disabled={activeSessionExists} />
+                  </div>
+                  {isLanMode && (
+                    <span style={{ fontSize: 11, color: C.green, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+                      <Wifi size={12} /> Local sync enabled
+                    </span>
+                  )}
+                </div>
+
                 {/* Individual lobby: choose Live now vs Scheduled for a later timeframe */}
                 {lobbyType === "individual" && (
                   <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1080,10 +1344,27 @@ async function handleConfirmAndDeploy() {
                   </div>
                 )}
 
-                <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
-                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Target Class Section</span>
-                  <Dropdown value={selectedSection} options={sectionsList} onChange={v => setSelectedSection(v)} disabled={activeSessionExists} />
-                </div>
+               <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
+  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>
+    {isLanMode ? "LAN Section Name" : "Target Class Section"}
+  </span>
+
+  {isLanMode ? (
+    // If LAN mode is on, let the professor type any custom section name freely offline
+    <input 
+      type="text"
+      placeholder="e.g., CS-3A Local Lab"
+      value={selectedSection.name === 'Loading...' ? '' : selectedSection.name}
+      onChange={(e) => setSelectedSection({ id: 'lan-manual', name: e.target.value })}
+      style={{
+        background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 11,
+        padding: "8px 12px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600, color: C.navy, outline: "none"
+      }}
+    />
+  ) : (
+    <Dropdown value={selectedSection} options={sectionsList} onChange={v => setSelectedSection(v)} disabled={activeSessionExists} />
+  )}
+</div>
               </div>
 
               <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>

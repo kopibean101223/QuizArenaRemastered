@@ -40,8 +40,8 @@ export default async function middleware(request: NextRequest) {
 
   // Resolve requested route safely (handles both pathname and ?page= parameter)
   const pageParam = url.searchParams.get('page')?.toLowerCase()
-  const pathName = url.pathname.toLowerCase().replace(/^\/+|\/+$/g, '') // Strips leading/trailing slashes
-  const activeRoute = pageParam || pathName // Evaluates the targeted view/page
+  const pathName = url.pathname.toLowerCase().replace(/^\/+|\/+$/g, '')
+  const activeRoute = pageParam || pathName
 
   const isAuthPage = activeRoute === 'login' || activeRoute === 'register'
   const isRolePage = activeRoute === 'role'
@@ -79,19 +79,18 @@ export default async function middleware(request: NextRequest) {
   }
 
   // ----------------------------------------------------
-  // CASE B: Resolve User Role
+  // CASE B: Resolve User Role (DB First, then Fallback to Metadata)
   // ----------------------------------------------------
-  let role: 'student' | 'professor' | null = user.user_metadata?.role || null
+  let role: 'student' | 'professor' | null = null
 
-  if (!role) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('user_id', user.id)
-      .maybeSingle()
+  // Query DB first to get the most up-to-date role
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('user_id', user.id)
+    .maybeSingle()
 
-    role = profile?.role || null
-  }
+  role = profile?.role || user.user_metadata?.role || null
 
   // ----------------------------------------------------
   // CASE C: Authenticated User WITHOUT Role
@@ -109,9 +108,9 @@ export default async function middleware(request: NextRequest) {
   const defaultPage = role === 'professor' ? 'dashboard' : 'lobby'
 
   // Block logged-in users from Auth, Role Selection, or root '/'
- if (isAuthPage || isRolePage || isRootPath) {
-  return redirectWithNoCache(defaultPage);
-}
+  if (isAuthPage || isRolePage || isRootPath) {
+    return redirectWithNoCache(defaultPage)
+  }
 
   // Prevent Students from accessing Professor pages
   if (role === 'student' && PROFESSOR_PAGES.includes(activeRoute)) {
