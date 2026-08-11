@@ -15,7 +15,6 @@ import SectionsDashboard from "@/components/profonly/SectionsDashboard";
 import { QuestionBank } from "@/components/profonly/QuestionBank";
 import { AIQuestionGenerator } from "@/components/profonly/AIQuestionGenerator";
 import Matchmaking from "@/components/Matchmaking";
-import { SolutionAnalyzer } from "@/components/profonly/SolutionAnalyzer";
 import ChooseRole from "@/components/chooserole";
 
 function LoadingSpinner() {

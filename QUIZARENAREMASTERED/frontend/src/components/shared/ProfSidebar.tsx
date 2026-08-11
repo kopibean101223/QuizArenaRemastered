@@ -20,7 +20,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "questions",    icon: <Library         size={17} strokeWidth={2}/>, label: "Question Bank"     },
   { id: "aigen",        icon: <Sparkles        size={17} strokeWidth={2}/>, label: "AI Generator"      },
   { id: "matchmaking",  icon: <Swords          size={17} strokeWidth={2}/>, label: "Matchmaking"       },
-  { id: "analyzer",     icon: <FlaskConical    size={17} strokeWidth={2}/>, label: "Solution Analyzer" },
+
 ];
 
 export function ProfSidebar() {
