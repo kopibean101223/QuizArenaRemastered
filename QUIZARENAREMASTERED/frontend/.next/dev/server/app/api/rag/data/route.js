@@ -1,6 +1,4 @@
 var R=require("../../../../chunks/[turbopack]_runtime.js")("server/app/api/rag/data/route.js")
-R.c("server/chunks/[root-of-the-server]__00607j7._.js")
-R.c("server/chunks/[root-of-the-server]__1ls3l3v._.js")
 R.c("server/chunks/20ly_next_1j8laat._.js")
 R.c("server/chunks/20ly_@supabase_auth-js_dist_module_08xm3k7._.js")
 R.c("server/chunks/[root-of-the-server]__1cnts1c._.js")
