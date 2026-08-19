@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from "react";
-import { ProfSidebar } from "./shared/ProfSidebar";
+import { ProfSidebar } from "../shared/ProfSidebar";
 import {
   Trophy, LayoutDashboard, Library, BarChart2, Settings,
   Layers, LogOut, Sparkles, Users, Shuffle, CheckCircle2,
@@ -26,6 +26,7 @@ const C = {
   muted: "#717182", border: "rgba(0,0,0,0.07)", inputBg: "#F3F3F7",
   indigoDeep: "#4228D4", yellowGlow: "rgba(255,201,60,0.5)",
 };
+const [activeSessionId, setActiveSessionId] = useState("");
 
 const TEAM_PALETTE = [
   { bg: "#5B3DF6", light: "rgba(91,61,246,0.1)",  text: "#5B3DF6",  label: "Team Alpha" },
@@ -284,6 +285,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
 
   // Network Shield & History Trap
   useEffect(() => {
+    if (!inLobby || !activeSessionId) return;
+
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (inLobby) {
         e.preventDefault();
@@ -309,7 +312,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       window.removeEventListener("beforeunload", handleBeforeUnload);
       window.removeEventListener("popstate", handlePopState);
     };
-  }, [inLobby]);
+  }, [inLobby, activeSessionId, randomizedQuestions.length]);
 
   // Load Sections and Question Banks from API
   useEffect(() => {
@@ -446,7 +449,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     ws.onopen = () => {
       ws.send(JSON.stringify({
         type: 'JOIN_BATTLE',
-        battleId: selectedSection.id,
+        battleId: activeSessionId,
         totalQuestions: randomizedQuestions.length || 10,
         timeLimit: 60,
         sender: 'Professor'
@@ -520,26 +523,30 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       }
     }
     
-    // Update the UI with the final guaranteed unique code
-    setRoomCode(finalRoomCode); 
+        // Update the UI with the final guaranteed unique code
+        setRoomCode(finalRoomCode); 
 
-    // 3. Deploy the session
-    const { error: sessionError } = await supabase
+        // 3. Deploy the session
+        const { data: newSession, error: sessionError } = await supabase
       .from('quiz_sessions')
       .insert([{
         section_id: selectedSection.id,
         professor_id: currentProfId,
-        room_code: finalRoomCode, // ✅ Verified unique code
+        room_code: finalRoomCode,
         is_live: isLive,
         status: isLive ? 'ACTIVE' : 'PENDING',
         deadline: isLive ? null : deadline || null
-      }]);
+      }])
+      .select('id')
+      .single();
 
-    if (sessionError) {
+    if (sessionError || !newSession) {
       toast.error("Failed to save match session to database.");
       console.error(sessionError);
       return;
     }
+
+    setActiveSessionId(newSession.id); 
 
     if (isLive) {
       setActiveSessionExists(true);
@@ -551,15 +558,16 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     }
   }
   const handleStartBattle = () => {
-    setBattleStarted(true);
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'PROF_START_BATTLE',
-        battleId: selectedSection.id,
-        bankId: selectedBank.id
-      }));
-    }
-  };
+  setBattleStarted(true);
+  if (wsRef.current?.readyState === WebSocket.OPEN) {
+    wsRef.current.send(JSON.stringify({
+      type: 'PROF_START_BATTLE',
+      battleId: activeSessionId,
+      bankId: selectedBank.id,
+      questions: randomizedQuestions,   // ✅ this is what the server actually needs to relay
+    }));
+  }
+};
 
   const handleNextQuestion = () => {
     const totalQCount = randomizedQuestions.length || 1;
@@ -570,7 +578,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: 'ADVANCE_QUESTION',
-          battleId: selectedSection.id,
+          battleId: activeSessionId,
           currentIndex: nextIdx,
           nextTimeLimit: 60,
           isLastQuestion: false
@@ -580,7 +588,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: 'ADVANCE_QUESTION',
-          battleId: selectedSection.id,
+          battleId: activeSessionId,
           currentIndex: currentIndex,
           isLastQuestion: true
         }));

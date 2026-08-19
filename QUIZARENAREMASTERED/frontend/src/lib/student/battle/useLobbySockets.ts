@@ -219,15 +219,17 @@ export function useLobbySocket({
 
   // 3-2-1 countdown ticker (only ever started when autoCountdown is true).
   useEffect(() => {
-    if (countdown === null) return;
-    if (countdown === 0) {
-      const t = setTimeout(() => setBattleStarted(true), 1500);
+  if (countdown === null) return;
+  if (countdown === 0) {
+    const t = setTimeout(() => {
+      setBattleStarted(true);
       setCountdown(null);
-      return () => clearTimeout(t);
-    }
-    const t = setTimeout(() => setCountdown((c) => (c ?? 1) - 1), 1000);
+    }, 1500);
     return () => clearTimeout(t);
-  }, [countdown]);
+  }
+  const t = setTimeout(() => setCountdown((c) => (c ?? 1) - 1), 1000);
+  return () => clearTimeout(t);
+}, [countdown]);
 
   return { players, setPlayers, countdown, battleStarted, battleMode, socketRef };
 }
