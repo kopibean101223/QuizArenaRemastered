@@ -7,10 +7,10 @@ export function CountdownDisplay({ count }: { count: number }) {
     <div style={{ position: "fixed", inset: 0, zIndex: 400, display: "flex",
       alignItems: "center", justifyContent: "center",
       background: "rgba(27,30,43,0.88)", backdropFilter: "blur(6px)" }}>
-      {[1,2,3].map(i => (
-        <div key={i} style={{ position: "absolute", width: 200+i*80, height: 200+i*80,
+      {[1, 2, 3].map(i => (
+        <div key={i} style={{ position: "absolute", width: 200 + i * 80, height: 200 + i * 80,
           borderRadius: "50%", border: `2px solid ${color}`,
-          opacity: 0.12*i, animation: `burstRing 1s ease-out ${i*0.12}s infinite` }} />
+          opacity: 0.12 * i, animation: `burstRing 1s ease-out ${i * 0.12}s infinite` }} />
       ))}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
         <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 180, fontWeight: 700,

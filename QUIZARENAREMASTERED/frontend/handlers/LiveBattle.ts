@@ -223,7 +223,7 @@ class LiveBattleHandler {
           timeLimit: parseInt(roomState.timeLimit || '60', 10),
           status: roomState.status || 'waiting',
           history: history.map((item) => JSON.parse(item)),
-          leaderboard,
+          leaderboard,questions: JSON.parse((await redisPublisher.get(`battle:${battleId}:questions`)) || '[]'),
         })
       );
 

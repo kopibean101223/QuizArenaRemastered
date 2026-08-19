@@ -7,6 +7,7 @@ import { useApp } from "../../context/AppContext";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { StudentNavBar } from "../shared/StudentNavBar";
+import { joinBattleByCode, joinKnownBattle } from "@/lib/student/joinlobby";
 import {
   fetchMyQuizResults,
   fetchMySections,
@@ -114,15 +115,10 @@ export function StudentDashboard() {
     }
   }
 
-  function handleJoinLiveSession(session: LiveSessionInfo) {
-    try {
-      window.localStorage.setItem(
-        PENDING_JOIN_CODE_KEY,
-        JSON.stringify({ code: session.room_code, sectionId: session.section_id })
-      );
-    } catch {}
-    navigate("lobby");
-  }
+function handleJoinLiveSession(session: LiveSessionInfo) {
+  joinKnownBattle(session.room_code, session.id); // session.id, not section_id
+  navigate("lobby");
+}
 
   const initials = (user?.name || "??").slice(0, 2).toUpperCase();
 

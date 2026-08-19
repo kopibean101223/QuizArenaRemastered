@@ -16,6 +16,11 @@ function teamAnswersKey(battleId: string, questionIndex: number): string {
 function leaderboardKey(battleId: string): string {
   return `battle:team:${battleId}:leaderboard`;
 }
+// NEW: which student picked which team, kept separate from in-battle answer
+// state since team picking happens during the lobby, before a battle exists.
+function teamsKey(battleId: string): string {
+  return `battle:team:${battleId}:teams`;
+}
 
 export interface TeamMemberAnswerPayload {
   memberId: string;
@@ -31,6 +36,9 @@ export interface TeamBattlePayload {
   questionIndex?: number;
   answer?: TeamMemberAnswerPayload;
   isLastQuestion?: boolean;
+  // NEW: for JOIN_TEAM_LOBBY / TEAM_ASSIGNMENT_UPDATE
+  userId?: string;
+  teamId?: number | string | null;
 }
 
 class TeamBattleHandler {
@@ -56,6 +64,27 @@ class TeamBattleHandler {
         });
       }
     });
+  }
+
+  // NEW: shared by JOIN_TEAM_BATTLE, JOIN_TEAM_LOBBY, and (defensively)
+  // TEAM_ASSIGNMENT_UPDATE — registers this socket as a member of the room
+  // so it receives future broadcasts on `channel`, and subscribes the Redis
+  // channel the first time anyone joins.
+  private registerClient(
+    ws: WebSocket,
+    battleId: string,
+    channel: string,
+    redisSubscriber: Redis
+  ): void {
+    if (!this.activeRooms.has(battleId)) {
+      this.activeRooms.set(battleId, new Set<WebSocket>());
+      redisSubscriber.subscribe(channel, (err) => {
+        if (err) console.error(`Failed to subscribe to ${channel}`, err);
+      });
+    }
+
+    this.activeRooms.get(battleId)!.add(ws);
+    this.clientRoomMap.set(ws, battleId);
   }
 
   public async syncBattleToSupabase(
@@ -100,7 +129,7 @@ class TeamBattleHandler {
     redisPublisher: Redis,
     redisSubscriber: Redis
   ): Promise<void> {
-    const { type, battleId, roomCode, questionIndex = 0, answer, isLastQuestion } = payload;
+    const { type, battleId, roomCode, questionIndex = 0, answer, isLastQuestion, userId, teamId } = payload;
 
     if (!battleId) {
       ws.send(JSON.stringify({ error: 'battleId is required for Team operations' }));
@@ -111,18 +140,54 @@ class TeamBattleHandler {
     const sKey = stateKey(battleId);
     const ansKey = teamAnswersKey(battleId, questionIndex);
     const lKey = leaderboardKey(battleId);
+    const tKey = teamsKey(battleId);
+
+    // ── JOIN TEAM LOBBY (pre-battle team picking, sent from Lobby_TeamMode) ──
+    if (type === 'JOIN_TEAM_LOBBY') {
+      this.registerClient(ws, battleId, channel, redisSubscriber);
+
+      const rawTeams = await redisPublisher.hgetall(tKey);
+
+      ws.send(
+        JSON.stringify({
+          type: 'TEAM_LOBBY_STATE_SYNC',
+          battleId,
+          teams: rawTeams, // { [userId]: "teamId" } — current picks so far
+        })
+      );
+      return;
+    }
+
+    // ── TEAM ASSIGNMENT UPDATE (student joins/leaves a team in the lobby) ──
+    if (type === 'TEAM_ASSIGNMENT_UPDATE') {
+      // Defensive: register even if JOIN_TEAM_LOBBY was somehow missed, so
+      // this client still gets included in the broadcast below.
+      this.registerClient(ws, battleId, channel, redisSubscriber);
+
+      if (!userId) return;
+
+      if (teamId === null || teamId === undefined) {
+        await redisPublisher.hdel(tKey, userId);
+      } else {
+        await redisPublisher.hset(tKey, userId, String(teamId));
+      }
+      await redisPublisher.expire(tKey, COMPLETED_ROOM_TTL_SECONDS);
+
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({
+          type: 'TEAM_ASSIGNMENT_UPDATE',
+          battleId,
+          userId,
+          teamId: teamId ?? null,
+        })
+      );
+      return;
+    }
 
     // ── JOIN TEAM BATTLE ──
     if (type === 'JOIN_TEAM_BATTLE') {
-      if (!this.activeRooms.has(battleId)) {
-        this.activeRooms.set(battleId, new Set<WebSocket>());
-        redisSubscriber.subscribe(channel, (err) => {
-          if (err) console.error(`Failed to subscribe to ${channel}`, err);
-        });
-      }
-
-      this.activeRooms.get(battleId)!.add(ws);
-      this.clientRoomMap.set(ws, battleId);
+      this.registerClient(ws, battleId, channel, redisSubscriber);
 
       const rawAnswers = await redisPublisher.hgetall(ansKey);
       const teamAnswers = Object.values(rawAnswers || {}).map((item) => JSON.parse(item));
