@@ -58,6 +58,7 @@ export function useLobbySocket({
 
   useEffect(() => { 
     if (!enabled || !sessionId) return;
+    let cancelled = false;
 
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080";
     const socket = new WebSocket(wsUrl);
@@ -67,47 +68,54 @@ export function useLobbySocket({
     const resolvedUserId = userId || `user_${Math.random()}`;
 
     socket.onopen = () => {
-  socket.send(JSON.stringify({
-    type: "JOIN_BATTLE",
-    battleId: sessionId,
-    userId: resolvedUserId,
-    sender: resolvedName,
-  }));
+      if (cancelled) {
+        // This mount was already torn down (React Strict Mode dev double-invoke).
+        // Close cleanly now that the handshake finished, instead of mid-connect.
+        socket.close();
+        return;
+      }
 
-  // Add myself immediately to my own lobby roster.
-  setPlayers((prev) => {
-    if (prev.some((p) => p.id === resolvedUserId)) {
-      return prev;
-    }
-
-    return [
-      ...prev,
-      {
-        id: resolvedUserId,
-        name: resolvedName,
-        initials: resolvedName
-          .substring(0, 2)
-          .toUpperCase(),
-        color: AVATAR_COLORS[prev.length % AVATAR_COLORS.length],
-        isHost: false,
-        isReady: true,
-      },
-    ];
-  });
-
-  setTimeout(() => {
-    if (socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({
-        type: "BATTLE_ACTION",
+        type: "JOIN_BATTLE",
         battleId: sessionId,
         userId: resolvedUserId,
         sender: resolvedName,
-        message: "has joined the lobby! ✅",
-        isJoinEvent: true,
       }));
-    }
-  }, 150);
-};
+
+      // Add myself immediately to my own lobby roster.
+      setPlayers((prev) => {
+        if (prev.some((p) => p.id === resolvedUserId)) {
+          return prev;
+        }
+
+        return [
+          ...prev,
+          {
+            id: resolvedUserId,
+            name: resolvedName,
+            initials: resolvedName
+              .substring(0, 2)
+              .toUpperCase(),
+            color: AVATAR_COLORS[prev.length % AVATAR_COLORS.length],
+            isHost: false,
+            isReady: true,
+          },
+        ];
+      });
+
+      setTimeout(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({
+            type: "BATTLE_ACTION",
+            battleId: sessionId,
+            userId: resolvedUserId,
+            sender: resolvedName,
+            message: "has joined the lobby! ✅",
+            isJoinEvent: true,
+          }));
+        }
+      }, 150);
+    };
 
     socket.onmessage = (event) => {
       let data: any;
@@ -132,13 +140,22 @@ export function useLobbySocket({
           setBattleStarted(true);
         }
       }
-      
-if ( data.type === "ROOM_STATE_SYNC" && Array.isArray(data.players) ) 
-  { const restoredPlayers: LobbyPlayerT[] = data.players.map( (player: any, index: number) => 
-    { const name = player.name || "Unknown Student"; return { id: player.id ||
-       player.userId, name, initials: name.substring(0, 2).toUpperCase(), color: AVATAR_COLORS[index % AVATAR_COLORS.length], 
-       isHost: player.role === "host", isReady: true, }; } ); setPlayers(restoredPlayers); }
-      
+
+      if (data.type === "ROOM_STATE_SYNC" && Array.isArray(data.players)) {
+        const restoredPlayers: LobbyPlayerT[] = data.players.map((player: any, index: number) => {
+          const name = player.name || "Unknown Student";
+          return {
+            id: player.id || player.userId,
+            name,
+            initials: name.substring(0, 2).toUpperCase(),
+            color: AVATAR_COLORS[index % AVATAR_COLORS.length],
+            isHost: player.role === "host",
+            isReady: true,
+          };
+        });
+        setPlayers(restoredPlayers);
+      }
+
       if (data.type === "ROOM_STATE_SYNC" && data.status === "active") {
         const mode = (data.mode || data.battleMode || "LIVE").toUpperCase();
         setBattleMode(mode);
@@ -164,29 +181,40 @@ if ( data.type === "ROOM_STATE_SYNC" && Array.isArray(data.players) )
     };
 
     socket.onerror = (event) => {
-  console.error(
-    "[useLobbySocket] WebSocket connection failed.",
-    {
-      url: wsUrl,
-      readyState: socket.readyState,
-      event,
-    }
-  );
-};
+      // Suppress the throwaway-socket noise from Strict Mode's double-mount —
+      // that socket never finished connecting and was never "real" to begin with.
+      if (cancelled) return;
+      console.error(
+        "[useLobbySocket] WebSocket connection failed.",
+        {
+          url: wsUrl,
+          readyState: socket.readyState,
+          event,
+        }
+      );
+    };
 
-socket.onclose = (event) => {
-  console.warn(
-    "[useLobbySocket] WebSocket closed:",
-    {
-      code: event.code,
-      reason: event.reason,
-      wasClean: event.wasClean,
-      url: wsUrl,
-    }
-  );
-};
+    socket.onclose = (event) => {
+      if (cancelled) return;
+      console.warn(
+        "[useLobbySocket] WebSocket closed:",
+        {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+          url: wsUrl,
+        }
+      );
+    };
 
-    return () => socket.close();
+    return () => {
+      cancelled = true;
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.close();
+      }
+      // If it's still CONNECTING, the onopen handler above will close it
+      // as soon as the handshake finishes, instead of aborting mid-handshake.
+    };
   }, [enabled, sessionId, userId, userName, autoCountdown]);
 
   // 3-2-1 countdown ticker (only ever started when autoCountdown is true).
