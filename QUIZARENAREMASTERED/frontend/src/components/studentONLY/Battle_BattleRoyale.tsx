@@ -3,6 +3,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Skull, Heart, Zap, LogOut, ChevronRight } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import {
+  useBattleSocket,
+  formatBattleQuestions,
+  getStudentIdentity,
+  AVATAR_COLORS,
+} from '@/lib/student/battle/useBattleConnection';
 
 export interface Survivor {
   id: string;
@@ -30,33 +36,6 @@ export interface BattleRoyaleProps {
 }
 
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
-const AVATAR_COLORS = ['#5B3DF6', '#FF6B4A', '#2ED47A', '#FFC93C', '#FF4757', '#5BC8F6', '#B06EF6', '#FF9F40', '#E040FB', '#0019A7'];
-
-function formatQuestions(raw: any[]): RoyaleQuestion[] {
-  return raw.map((q: any, idx: number) => {
-    let parsedChoices: string[] = [];
-    try {
-      let rawChoices = q.choices || q.options;
-      if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
-      if (Array.isArray(rawChoices)) {
-        parsedChoices = rawChoices.map((c: any) =>
-          String(typeof c === 'object' && c !== null ? c.text || c.label || String(c) : c)
-        );
-      }
-    } catch {
-      parsedChoices = [];
-    }
-    return {
-      id: q.id ?? idx,
-      number: idx + 1,
-      total: raw.length,
-      subject: q.topic || q.subject || 'General Knowledge',
-      text: q.text || q.question,
-      options: parsedChoices,
-      answer: q.answer,
-    };
-  });
-}
 
 export function BattleRoyale({
   battleId = '',
@@ -64,7 +43,6 @@ export function BattleRoyale({
   onLeaveBattle,
 }: BattleRoyaleProps) {
   const { user, navigate, setLastBattleMode } = useApp();
-  const wsRef = useRef<WebSocket | null>(null);
 
   const [questions, setQuestions] = useState<RoyaleQuestion[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -76,104 +54,105 @@ export function BattleRoyale({
   const [survivors, setSurvivors] = useState<Survivor[]>([]);
   const [eliminated, setEliminated] = useState(false);
 
-  const myId = user?.id || `guest_${Math.random().toString(36).slice(2, 8)}`;
-  const myName = user?.username || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'You';
+  const { studentName: myName, currentUserId: myId } = getStudentIdentity(user);
 
-  // 1. Load real questions
+  function applyPlayers(players: any[]) {
+    setSurvivors(players.map((p, idx) => ({
+      id: p.id,
+      name: p.id === myId ? myName : (p.name || `Player ${idx + 1}`),
+      initials: (p.initials || p.name || 'P').substring(0, 2).toUpperCase(),
+      color: p.color || AVATAR_COLORS[idx % AVATAR_COLORS.length],
+      isYou: p.id === myId,
+      lives: p.lives ?? 0,
+    })));
+  }
+
+  // NEW: extracts questions from a Royale WS payload the same way LiveQuiz's
+  // formatQuestions/formatBattleQuestions handles data.questions — Royale
+  // reads correctness off the option TEXT (`answer`), not an index.
+  function applyRoyaleQuestions(rawQuestions: unknown[]) {
+    setQuestions(
+      formatBattleQuestions(rawQuestions).map((q) => ({
+        id: q.id,
+        number: q.number,
+        total: q.total,
+        subject: q.subject,
+        text: q.text,
+        options: q.options,
+        answer: q.answer,
+      }))
+    );
+  }
+
+  // 1. Fallback questions loader. This previously was the ONLY source of
+  // questions for Royale, which is why it was stuck on "Waiting for
+  // questions to load…" — /api/questions is scoped to the CALLER's own
+  // user id, so a student calling it always gets an empty array back.
+  // Now it's just a fallback; the real source is the WS payload below,
+  // matching how Battle_LiveQuiz.tsx already worked.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        if (questions.length > 0) return;
         const res = await fetch('/api/questions');
         if (res.ok) {
           const data = await res.json();
           if (!cancelled && Array.isArray(data) && data.length > 0) {
-            setQuestions(formatQuestions(data));
+            applyRoyaleQuestions(data);
           }
         }
       } catch (err) {
-        console.error('[BattleRoyale] Failed to load questions:', err);
+        console.error('[BattleRoyale] Failed to load fallback questions:', err);
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [questions.length]);
 
-  // 2. Real WebSocket connection — FIX (1.1): replaces the old commented-out
-  // "WebSocket Listener Simulation" with an actual connection to BattleRoyal.ts.
-  useEffect(() => {
-    let socket: WebSocket | null = null;
-    let isMounted = true;
-
-    function connectWs() {
-      if (!isMounted) return;
-      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
-      socket = new WebSocket(wsUrl);
-      wsRef.current = socket;
-
-      socket.onopen = () => {
-        socket?.send(JSON.stringify({
-          type: 'JOIN_ROYALE',
-          battleId,
-          startingHp: initialStartingHp,
-          playerData: {
-            id: myId,
-            name: myName,
-            initials: myName.substring(0, 2).toUpperCase(),
-            color: AVATAR_COLORS[0],
-          },
-        }));
-      };
-
-      socket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-
-          if (data.type === 'ROYALE_STATE_SYNC') {
-            if (typeof data.startingHp === 'number') setStartingHp(data.startingHp);
-            if (Array.isArray(data.players)) applyPlayers(data.players);
-          }
-
-          if (data.type === 'ROYALE_HP_UPDATED') {
-            if (Array.isArray(data.players)) applyPlayers(data.players);
-            if (data.playerId === myId && data.isAlive === false) {
-              setEliminated(true);
-            }
-          }
-
-          if (data.type === 'ROYALE_MATCH_ENDED') {
-            if (Array.isArray(data.players)) applyPlayers(data.players);
-            setLastBattleMode('ROYALE');
-            navigate('results');
-          }
-        } catch (err) {
-          console.error('[BattleRoyale] WS parse error:', err);
+  // 2. Real WebSocket connection — connect/reconnect lifecycle now lives in
+  // useBattleSocket (shared with the other 3 battle modes).
+  const { send } = useBattleSocket({
+    battleId,
+    deps: [myId, myName],
+    onOpen: (socket) => {
+      socket.send(JSON.stringify({
+        type: 'JOIN_ROYALE',
+        mode: 'ROYALE',
+        battleId,
+        startingHp: initialStartingHp,
+        playerData: {
+          id: myId,
+          name: myName,
+          initials: myName.substring(0, 2).toUpperCase(),
+          color: AVATAR_COLORS[0],
+        },
+      }));
+    },
+    onMessage: (data) => {
+      if (data.type === 'ROYALE_STATE_SYNC') {
+        if (typeof data.startingHp === 'number') setStartingHp(data.startingHp);
+        if (Array.isArray(data.players)) applyPlayers(data.players);
+        // NEW: the professor's PROF_START_ROYALE broadcast (and JOIN_ROYALE's
+        // reply for late joiners) now carries the real question set here.
+        if (Array.isArray(data.questions) && data.questions.length > 0) {
+          applyRoyaleQuestions(data.questions);
         }
-      };
+      }
 
-      socket.onclose = () => {
-        if (isMounted) setTimeout(connectWs, 2000);
-      };
-    }
+      if (data.type === 'ROYALE_HP_UPDATED') {
+        if (Array.isArray(data.players)) applyPlayers(data.players);
+        if (data.playerId === myId && data.isAlive === false) {
+          setEliminated(true);
+        }
+      }
 
-    function applyPlayers(players: any[]) {
-      setSurvivors(players.map((p, idx) => ({
-        id: p.id,
-        name: p.id === myId ? myName : (p.name || `Player ${idx + 1}`),
-        initials: (p.initials || p.name || 'P').substring(0, 2).toUpperCase(),
-        color: p.color || AVATAR_COLORS[idx % AVATAR_COLORS.length],
-        isYou: p.id === myId,
-        lives: p.lives ?? 0,
-      })));
-    }
-
-    connectWs();
-    return () => {
-      isMounted = false;
-      socket?.close();
-      wsRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [battleId]);
+      if (data.type === 'ROYALE_MATCH_ENDED') {
+        if (Array.isArray(data.players)) applyPlayers(data.players);
+        setLastBattleMode('ROYALE');
+        navigate('results');
+      }
+    },
+  });
 
   const handleSelectOption = (optionKey: string) => {
     if (locked || eliminated) return;
@@ -183,15 +162,13 @@ export function BattleRoyale({
     const answerText = currentQuestion?.options[opt];
     setLocked(true);
 
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'SUBMIT_ROYALE_ANSWER',
-        battleId,
-        playerData: { id: myId, name: myName },
-        optionKey: answerText,
-        correctAnswer: currentQuestion?.answer,
-      }));
-    }
+    send({
+      type: 'SUBMIT_ROYALE_ANSWER',
+      battleId,
+      playerData: { id: myId, name: myName },
+      optionKey: answerText,
+      correctAnswer: currentQuestion?.answer,
+    });
 
     // Advance locally to the next question after a short reveal beat.
     // The server decides (via ROYALE_MATCH_ENDED) if the match is actually over.

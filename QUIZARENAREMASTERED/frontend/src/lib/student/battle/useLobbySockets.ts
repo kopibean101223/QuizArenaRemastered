@@ -126,13 +126,35 @@ export function useLobbySocket({
         return;
       }
 
-      // Professor started the battle.
+      // Professor started the battle (Live mode, and any legacy/generic senders).
       if (
         data.type === "PROF_START_BATTLE" ||
         data.type === "BATTLE_STARTED" ||
         data.type === "START_BATTLE"
       ) {
         const mode = (data.mode || data.battleMode || "LIVE").toUpperCase();
+        setBattleMode(mode);
+        if (autoCountdown) {
+          setCountdown((prev) => (prev === null ? 3 : prev));
+        } else {
+          setBattleStarted(true);
+        }
+      }
+
+      // FIX: BattleRoyaleHandler/TeamBattleHandler broadcast their own
+      // state-sync types when the professor starts the match
+      // (ROYALE_STATE_SYNC / TEAM_STATE_SYNC) — they never send
+      // PROF_START_BATTLE. This hook previously had no path that recognized
+      // either one, so battleStarted never flipped to true for Royale/Team
+      // lobbies even though the match had genuinely started server-side —
+      // students stayed stuck on this lobby screen indefinitely, with
+      // Battle_BattleRoyale.tsx/Battle_TeamMode.tsx never even mounting
+      // (hence no WS traffic from them at all, and no console errors).
+      if (
+        (data.type === "ROYALE_STATE_SYNC" && data.status === "active") ||
+        (data.type === "TEAM_STATE_SYNC" && Array.isArray(data.questions) && data.questions.length > 0)
+      ) {
+        const mode = data.type === "ROYALE_STATE_SYNC" ? "ROYALE" : "TEAM";
         setBattleMode(mode);
         if (autoCountdown) {
           setCountdown((prev) => (prev === null ? 3 : prev));

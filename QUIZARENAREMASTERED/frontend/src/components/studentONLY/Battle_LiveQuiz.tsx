@@ -15,10 +15,15 @@ import {
 import { CountdownBar } from "./LiveBattleCOMPONENTONLY/CountdownBar";
 import { AnswerBtn } from "./LiveBattleCOMPONENTONLY/AnswerButton";
 import { LeaderRow } from "./LiveBattleCOMPONENTONLY/LeaderRow";
+import {
+  useBattleSocket,
+  formatBattleQuestions,
+  getStudentIdentity,
+  computeTimeLeft,
+} from "@/lib/student/battle/useBattleConnection";
 
 export function LiveBattle({ battleId }: { battleId: string }) {
   const { navigate, user } = useApp();
-  const socketRef = useRef<WebSocket | null>(null);
   // Tracks how many questions this player has gotten right across the
   // whole quiz, so the results screen can show real correct/accuracy
   // numbers instead of the last-question-only value the server used to see.
@@ -40,43 +45,7 @@ export function LiveBattle({ battleId }: { battleId: string }) {
   const [speedMode] = useState(true);
   const [reactionBursts, setReactionBursts] = useState<{ id: number; emoji: string; x: number; y: number }[]>([]);
 
-  const studentName = user?.username || user?.user_metadata?.full_name || user?.email?.split('@')[0] || "Student";
-  const currentUserId = user?.id || "local-me";
-
-  const computeTimeLeft = (limit: number, startTs: number | null) => {
-    if (!startTs) return limit;
-    const elapsedSeconds = Math.floor((Date.now() - startTs) / 1000);
-    return Math.max(limit - elapsedSeconds, 0);
-  };
-
-  // Helper to format incoming raw question objects into QuestionData format
-  const formatQuestions = (rawQuestions: any[]): QuestionData[] => {
-    return rawQuestions.map((q: any, idx: number) => {
-      let parsedChoices: string[] = [];
-      try {
-        let rawChoices = q.choices || q.options;
-        if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
-        if (Array.isArray(rawChoices)) {
-          parsedChoices = rawChoices.map((c: any) => String(typeof c === 'object' && c !== null ? c.text || c.label || String(c) : c));
-        }
-      } catch (e) {
-        parsedChoices = [];
-      }
-      const correctIdx = parsedChoices.findIndex(c => c === q.answer);
-
-      return {
-        id: q.id || idx,
-        number: idx + 1,
-        total: rawQuestions.length,
-        subject: q.topic || q.subject || "General Knowledge",
-        text: q.text || q.question,
-        options: parsedChoices,
-        correct: correctIdx !== -1 ? correctIdx : (Number(q.correct) || 0),
-        points: Number(q.points) || 10,
-        timeLimit: Number(q.timeLimit) || 60
-      };
-    });
-  };
+  const { studentName, currentUserId } = getStudentIdentity(user);
 
   // 1. Fallback Questions Loader
   useEffect(() => {
@@ -87,7 +56,7 @@ export function LiveBattle({ battleId }: { battleId: string }) {
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data) && data.length > 0) {
-            setQuestions(formatQuestions(data));
+            setQuestions(formatBattleQuestions(data));
           }
         }
       } catch (err) {
@@ -97,83 +66,59 @@ export function LiveBattle({ battleId }: { battleId: string }) {
     loadFallbackQuestions();
   }, [questions.length]);
 
-  // 2. WebSocket Sync Connection
-  useEffect(() => {
-    let socket: WebSocket | null = null;
-    let isMounted = true;
+  // 2. WebSocket Sync Connection — connect/reconnect lifecycle now lives in
+  // useBattleSocket (shared with the other 3 battle modes). Only the JOIN
+  // payload and message handling below are mode-specific.
+  const { send } = useBattleSocket({
+    battleId,
+    deps: [currentUserId, studentName],
+    onOpen: (socket) => {
+      socket.send(JSON.stringify({
+        type: "JOIN_BATTLE",
+        battleId: battleId || "room_101",
+        userId: currentUserId,
+        sender: studentName
+      }));
+    },
+    onMessage: (data) => {
+      // Extract questions from room sync or payload
+      const rawQuestions = data.questions || data.roomState?.questions || data.payload?.questions;
+      if (Array.isArray(rawQuestions) && rawQuestions.length > 0) {
+        setQuestions(formatBattleQuestions(rawQuestions));
+      }
 
-    function connectWs() {
-      if (!isMounted) return;
-      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
-      socket = new WebSocket(wsUrl);
-      socketRef.current = socket;
-
-      socket.onopen = () => {
-        socket?.send(JSON.stringify({
-          type: "JOIN_BATTLE",
-          battleId: battleId || "room_101",
-          userId: currentUserId,
-          sender: studentName
-        }));
-      };
-
-      socket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-
-          // Extract questions from room sync or payload
-          const rawQuestions = data.questions || data.roomState?.questions || data.payload?.questions;
-          if (Array.isArray(rawQuestions) && rawQuestions.length > 0) {
-            setQuestions(formatQuestions(rawQuestions));
-          }
-
-          // State synchronization events
-          if (data.type === "ROOM_STATE_SYNC" || data.type === "QUESTION_ADVANCED" || data.type === "PROF_START_BATTLE") {
-            if (typeof data.currentIndex === "number") {
-              setCurrentIndex(data.currentIndex);
-            }
-            if (data.startedAt) {
-              setStartedAt(data.startedAt);
-            }
-          }
-
-          // Live Leaderboard / Score Sync
-          if (data.type === "SCORE_UPDATED" || data.type === "LEADERBOARD_UPDATE") {
-            if (Array.isArray(data.leaderboard)) {
-              const formattedPlayers: Player[] = data.leaderboard.map((item: any, idx: number) => ({
-                id: item.id || item.userId,
-                name: item.name || item.sender || `Player ${idx + 1}`,
-                initials: (item.name || "P").substring(0, 2).toUpperCase(),
-                color: AVATAR_COLORS[idx % AVATAR_COLORS.length],
-                score: item.score || 0,
-                streak: item.streak || 0,
-                isMe: (item.id || item.userId) === currentUserId,
-                isLeader: idx === 0
-              }));
-              setPlayers(formattedPlayers);
-            }
-          }
-
-          if (data.type === "QUIZ_COMPLETED") {
-            navigate("results");
-          }
-        } catch (err) {
-          console.error("WS message parse error:", err);
+      // State synchronization events
+      if (data.type === "ROOM_STATE_SYNC" || data.type === "QUESTION_ADVANCED" || data.type === "PROF_START_BATTLE") {
+        if (typeof data.currentIndex === "number") {
+          setCurrentIndex(data.currentIndex);
         }
-      };
+        if (data.startedAt) {
+          setStartedAt(data.startedAt);
+        }
+      }
 
-      socket.onclose = () => {
-        if (isMounted) setTimeout(connectWs, 2000);
-      };
-    }
+      // Live Leaderboard / Score Sync
+      if (data.type === "SCORE_UPDATED" || data.type === "LEADERBOARD_UPDATE") {
+        if (Array.isArray(data.leaderboard)) {
+          const formattedPlayers: Player[] = data.leaderboard.map((item: any, idx: number) => ({
+            id: item.id || item.userId,
+            name: item.name || item.sender || `Player ${idx + 1}`,
+            initials: (item.name || "P").substring(0, 2).toUpperCase(),
+            color: AVATAR_COLORS[idx % AVATAR_COLORS.length],
+            score: item.score || 0,
+            streak: item.streak || 0,
+            isMe: (item.id || item.userId) === currentUserId,
+            isLeader: idx === 0
+          }));
+          setPlayers(formattedPlayers);
+        }
+      }
 
-    connectWs();
-    return () => {
-      isMounted = false;
-      if (socket) socket.close();
-      socketRef.current = null;
-    };
-  }, [battleId, user, navigate, currentUserId, studentName]);
+      if (data.type === "QUIZ_COMPLETED") {
+        navigate("results");
+      }
+    },
+  });
 
   // Reset state on question change
   useEffect(() => {
@@ -254,23 +199,21 @@ export function LiveBattle({ battleId }: { battleId: string }) {
     if (isCorrect) correctCountRef.current += 1;
 
     // Send score to server so Redis & Supabase update
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({
-        type: "SUBMIT_SCORE",
-        battleId: battleId || "room_101",
-        playerData: {
-          id: currentUserId,
-          name: studentName,
-          score: (players.find(p => p.isMe)?.score || 0) + scoreAdd,
-          // FIX: was "correctCount" - the results screen reads "correct",
-          // so the old field name was never picked up at all. "total" is
-          // now the real question count instead of the missing/defaulted
-          // value the results screen used to fall back to.
-          correct: correctCountRef.current,
-          total: questions.length,
-        }
-      }));
-    }
+    send({
+      type: "SUBMIT_SCORE",
+      battleId: battleId || "room_101",
+      playerData: {
+        id: currentUserId,
+        name: studentName,
+        score: (players.find(p => p.isMe)?.score || 0) + scoreAdd,
+        // FIX: was "correctCount" - the results screen reads "correct",
+        // so the old field name was never picked up at all. "total" is
+        // now the real question count instead of the missing/defaulted
+        // value the results screen used to fall back to.
+        correct: correctCountRef.current,
+        total: questions.length,
+      }
+    });
   }
 
   const totalVotes = votes.reduce((a, v) => a + v.count, 0);

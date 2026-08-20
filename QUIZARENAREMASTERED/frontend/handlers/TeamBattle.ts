@@ -3,6 +3,7 @@ import Redis from 'ioredis';
 import { finalizeAndSaveBattle, PlayerResult } from '../src/lib/student/battle/battleSync';
 
 const COMPLETED_ROOM_TTL_SECONDS = 3600;
+const ACTIVE_ROOM_TTL_SECONDS = 4 * 60 * 60;
 
 function roomChannel(battleId: string): string {
   return `battle:team:${battleId}`;
@@ -16,10 +17,16 @@ function teamAnswersKey(battleId: string, questionIndex: number): string {
 function leaderboardKey(battleId: string): string {
   return `battle:team:${battleId}:leaderboard`;
 }
-// NEW: which student picked which team, kept separate from in-battle answer
+// which student picked which team, kept separate from in-battle answer
 // state since team picking happens during the lobby, before a battle exists.
 function teamsKey(battleId: string): string {
   return `battle:team:${battleId}:teams`;
+}
+// NEW: mirrors LiveBattle's `battle:{battleId}:questions` key — this was
+// missing entirely, which is why TeamBattle had no way to receive or relay
+// the professor's question set.
+function questionsKey(battleId: string): string {
+  return `battle:team:${battleId}:questions`;
 }
 
 export interface TeamMemberAnswerPayload {
@@ -36,9 +43,13 @@ export interface TeamBattlePayload {
   questionIndex?: number;
   answer?: TeamMemberAnswerPayload;
   isLastQuestion?: boolean;
-  // NEW: for JOIN_TEAM_LOBBY / TEAM_ASSIGNMENT_UPDATE
+  // for JOIN_TEAM_LOBBY / TEAM_ASSIGNMENT_UPDATE
   userId?: string;
   teamId?: number | string | null;
+  // NEW: carries the professor's question bank when starting the match,
+  // exactly like BattlePayload.questions does in LiveBattle.ts.
+  questions?: unknown[];
+  forceReset?: boolean;
 }
 
 class TeamBattleHandler {
@@ -66,7 +77,7 @@ class TeamBattleHandler {
     });
   }
 
-  // NEW: shared by JOIN_TEAM_BATTLE, JOIN_TEAM_LOBBY, and (defensively)
+  // shared by JOIN_TEAM_BATTLE, JOIN_TEAM_LOBBY, and (defensively)
   // TEAM_ASSIGNMENT_UPDATE — registers this socket as a member of the room
   // so it receives future broadcasts on `channel`, and subscribes the Redis
   // channel the first time anyone joins.
@@ -141,6 +152,7 @@ class TeamBattleHandler {
     const ansKey = teamAnswersKey(battleId, questionIndex);
     const lKey = leaderboardKey(battleId);
     const tKey = teamsKey(battleId);
+    const qKey = questionsKey(battleId);
 
     // ── JOIN TEAM LOBBY (pre-battle team picking, sent from Lobby_TeamMode) ──
     if (type === 'JOIN_TEAM_LOBBY') {
@@ -192,14 +204,72 @@ class TeamBattleHandler {
       const rawAnswers = await redisPublisher.hgetall(ansKey);
       const teamAnswers = Object.values(rawAnswers || {}).map((item) => JSON.parse(item));
 
+      // NEW: hand back whatever question set the professor already started
+      // this match with, same as LiveBattle's JOIN_BATTLE does. Without
+      // this, a student who joins/reconnects after PROF_START_TEAM never
+      // gets the questions at all.
+      const rawQuestions = await redisPublisher.get(qKey);
+      const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
+
       ws.send(
         JSON.stringify({
           type: 'TEAM_STATE_SYNC',
           battleId,
           questionIndex,
           teamAnswers,
+          questions,
         })
       );
+      return;
+    }
+
+    // ── PROFESSOR STARTS THE TEAM BATTLE ── (NEW — mirrors LiveBattle's
+    // PROF_START_BATTLE; this case did not exist before, which is the root
+    // cause of Team clients being stuck on "Waiting for questions to load…")
+    if (type === 'PROF_START_TEAM') {
+      await redisPublisher.hset(sKey, { status: 'active', roomCode: roomCode || '' });
+      await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
+
+      if (payload.forceReset) {
+        await redisPublisher.del(ansKey);
+        await redisPublisher.del(lKey);
+      }
+
+      if (payload.questions && Array.isArray(payload.questions)) {
+        await redisPublisher.set(qKey, JSON.stringify(payload.questions));
+      }
+
+      const rawQuestions = await redisPublisher.get(qKey);
+      const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
+
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({
+          type: 'TEAM_STATE_SYNC',
+          battleId,
+          questionIndex: 0,
+          teamAnswers: [],
+          questions,
+        })
+      );
+
+      // FIX: the pre-battle lobby screen (useLobbySocket) only ever joins
+      // via JOIN_BATTLE, which subscribes it to the generic `battle:{battleId}`
+      // channel through liveBattleHandler — it is NEVER registered with this
+      // handler's own `battle:team:{battleId}` channel, so the broadcast
+      // above can never reach it no matter what message type it's looking
+      // for. Without this second publish, students stay stuck on the lobby
+      // screen forever even though the match has actually started.
+      await redisPublisher.publish(
+        `battle:${battleId}`,
+        JSON.stringify({
+          type: 'TEAM_STATE_SYNC',
+          battleId,
+          questions,
+        })
+      );
+
+      console.log(`Professor started Team Battle Room ${battleId} with ${questions.length} synchronized questions.`);
       return;
     }
 

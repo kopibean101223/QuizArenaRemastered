@@ -3,6 +3,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Trophy, MessageSquare, Crown, CheckCircle, Zap } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import {
+  useBattleSocket,
+  formatBattleQuestions,
+  getStudentIdentity,
+} from '@/lib/student/battle/useBattleConnection';
 
 export interface TeamMemberAnswer {
   memberId: string;
@@ -29,38 +34,8 @@ export interface TeamBattleProps {
 
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
 
-// Same shape LiveBattle uses to normalize whatever /api/questions returns
-function formatQuestions(raw: any[]): TeamQuestion[] {
-  return raw.map((q: any, idx: number) => {
-    let parsedChoices: string[] = [];
-    try {
-      let rawChoices = q.choices || q.options;
-      if (typeof rawChoices === 'string') rawChoices = JSON.parse(rawChoices);
-      if (Array.isArray(rawChoices)) {
-        parsedChoices = rawChoices.map((c: any) =>
-          String(typeof c === 'object' && c !== null ? c.text || c.label || String(c) : c)
-        );
-      }
-    } catch {
-      parsedChoices = [];
-    }
-    const correctIdx = parsedChoices.findIndex((c) => c === q.answer);
-    return {
-      id: q.id ?? idx,
-      number: idx + 1,
-      total: raw.length,
-      subject: q.topic || q.subject || 'General Knowledge',
-      text: q.text || q.question,
-      options: parsedChoices,
-      correct: correctIdx !== -1 ? correctIdx : Number(q.correct) || 0,
-      points: Number(q.points) || 10,
-    };
-  });
-}
-
 export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
   const { user, navigate, setLastBattleMode } = useApp();
-  const wsRef = useRef<WebSocket | null>(null);
 
   const [questions, setQuestions] = useState<TeamQuestion[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -70,83 +45,83 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
   const [confirmed, setConfirmed] = useState(false);
   const [teamMemberAnswers, setTeamMemberAnswers] = useState<TeamMemberAnswer[]>([]);
 
-  const memberId = user?.id || `guest_${Math.random().toString(36).slice(2, 8)}`;
-  const memberName =
-    user?.username || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'You';
+  const { studentName: memberName, currentUserId: memberId } = getStudentIdentity(user);
 
-  // 1. Load real questions
+  // NEW: extracts questions from a Team WS payload — same shape
+  // LiveBattle/OwnPace use; TeamMode just doesn't need `answer` or `timeLimit`.
+  function applyTeamQuestions(rawQuestions: unknown[]) {
+    setQuestions(
+      formatBattleQuestions(rawQuestions).map((q) => ({
+        id: q.id,
+        number: q.number,
+        total: q.total,
+        subject: q.subject,
+        text: q.text,
+        options: q.options,
+        correct: q.correct,
+        points: q.points,
+      }))
+    );
+  }
+
+  // 1. Fallback questions loader. This previously was the ONLY source of
+  // questions for Team Mode, which is why it was stuck on "Waiting for
+  // questions to load…" — /api/questions is scoped to the CALLER's own
+  // user id, so a student calling it always gets an empty array back.
+  // Now it's just a fallback; the real source is the WS payload below,
+  // matching how Battle_LiveQuiz.tsx already worked.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        if (questions.length > 0) return;
         const res = await fetch('/api/questions');
         if (res.ok) {
           const data = await res.json();
           if (!cancelled && Array.isArray(data) && data.length > 0) {
-            setQuestions(formatQuestions(data));
+            applyTeamQuestions(data);
           }
         }
       } catch (err) {
-        console.error('[TeamBattle] Failed to load questions:', err);
+        console.error('[TeamBattle] Failed to load fallback questions:', err);
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [questions.length]);
 
-  // 2. Real WebSocket connection — FIX (1.1): this used to be a commented-out
-  // "simulation". Now it actually joins the team room and reacts to what
-  // TeamBattle.ts (server) sends back.
-  useEffect(() => {
-    let socket: WebSocket | null = null;
-    let isMounted = true;
-
-    function connectWs() {
-      if (!isMounted) return;
-      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
-      socket = new WebSocket(wsUrl);
-      wsRef.current = socket;
-
-      socket.onopen = () => {
-        socket?.send(JSON.stringify({
-          type: 'JOIN_TEAM_BATTLE',
-          battleId,
-          questionIndex,
-        }));
-      };
-
-      socket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-
-          if (data.type === 'TEAM_STATE_SYNC' || data.type === 'TEAM_ANSWERS_UPDATED') {
-            if (Array.isArray(data.teamAnswers)) {
-              setTeamMemberAnswers(data.teamAnswers);
-            }
-          }
-
-          if (data.type === 'TEAM_BATTLE_COMPLETED') {
-            setLastBattleMode('TEAM');
-            navigate('results');
-          }
-        } catch (err) {
-          console.error('[TeamBattle] WS parse error:', err);
+  // 2. Real WebSocket connection — connect/reconnect lifecycle now lives in
+  // useBattleSocket (shared with the other 3 battle modes). Reconnects on
+  // every question index change so the server keys the answer bucket
+  // correctly, same as before.
+  const { send } = useBattleSocket({
+    battleId,
+    deps: [questionIndex],
+    onOpen: (socket) => {
+      socket.send(JSON.stringify({
+        type: 'JOIN_TEAM_BATTLE',
+        mode: 'TEAM',
+        battleId,
+        questionIndex,
+      }));
+    },
+    onMessage: (data) => {
+      if (data.type === 'TEAM_STATE_SYNC' || data.type === 'TEAM_ANSWERS_UPDATED') {
+        if (Array.isArray(data.teamAnswers)) {
+          setTeamMemberAnswers(data.teamAnswers);
         }
-      };
+        // NEW: the professor's PROF_START_TEAM broadcast (and JOIN_TEAM_BATTLE's
+        // reply for late joiners/reconnects) now carries the real question set.
+        if (Array.isArray(data.questions) && data.questions.length > 0) {
+          applyTeamQuestions(data.questions);
+        }
+      }
 
-      socket.onclose = () => {
-        if (isMounted) setTimeout(connectWs, 2000);
-      };
-    }
-
-    connectWs();
-    return () => {
-      isMounted = false;
-      socket?.close();
-      wsRef.current = null;
-    };
-    // Re-join whenever we move to a new question so the server keys the answer bucket correctly.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [battleId, questionIndex]);
+      if (data.type === 'TEAM_BATTLE_COMPLETED') {
+        setLastBattleMode('TEAM');
+        navigate('results');
+      }
+    },
+  });
 
   const handleSelectOption = (optionKey: string) => {
     if (confirmed) return;
@@ -164,14 +139,12 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
       submittedAt: Date.now(),
     };
 
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'SUBMIT_TEAM_MEMBER_ANSWER',
-        battleId,
-        questionIndex,
-        answer: myAnswer,
-      }));
-    }
+    send({
+      type: 'SUBMIT_TEAM_MEMBER_ANSWER',
+      battleId,
+      questionIndex,
+      answer: myAnswer,
+    });
 
     const isLastQuestion = questionIndex >= questions.length - 1;
 
@@ -179,13 +152,11 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
     // move to the next question or end the battle for real (not just locally).
     setTimeout(() => {
       if (isLastQuestion) {
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: 'END_TEAM_BATTLE',
-            battleId,
-            isLastQuestion: true,
-          }));
-        }
+        send({
+          type: 'END_TEAM_BATTLE',
+          battleId,
+          isLastQuestion: true,
+        });
       } else {
         setQuestionIndex((i) => i + 1);
         setSelectedOption('');
@@ -307,7 +278,7 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
           </div>
         </div>
       </div>
-    </div>  
+    </div>
   );
 }
 

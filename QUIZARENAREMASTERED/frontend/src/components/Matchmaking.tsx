@@ -610,16 +610,27 @@ async function handleConfirmAndDeploy() {
     }
   }
 
-  const handleStartBattle = () => {
+    const handleStartBattle = () => {
     setBattleStarted(true);
     setCurrentIndex(0);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
+      const startType =
+        lobbyType === 'royale' ? 'PROF_START_ROYALE' :
+        lobbyType === 'team' ? 'PROF_START_TEAM' :
+        'PROF_START_BATTLE';
+      const startMode =
+        lobbyType === 'royale' ? 'ROYALE' :
+        lobbyType === 'team' ? 'TEAM' :
+        undefined;
+
       wsRef.current.send(JSON.stringify({
-        type: 'PROF_START_BATTLE',
-        battleId: sessionId, 
+        type: startType,
+        mode: startMode,
+        battleId: sessionId,
         bankId: selectedBank.id,
         forceReset: true,
-        questions: randomizedQuestions 
+        questions: randomizedQuestions,
+        startingHp: 3,
       }));
     }
   };

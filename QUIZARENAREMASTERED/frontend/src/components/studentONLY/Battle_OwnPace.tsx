@@ -24,6 +24,11 @@ import { CountdownBar } from "./LiveBattleCOMPONENTONLY/CountdownBar";
 import { AnswerBtn } from "./LiveBattleCOMPONENTONLY/AnswerButton";
 import { LeaderRow } from "./LiveBattleCOMPONENTONLY/LeaderRow";
 import { ChatBubble } from "./LiveBattleCOMPONENTONLY/ChatBubble";
+import {
+  useBattleSocket,
+  getStudentIdentity,
+  computeTimeLeft,
+} from "@/lib/student/battle/useBattleConnection";
 
 const MANUAL_QUESTIONS: QuestionData[] = [
   {
@@ -90,23 +95,16 @@ const MANUAL_QUESTIONS: QuestionData[] = [
 
 export function SelfPacedBattle({ battleId = "room_101" }: { battleId?: string }) {
   const { navigate, user } = useApp();
-  const socketRef = useRef<WebSocket | null>(null);
 
   const [questions, setQuestions] = useState<QuestionData[]>(MANUAL_QUESTIONS);
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const currentQuestion = questions[currentIndex];
 
-  const studentName = user?.username || user?.user_metadata?.full_name || user?.email?.split('@')[0] || "Student";
-  const currentUserId = user?.id || `user_${Math.floor(1000 + Math.random() * 9000)}`;
+  const { studentName, currentUserId } = getStudentIdentity(user);
 
   // ── INDIVIDUAL TIMER COMPUTATION ──
   const [startedAt, setStartedAt] = useState<number | null>(Date.now());
-  const computeTimeLeft = (limit: number, startTs: number | null) => {
-    if (!startTs) return limit;
-    const elapsedSeconds = Math.floor((Date.now() - Number(startTs)) / 1000);
-    return Math.max(limit - elapsedSeconds, 0);
-  };
 
   const [timeLeft, setTimeLeft] = useState(currentQuestion?.timeLimit || 15);
   const [selected, setSelected] = useState<number | null>(null);
@@ -120,114 +118,90 @@ export function SelfPacedBattle({ battleId = "room_101" }: { battleId?: string }
   const myPlayer = players.find((p) => p.isMe || p.id === currentUserId);
 
   // ── WEBSOCKET CONNECTION & SELF-PACED SYNC ──
-  useEffect(() => {
-    let socket: WebSocket | null = null;
-    let isMounted = true;
-
-    function connectWs() {
-      if (!isMounted) return;
-      const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080";
-      socket = new WebSocket(wsUrl);
-      socketRef.current = socket;
-
-      socket.onopen = () => {
-        socket?.send(
-          JSON.stringify({
-            mode: "SELF_PACED",
-            type: "JOIN_SELF_PACED_BATTLE",
-            battleId,
-            playerId: currentUserId,
-            sender: studentName,
-          })
-        );
-      };
-
-      socket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-
-          // Initial sync of student's personal question index and timer
-          if (data.type === "SELF_PACED_STATE_SYNC") {
-            if (typeof data.currentIndex === "number") {
-              setCurrentIndex(data.currentIndex);
-            }
-            if (data.startedAt) {
-              setStartedAt(Number(data.startedAt));
-            }
-            if (typeof data.score === "number") {
-              setPlayers((prev) =>
-                prev.map((p) => (p.isMe || p.id === currentUserId ? { ...p, score: data.score } : p))
-              );
-            }
-          }
-
-          // Server confirms individual question advance and sets personal start time
-          if (data.type === "PLAYER_QUESTION_STARTED") {
-            if (typeof data.currentIndex === "number") {
-              setCurrentIndex(data.currentIndex);
-            }
-            if (data.startedAt) {
-              setStartedAt(Number(data.startedAt));
-            }
-          }
-
-          // Live Leaderboard sync across all players in room
-          if (data.type === "PLAYER_SCORE_UPDATED" || data.type === "SCORE_UPDATED") {
-            if (Array.isArray(data.leaderboard)) {
-              const formattedPlayers: Player[] = data.leaderboard.map((item: any, idx: number) => ({
-                id: item.id || item.userId || item.playerId,
-                name: item.name || item.sender || `Player ${idx + 1}`,
-                initials: (item.name || "P").substring(0, 2).toUpperCase(),
-                color: AVATAR_COLORS[idx % AVATAR_COLORS.length],
-                score: item.score || 0,
-                streak: item.streak || 0,
-                isMe: (item.id || item.userId || item.playerId) === currentUserId,
-                isLeader: idx === 0,
-              }));
-              setPlayers(formattedPlayers);
-            } else if (data.playerId && typeof data.score === "number") {
-              setPlayers((prev) =>
-                prev.map((p) =>
-                  p.id === data.playerId || (p.isMe && data.playerId === currentUserId)
-                    ? { ...p, score: data.score }
-                    : p
-                )
-              );
-            }
-          }
-
-          // Chat Broadcasts
-          if (data.type === "BATTLE_ACTION" || data.type === "CHAT_MESSAGE") {
-            setChat((prev) => [
-              ...prev,
-              {
-                id: Date.now() + Math.random(),
-                player: data.sender || "Anonymous",
-                initials: (data.sender || "AN").substring(0, 2).toUpperCase(),
-                color: AVATAR_COLORS[prev.length % AVATAR_COLORS.length],
-                text: data.message,
-                ts: new Date(data.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              },
-            ]);
-          }
-        } catch (err) {
-          console.error("Failed to parse incoming WS message:", err);
+  // Connect/reconnect lifecycle now lives in useBattleSocket (shared with the
+  // other 3 battle modes). Only the JOIN payload and message handling below
+  // are specific to self-paced mode.
+  const { send } = useBattleSocket({
+    battleId,
+    deps: [currentUserId, studentName],
+    onOpen: (socket) => {
+      socket.send(
+        JSON.stringify({
+          mode: "SELF_PACED",
+          type: "JOIN_SELF_PACED_BATTLE",
+          battleId,
+          playerId: currentUserId,
+          sender: studentName,
+        })
+      );
+    },
+    onMessage: (data) => {
+      // Initial sync of student's personal question index and timer
+      if (data.type === "SELF_PACED_STATE_SYNC") {
+        if (typeof data.currentIndex === "number") {
+          setCurrentIndex(data.currentIndex);
         }
-      };
+        if (data.startedAt) {
+          setStartedAt(Number(data.startedAt));
+        }
+        if (typeof data.score === "number") {
+          setPlayers((prev) =>
+            prev.map((p) => (p.isMe || p.id === currentUserId ? { ...p, score: data.score } : p))
+          );
+        }
+      }
 
-      socket.onclose = () => {
-        if (isMounted) setTimeout(connectWs, 2000);
-      };
-    }
+      // Server confirms individual question advance and sets personal start time
+      if (data.type === "PLAYER_QUESTION_STARTED") {
+        if (typeof data.currentIndex === "number") {
+          setCurrentIndex(data.currentIndex);
+        }
+        if (data.startedAt) {
+          setStartedAt(Number(data.startedAt));
+        }
+      }
 
-    connectWs();
+      // Live Leaderboard sync across all players in room
+      if (data.type === "PLAYER_SCORE_UPDATED" || data.type === "SCORE_UPDATED") {
+        if (Array.isArray(data.leaderboard)) {
+          const formattedPlayers: Player[] = data.leaderboard.map((item: any, idx: number) => ({
+            id: item.id || item.userId || item.playerId,
+            name: item.name || item.sender || `Player ${idx + 1}`,
+            initials: (item.name || "P").substring(0, 2).toUpperCase(),
+            color: AVATAR_COLORS[idx % AVATAR_COLORS.length],
+            score: item.score || 0,
+            streak: item.streak || 0,
+            isMe: (item.id || item.userId || item.playerId) === currentUserId,
+            isLeader: idx === 0,
+          }));
+          setPlayers(formattedPlayers);
+        } else if (data.playerId && typeof data.score === "number") {
+          setPlayers((prev) =>
+            prev.map((p) =>
+              p.id === data.playerId || (p.isMe && data.playerId === currentUserId)
+                ? { ...p, score: data.score }
+                : p
+            )
+          );
+        }
+      }
 
-    return () => {
-      isMounted = false;
-      if (socket) socket.close();
-      socketRef.current = null;
-    };
-  }, [battleId, currentUserId, studentName]);
+      // Chat Broadcasts
+      if (data.type === "BATTLE_ACTION" || data.type === "CHAT_MESSAGE") {
+        setChat((prev) => [
+          ...prev,
+          {
+            id: Date.now() + Math.random(),
+            player: data.sender || "Anonymous",
+            initials: (data.sender || "AN").substring(0, 2).toUpperCase(),
+            color: AVATAR_COLORS[prev.length % AVATAR_COLORS.length],
+            text: data.message,
+            ts: new Date(data.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          },
+        ]);
+      }
+    },
+  });
 
   // Reset answer states on question change
   useEffect(() => {
@@ -287,21 +261,17 @@ export function SelfPacedBattle({ battleId = "room_101" }: { battleId?: string }
     );
 
     // Broadcast score submission over WebSocket
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(
-        JSON.stringify({
-          mode: "SELF_PACED",
-          type: "SUBMIT_SCORE",
-          battleId,
-          playerId: currentUserId,
-          sender: studentName,
-          score: newScore,
-          pointsAdded: pointsToAdd,
-          isCorrect,
-          questionId: currentQuestion.id,
-        })
-      );
-    }
+    send({
+      mode: "SELF_PACED",
+      type: "SUBMIT_SCORE",
+      battleId,
+      playerId: currentUserId,
+      sender: studentName,
+      score: newScore,
+      pointsAdded: pointsToAdd,
+      isCorrect,
+      questionId: currentQuestion.id,
+    });
   }
 
   // Advance player independently to the next question
@@ -314,19 +284,17 @@ export function SelfPacedBattle({ battleId = "room_101" }: { battleId?: string }
       return;
     }
 
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(
-        JSON.stringify({
-          mode: "SELF_PACED",
-          type: "ADVANCE_SELF_PACED_QUESTION",
-          battleId,
-          playerId: currentUserId,
-          sender: studentName,
-          currentIndex: nextIndex,
-          score: myPlayer?.score || 0,
-        })
-      );
-    } else {
+    const sent = send({
+      mode: "SELF_PACED",
+      type: "ADVANCE_SELF_PACED_QUESTION",
+      battleId,
+      playerId: currentUserId,
+      sender: studentName,
+      currentIndex: nextIndex,
+      score: myPlayer?.score || 0,
+    });
+
+    if (!sent) {
       setCurrentIndex(nextIndex);
       setStartedAt(Date.now());
     }
@@ -337,18 +305,16 @@ export function SelfPacedBattle({ battleId = "room_101" }: { battleId?: string }
     if (!chatInput.trim()) return;
     const message = chatInput.trim();
 
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(
-        JSON.stringify({
-          mode: "SELF_PACED",
-          type: "BATTLE_ACTION",
-          battleId,
-          playerId: currentUserId,
-          sender: studentName,
-          message,
-        })
-      );
-    } else {
+    const sent = send({
+      mode: "SELF_PACED",
+      type: "BATTLE_ACTION",
+      battleId,
+      playerId: currentUserId,
+      sender: studentName,
+      message,
+    });
+
+    if (!sent) {
       setChat((prev) => [
         ...prev,
         {
