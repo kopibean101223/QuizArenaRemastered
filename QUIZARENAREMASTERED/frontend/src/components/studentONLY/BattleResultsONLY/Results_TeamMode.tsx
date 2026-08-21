@@ -124,10 +124,10 @@ export function TeamBattleResults({ battleId = "team-demo", myResultData }: { ba
 
         {/* ACTION ROW */}
         <div style={{ maxWidth:700, margin:"24px auto 36px", padding:"0 20px", display:"flex", gap:12 }}>
-          <button type="button" onClick={() => navigate("lobby")} style={{ flex:1, background:C.indigo, border:"none", borderRadius:16, padding:"14px", fontFamily:"Fredoka, sans-serif", fontSize:18, fontWeight:700, color:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+          <button type="button" onClick={() => navigate("student_dashboard")} style={{ flex:1, background:C.indigo, border:"none", borderRadius:16, padding:"14px", fontFamily:"Fredoka, sans-serif", fontSize:18, fontWeight:700, color:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
             <RotateCcw size={18}/> Play Next Battle
           </button>
-          <button type="button" onClick={() => navigate("lobby")} style={{ flex:1, background:"rgba(255,255,255,0.06)", border:"1.5px solid rgba(255,255,255,0.12)", borderRadius:16, padding:"14px", fontFamily:"Fredoka, sans-serif", fontSize:18, fontWeight:700, color:"rgba(255,255,255,0.7)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+          <button type="button" onClick={() => navigate("student_dashboard")} style={{ flex:1, background:"rgba(255,255,255,0.06)", border:"1.5px solid rgba(255,255,255,0.12)", borderRadius:16, padding:"14px", fontFamily:"Fredoka, sans-serif", fontSize:18, fontWeight:700, color:"rgba(255,255,255,0.7)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
             <LogOut size={18}/> Lobby
           </button>
         </div>

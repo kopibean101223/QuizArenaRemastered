@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -7,21 +6,23 @@ import { useApp } from "../../context/AppContext";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { StudentNavBar } from "../shared/StudentNavBar";
-import { joinBattleByCode, joinKnownBattle } from "@/lib/student/joinlobby";
+import { resolveRoomCode, consumePendingJoin } from "@/lib/student/joinlobby";
 import {
   fetchMyQuizResults,
   fetchMySections,
   fetchLiveSessionsForMySections,
-  findActiveSessionByRoomCode,
   summarizeResults,
   levelFromXp,
   subjectColor,
   modeLabel,
-  PENDING_JOIN_CODE_KEY,
   type QuizResultRow,
   type MySection,
   type LiveSessionInfo,
 } from "@/lib/student/studentData";
+import { Lobby_LiveQuiz } from "./Lobby/Lobby_LiveQuiz";
+import { Lobby_TeamMode } from "./Lobby/Lobby_TeamMode";
+import { Lobby_BattleRoyale } from "./Lobby/Lobby_BattleRoyale";
+import { Lobby_OwnPaced } from "./Lobby/Lobby_OwnPaced";
 
 const C = {
   bg: "#100E1C",
@@ -34,8 +35,18 @@ const C = {
   muted: "rgba(255,255,255,0.5)",
 };
 
+type ResolvedMode = "LIVE" | "TEAM" | "ROYALE" | "SELF_PACED";
+
+function normalizeMode(mode: string | null | undefined): ResolvedMode {
+  const m = (mode || "").toUpperCase();
+  if (m === "TEAM") return "TEAM";
+  if (m === "ROYALE") return "ROYALE";
+  if (m === "SELF_PACED" || m === "SELFPACED") return "SELF_PACED";
+  return "LIVE";
+}
+
 export function StudentDashboard() {
-  const { user, navigate } = useApp();
+  const { user, navigate, setActiveSectionId } = useApp();
   const supabase = createBrowserSupabaseClient();
 
   const [loading, setLoading] = useState(true);
@@ -44,6 +55,31 @@ export function StudentDashboard() {
   const [liveSessions, setLiveSessions] = useState<LiveSessionInfo[]>([]);
   const [joinCode, setJoinCode] = useState("");
   const [joining, setJoining] = useState(false);
+
+  // Formerly handled by Lobby.tsx: once a room code resolves to a session,
+  // we render the matching mode-specific lobby in place of the dashboard.
+  const [hasJoined, setHasJoined] = useState(false);
+  const [roomCode, setRoomCode] = useState("");
+  const [sessionId, setSessionId] = useState("");
+  const [mode, setMode] = useState<ResolvedMode>("LIVE");
+
+  function enterBattle(code: string, sid: string, rawMode: string | null | undefined) {
+    setRoomCode(code);
+    setSessionId(sid);
+    setMode(normalizeMode(rawMode));
+    setActiveSectionId(sid);
+    setHasJoined(true);
+    toast.success("Successfully joined the live lobby!");
+  }
+
+  // Picks up a room code staged elsewhere (e.g. a deep link) via
+  // stagePendingJoin(), so the student doesn't have to re-type it here.
+  useEffect(() => {
+    const pending = consumePendingJoin();
+    if (pending) {
+      enterBattle(pending.code, pending.sessionId, pending.mode);
+    }
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -90,20 +126,18 @@ export function StudentDashboard() {
 
   async function handleJoinByCode() {
     if (!user) return;
+    if (!joinCode.trim()) {
+      toast.error("Please enter a valid room code.");
+      return;
+    }
     setJoining(true);
-    const res = await findActiveSessionByRoomCode(supabase, joinCode);
+    const res = await resolveRoomCode(supabase, joinCode);
     setJoining(false);
-    if (!res.ok || !res.sectionId) {
+    if (!res.ok || !res.sessionId) {
       toast.error(res.message);
       return;
     }
-    try {
-      window.localStorage.setItem(
-        PENDING_JOIN_CODE_KEY,
-        JSON.stringify({ code: joinCode.trim().toUpperCase(), sectionId: res.sectionId })
-      );
-    } catch {}
-    navigate("lobby");
+    enterBattle(res.code!, res.sessionId, res.mode);
   }
 
   async function handlePasteCode() {
@@ -115,10 +149,25 @@ export function StudentDashboard() {
     }
   }
 
-function handleJoinLiveSession(session: LiveSessionInfo) {
-  joinKnownBattle(session.room_code, session.id); // session.id, not section_id
-  navigate("lobby");
-}
+  function handleJoinLiveSession(session: LiveSessionInfo) {
+    enterBattle(session.room_code, session.id, session.mode); // session.id, not section_id
+  }
+
+  // Handoff to the mode-specific lobby once we know which room + mode.
+  // Replaces what Lobby.tsx used to render — no dashboard chrome here.
+  if (hasJoined && sessionId) {
+    switch (mode) {
+      case "TEAM":
+        return <Lobby_TeamMode sessionId={sessionId} roomCode={roomCode} />;
+      case "ROYALE":
+        return <Lobby_BattleRoyale sessionId={sessionId} roomCode={roomCode} />;
+      case "SELF_PACED":
+        return <Lobby_OwnPaced sessionId={sessionId} roomCode={roomCode} />;
+      case "LIVE":
+      default:
+        return <Lobby_LiveQuiz sessionId={sessionId} roomCode={roomCode} />;
+    }
+  }
 
   const initials = (user?.name || "??").slice(0, 2).toUpperCase();
 

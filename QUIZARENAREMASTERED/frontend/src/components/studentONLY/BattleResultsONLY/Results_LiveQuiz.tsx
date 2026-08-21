@@ -470,10 +470,10 @@ export function BattleResults({ battleId = "room-demo", myResultData }: BattleRe
 
         {/* ACTION ROW */}
         <div style={{ maxWidth:740, margin:"24px auto 36px", padding:"0 20px", display:"flex", gap:12 }}>
-          <button type="button" onClick={() => navigate("lobby")} style={{ flex:1, background:`linear-gradient(135deg,${C.coral},${C.coralDeep})`, border:"none", borderRadius:18, padding:"16px 28px", fontFamily:"Fredoka, sans-serif", fontSize:22, fontWeight:700, color:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+          <button type="button" onClick={() => navigate("student_dashboard")} style={{ flex:1, background:`linear-gradient(135deg,${C.coral},${C.coralDeep})`, border:"none", borderRadius:18, padding:"16px 28px", fontFamily:"Fredoka, sans-serif", fontSize:22, fontWeight:700, color:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
             <RotateCcw size={20}/> Play Again
           </button>
-          <button type="button" onClick={() => navigate("lobby")} style={{ flex:1, background:"rgba(255,255,255,0.06)", border:"2px solid rgba(255,255,255,0.15)", borderRadius:18, padding:"16px 24px", fontFamily:"Fredoka, sans-serif", fontSize:20, fontWeight:700, color:"rgba(255,255,255,0.7)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+          <button type="button" onClick={() => navigate("student_dashboard")} style={{ flex:1, background:"rgba(255,255,255,0.06)", border:"2px solid rgba(255,255,255,0.15)", borderRadius:18, padding:"16px 24px", fontFamily:"Fredoka, sans-serif", fontSize:20, fontWeight:700, color:"rgba(255,255,255,0.7)", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
             <LogOut size={18}/> Back to Lobby
           </button>
           <button type="button" onClick={() => setShowShare(true)} style={{ width:58, height:58, borderRadius:18, background:C.indigo, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>

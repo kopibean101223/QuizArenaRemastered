@@ -1,11 +1,9 @@
-
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { AppProvider, useApp } from "@/context/AppContext";
 import { AuthScreen } from "@/components/AuthScreen";
-import { Lobby } from "@/components/studentONLY/Lobby";
 import { StudentDashboard } from "@/components/studentONLY/StudentDashboard";
 import { StudentHistory } from "@/components/studentONLY/StudentHistory";
 import { StudentClasses } from "@/components/studentONLY/StudentClasses";
@@ -78,10 +76,6 @@ function RouterContent() {
       return <StudentClasses />;
     case "profile":
       return <StudentProfile />;
-    case "lobby":
-      // BattleLobby internally switches between self-paced/team/live modes
-      // once the professor starts the session, based on the section's mode.
-      return <Lobby />;
     case "results":
       return <BattleResults battleId={battleId} />;
     case "dashboard":
