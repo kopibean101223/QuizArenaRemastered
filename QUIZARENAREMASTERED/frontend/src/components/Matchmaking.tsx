@@ -230,18 +230,39 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [groups, setGroups] = useState<string[]>(['Team 1', 'Team 2']);
 
   const handleAddGroup = () => {
-    setGroups(prev => {
-      const existingNums = prev
-        .map(g => parseInt(g.replace('Team ', '')))
-        .filter(n => !isNaN(n));
-      const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
-      return [...prev, `Team ${nextNum}`];
-    });
-  };
+  const existingNums = groups
+    .map(g => parseInt(g.replace('Team ', '')))
+    .filter(n => !isNaN(n));
+  const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+  const next = [...groups, `Team ${nextNum}`];
 
-  const handleRemoveGroup = (groupName: string) => {
-    setGroups(prev => prev.filter(g => g !== groupName));
-  };
+  setGroups(next);
+
+  if (wsRef.current?.readyState === WebSocket.OPEN) {
+    wsRef.current.send(JSON.stringify({
+      type: 'PROF_UPDATE_GROUPS',
+      mode: 'TEAM',
+      battleId: sessionId,
+      groups: next,
+      teamSize, // NEW
+    }));
+  }
+};
+
+const handleRemoveGroup = (groupName: string) => {
+  const next = groups.filter(g => g !== groupName);
+  setGroups(next);
+
+  if (wsRef.current?.readyState === WebSocket.OPEN) {
+    wsRef.current.send(JSON.stringify({
+      type: 'PROF_UPDATE_GROUPS',
+      mode: 'TEAM',
+      battleId: sessionId,
+      groups: next,
+      teamSize, // NEW
+    }));
+  }
+};
 
   const [randomizedQuestions, setRandomizedQuestions] = useState<QuestionItem[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
@@ -399,12 +420,32 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
           timeLimit: 60,
           sender: 'Professor'
         }));
+          console.log("[TEAM][prof] onopen, lobbyType =", lobbyType);
+
+
+                if (lobbyType === 'team') {
+                      console.log("[TEAM][prof] sending JOIN_TEAM_LOBBY", { battleId: sessionId });
+
+          ws?.send(JSON.stringify({
+            type: 'JOIN_TEAM_LOBBY',
+            mode: 'TEAM',
+            battleId: sessionId,
+          }));
+
+          ws?.send(JSON.stringify({          // NEW — seeds Redis even if the
+            type: 'PROF_UPDATE_GROUPS',      // professor never touches Add/Remove
+            mode: 'TEAM',                    // Group after deploying
+            battleId: sessionId,
+            groups,
+            teamSize,
+          }));
+        }
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          
+            console.log("[TEAM][prof] received message type:", data.type, data);   // <-- add this line first thing
           if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'SCORE_UPDATED') {
             if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
             if (data.history) setLiveFeed(data.history);
@@ -472,6 +513,29 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                 }];
               });
             } 
+          }else if (data.type === 'TEAM_LOBBY_STATE_SYNC') {
+            if (Array.isArray(data.groups)) setGroups(data.groups);
+            if (typeof data.teamSize === 'number') setTeamSize(data.teamSize); // NEW
+
+            // teams is { [userId]: "teamName" } — picks made before/while
+            // this professor socket was (re)connecting.
+            if (data.teams && typeof data.teams === 'object') {
+              setJoinedStudents(prev => prev.map(s =>
+                data.teams[s.id] !== undefined ? { ...s, team: data.teams[s.id] || 'Unassigned' } : s
+              ));
+            }
+          }
+          else if (data.type === 'TEAM_GROUPS_UPDATED') {
+            if (Array.isArray(data.groups)) setGroups(data.groups);
+            if (typeof data.teamSize === 'number') setTeamSize(data.teamSize); // NEW
+          }
+          else if (data.type === 'TEAM_ASSIGNMENT_UPDATE' && data.userId) {
+    console.log("[TEAM][prof] applying assignment", data.userId, "->", data.teamId);
+            setJoinedStudents(prev => {
+      const matched = prev.some(s => s.id === data.userId);
+      if (!matched) console.warn("[TEAM][prof] no joinedStudents entry matches userId", data.userId, prev.map(s=>s.id));
+      return prev.map(s => s.id === data.userId ? { ...s, team: data.teamId || 'Unassigned' } : s);
+    });
           }
         } catch (err) {
           console.error("WS message parse error:", err);

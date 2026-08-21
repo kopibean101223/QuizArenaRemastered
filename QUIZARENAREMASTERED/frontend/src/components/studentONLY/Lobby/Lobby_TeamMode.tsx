@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useEffect, useMemo, useState } from "react";
@@ -35,42 +36,10 @@ import type { LobbyModeProps } from "./Lobby_LiveQuiz";
 /* TEAM CONFIGURATION                                                         */
 /* -------------------------------------------------------------------------- */
 
-type TeamId = 1 | 2 | 3 | 4;
-
-const TEAM_CAPACITY = 4;
-
-const TEAM_CONFIG: Record<
-  TeamId,
-  {
-    name: string;
-    color: string;
-    icon: string;
-  }
-> = {
-  1: {
-    name: "Team 1",
-    color: C.indigo,
-    icon: "🛡️",
-  },
-  2: {
-    name: "Team 2",
-    color: "#FFB347",
-    icon: "🛡️",
-  },
-  3: {
-    name: "Team 3",
-    color: "#E88A8A",
-    icon: "🛡️",
-  },
-  4: {
-    name: "Team 4",
-    color: "#F5A800",
-    icon: "🛡️",
-  },
-};
-
-const TEAM_IDS: TeamId[] = [1, 2, 3, 4];
-
+const TEAM_COLORS = [C.indigo, "#FFB347", "#E88A8A", "#F5A800", "#2ED47A", "#5BC8F6", "#B06EF6", "#FF9F40"];
+function getTeamColor(index: number) {
+  return TEAM_COLORS[index % TEAM_COLORS.length];
+}
 /* -------------------------------------------------------------------------- */
 /* LOCAL TEAM STATE                                                           */
 /* -------------------------------------------------------------------------- */
@@ -81,8 +50,7 @@ const TEAM_IDS: TeamId[] = [1, 2, 3, 4];
  * Later, this can be replaced with the server-synchronized team state
  * coming from useLobbySockets.ts.
  */
-type LocalTeamAssignments = Record<string, TeamId | null>;
-
+type LocalTeamAssignments = Record<string, string | null>;
 /* -------------------------------------------------------------------------- */
 /* COMPONENT                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -92,7 +60,7 @@ export function Lobby_TeamMode({
   roomCode,
 }: LobbyModeProps) {
   const { user } = useApp();
-
+  
   const studentName =
     user?.username ||
     user?.user_metadata?.full_name ||
@@ -103,17 +71,45 @@ export function Lobby_TeamMode({
   /* SOCKET                                                                    */
   /* ------------------------------------------------------------------------ */
 
-  const {
-    players,
-    countdown,
-    battleStarted,
-  } = useLobbySocket({
-    sessionId,
-    userId: user?.id,
-    userName: studentName,
-    enabled: true,
-    autoCountdown: true,
-  });
+const [groups, setGroups] = useState<string[]>([]);
+const [teamSize, setTeamSize] = useState(4);
+
+const {
+  players,
+  countdown,
+  battleStarted,
+  socketRef,
+} = useLobbySocket({
+  sessionId,
+  userId: user?.id,
+  userName: studentName,
+  enabled: true,
+  autoCountdown: true,
+  onOpen: (socket) => {
+    socket.send(JSON.stringify({
+      type: "JOIN_TEAM_LOBBY",
+      mode: "TEAM",
+      battleId: sessionId,
+    }));
+  },
+  onMessage: (data) => {
+  if (data.type === "TEAM_LOBBY_STATE_SYNC" || data.type === "TEAM_GROUPS_UPDATED") {
+    if (Array.isArray(data.groups)) setGroups(data.groups);
+    if (typeof data.teamSize === "number") setTeamSize(data.teamSize);
+  }
+  if (data.type === "TEAM_LOBBY_STATE_SYNC" && data.teams) {
+    // teams is { [userId]: "teamName" } — restores picks already made
+    // by others (or by this student, on reconnect) before this socket joined.
+    setTeamAssignments((previous) => ({ ...previous, ...data.teams }));
+  }
+  if (data.type === "TEAM_ASSIGNMENT_UPDATE" && data.userId) {
+    setTeamAssignments((previous) => ({
+      ...previous,
+      [data.userId]: data.teamId ?? null,
+    }));
+  }
+},
+});
 
   /* ------------------------------------------------------------------------ */
   /* LOCAL TEAM ASSIGNMENTS                                                    */
@@ -150,74 +146,61 @@ export function Lobby_TeamMode({
   /* TEAM HELPERS                                                              */
   /* ------------------------------------------------------------------------ */
 
-  const getPlayerTeam = (
-    playerId: string
-  ): TeamId | null => {
-    return teamAssignments[playerId] ?? null;
-  };
+ const getPlayerTeam = (playerId: string): string | null => {
+  return teamAssignments[playerId] ?? null;
+};
 
-  const getTeamPlayers = (
-    teamId: TeamId
-  ): LobbyPlayerT[] => {
-    return players.filter(
-      (player) =>
-        getPlayerTeam(player.id) === teamId
-    );
-  };
+const getTeamPlayers = (teamName: string): LobbyPlayerT[] => {
+  return players.filter((player) => getPlayerTeam(player.id) === teamName);
+};
 
-  const waitingPlayers = useMemo(() => {
-    return players.filter(
-      (player) =>
-        !getPlayerTeam(player.id)
-    );
-  }, [players, teamAssignments]);
+const waitingPlayers = useMemo(() => {
+  return players.filter((player) => !getPlayerTeam(player.id));
+}, [players, teamAssignments]);
 
-  const currentPlayerId = user?.id || "";
+const currentPlayerId = user?.id || "";
 
-  const currentPlayerTeam = currentPlayerId
-    ? getPlayerTeam(currentPlayerId)
-    : null;
+const currentPlayerTeam = currentPlayerId
+  ? getPlayerTeam(currentPlayerId)
+  : null;
 
-  /* ------------------------------------------------------------------------ */
-  /* JOIN / TRANSFER TEAM                                                      */
-  /* ------------------------------------------------------------------------ */
+const handleJoinTeam = (teamName: string) => {
+  if (battleStarted) {
+    toast.error("You cannot change teams after the battle starts.");
+    return;
+  }
 
-  const handleJoinTeam = (teamId: TeamId) => {
-    if (battleStarted) {
-      toast.error(
-        "You cannot change teams after the battle starts."
-      );
-      return;
-    }
+  const teamPlayers = getTeamPlayers(teamName);
 
-    const teamPlayers = getTeamPlayers(teamId);
+if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already full.`);
+    return;
+  }
 
-    /* Prevent joining a full team */
-    if (teamPlayers.length >= TEAM_CAPACITY) {
-      toast.error(
-        `${TEAM_CONFIG[teamId].name} is already full.`
-      );
-      return;
-    }
+  if (currentPlayerTeam === teamName) {
+    toast.info(`You are already in ${teamName}.`);
+    return;
+  }
 
-    /* Already on this team */
-    if (currentPlayerTeam === teamId) {
-      toast.info(
-        `You are already in ${TEAM_CONFIG[teamId].name}.`
-      );
-      return;
-    }
+  setTeamAssignments((previous) => ({
+    ...previous,
+    [currentPlayerId]: teamName,
+  }));
 
-    /* Move the current student */
-    setTeamAssignments((previous) => ({
-      ...previous,
-      [currentPlayerId]: teamId,
+  if (socketRef.current?.readyState === WebSocket.OPEN) {
+        console.log("[TEAM][client] sending TEAM_ASSIGNMENT_UPDATE", { userId: currentPlayerId, teamId: teamName, battleId: sessionId });
+    socketRef.current.send(JSON.stringify({
+      type: "TEAM_ASSIGNMENT_UPDATE",
+      mode: "TEAM",
+      battleId: sessionId,
+      userId: currentPlayerId,
+      teamId: teamName,
     }));
-
-    toast.success(
-      `You joined ${TEAM_CONFIG[teamId].name}!`
-    );
-  };
+  } else {
+    console.warn("[TEAM][client] socket not OPEN, join never sent!", socketRef.current?.readyState);
+  }
+  console.log("You joined ${teamName}!");
+  toast.success(`You joined ${teamName}!`);
+};
 
   /* ------------------------------------------------------------------------ */
   /* LEAVE TEAM / RETURN TO WAITING                                           */
@@ -232,6 +215,16 @@ export function Lobby_TeamMode({
       ...previous,
       [currentPlayerId]: null,
     }));
+
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({
+        type: "TEAM_ASSIGNMENT_UPDATE",
+        mode: "TEAM",
+        battleId: sessionId,
+        userId: currentPlayerId,
+        teamId: null,
+      }));
+    }
 
     toast.info("You are now waiting for a team.");
   };
@@ -252,40 +245,31 @@ export function Lobby_TeamMode({
   /* RENDER TEAM CARD                                                          */
   /* ------------------------------------------------------------------------ */
 
-  const renderTeamCard = (teamId: TeamId) => {
-    const config = TEAM_CONFIG[teamId];
+  const renderTeamCard = (teamName: string, index: number) => {
+    const color = getTeamColor(index);
+    const members = getTeamPlayers(teamName);
 
-    const members = getTeamPlayers(teamId);
-
-    const isFull =
-      members.length >= TEAM_CAPACITY;
-
-    const isCurrentTeam =
-      currentPlayerTeam === teamId;
-
-    const emptySlots =
-      Math.max(
-        0,
-        TEAM_CAPACITY - members.length
-      );
+    const isFull = members.length >= teamSize;
+    const isCurrentTeam = currentPlayerTeam === teamName;
+    const emptySlots = Math.max(0, teamSize - members.length);
 
     return (
       <div
-        key={teamId}
+        key={teamName}
         style={{
           position: "relative",
           background:
             "linear-gradient(145deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))",
           border:
             isCurrentTeam
-              ? `1.5px solid ${config.color}80`
+              ? `1.5px solid ${color}80`
               : "1.5px solid rgba(255,255,255,0.09)",
           borderRadius: 20,
           padding: 20,
           overflow: "hidden",
           boxShadow:
             isCurrentTeam
-              ? `0 0 0 1px ${config.color}20, 0 12px 30px rgba(0,0,0,0.18)`
+              ? `0 0 0 1px ${color}20, 0 12px 30px rgba(0,0,0,0.18)`
               : "0 10px 28px rgba(0,0,0,0.15)",
           transition:
             "all 0.2s ease",
@@ -299,7 +283,7 @@ export function Lobby_TeamMode({
             left: 0,
             right: 0,
             height: 3,
-            background: config.color,
+            background: color,
           }}
         />
 
@@ -327,7 +311,7 @@ export function Lobby_TeamMode({
                 lineHeight: 1,
               }}
             >
-              {config.icon}
+              🛡️
             </span>
 
             <span
@@ -339,7 +323,7 @@ export function Lobby_TeamMode({
                 color: "#fff",
               }}
             >
-              {config.name}
+              {teamName}
             </span>
           </div>
 
@@ -362,8 +346,7 @@ export function Lobby_TeamMode({
                 : "rgba(255,255,255,0.75)",
             }}
           >
-            {members.length}/{TEAM_CAPACITY}
-          </div>
+      {members.length}/{teamSize}          </div>
         </div>
 
         {/* MEMBERS */}
@@ -389,7 +372,7 @@ export function Lobby_TeamMode({
             length: emptySlots,
           }).map((_, index) => (
             <EmptySlot
-              key={`empty-${teamId}-${index}`}
+              key={`empty-${teamName}-${index}`}
             />
           ))}
         </div>
@@ -403,7 +386,7 @@ export function Lobby_TeamMode({
             isCurrentTeam
           }
           onClick={() =>
-            handleJoinTeam(teamId)
+            handleJoinTeam(teamName)
           }
           style={{
             width: "100%",
@@ -411,20 +394,20 @@ export function Lobby_TeamMode({
             borderRadius: 11,
             border:
               isCurrentTeam
-                ? `1px solid ${config.color}50`
+                ? `1px solid ${color}50`
                 : isFull
                   ? "1px solid rgba(255,255,255,0.06)"
-                  : `1px solid ${config.color}80`,
+                  : `1px solid ${color}80`,
             padding: "10px 14px",
             background:
               isCurrentTeam
-                ? `${config.color}18`
+                ? `${color}18`
                 : isFull
                   ? "rgba(255,255,255,0.035)"
-                  : `${config.color}14`,
+                  : `${color}14`,
             color:
               isCurrentTeam
-                ? config.color
+                ? color
                 : isFull
                   ? "rgba(255,255,255,0.25)"
                   : "#fff",
@@ -717,9 +700,9 @@ export function Lobby_TeamMode({
               gap: 16,
             }}
           >
-            {TEAM_IDS.map(
-              (teamId) =>
-                renderTeamCard(teamId)
+            {groups.map(
+              (teamName, index) =>
+                renderTeamCard(teamName, index)
             )}
           </div>
 
@@ -1075,7 +1058,7 @@ export function Lobby_TeamMode({
               },
               {
                 label: "Teams",
-                value: "4",
+                value: `${groups.length}`,
               },
               {
                 label: "Total Players",
@@ -1195,3 +1178,4 @@ export function Lobby_TeamMode({
     </>
   );
 }
+

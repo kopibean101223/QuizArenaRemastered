@@ -22,11 +22,19 @@ function leaderboardKey(battleId: string): string {
 function teamsKey(battleId: string): string {
   return `battle:team:${battleId}:teams`;
 }
+
+function groupsKey(battleId: string): string {
+  return `battle:team:${battleId}:groups`;
+}
 // NEW: mirrors LiveBattle's `battle:{battleId}:questions` key — this was
 // missing entirely, which is why TeamBattle had no way to receive or relay
 // the professor's question set.
 function questionsKey(battleId: string): string {
   return `battle:team:${battleId}:questions`;
+}
+
+function teamSizeKey(battleId: string): string {
+  return `battle:team:${battleId}:teamSize`;
 }
 
 export interface TeamMemberAnswerPayload {
@@ -36,6 +44,8 @@ export interface TeamMemberAnswerPayload {
   submittedAt: number;
 }
 
+
+
 export interface TeamBattlePayload {
   type: string;
   battleId: string;
@@ -43,13 +53,11 @@ export interface TeamBattlePayload {
   questionIndex?: number;
   answer?: TeamMemberAnswerPayload;
   isLastQuestion?: boolean;
-  // for JOIN_TEAM_LOBBY / TEAM_ASSIGNMENT_UPDATE
   userId?: string;
   teamId?: number | string | null;
-  // NEW: carries the professor's question bank when starting the match,
-  // exactly like BattlePayload.questions does in LiveBattle.ts.
   questions?: unknown[];
   forceReset?: boolean;
+  groups?: string[]; // NEW — professor's group/team-name list
 }
 
 class TeamBattleHandler {
@@ -66,6 +74,7 @@ class TeamBattleHandler {
       if (!channel.startsWith('battle:team:')) return;
       const battleId = channel.replace('battle:team:', '');
       const clientsInRoom = this.activeRooms.get(battleId);
+    console.log("[TEAM][server] redis message on", channel, "-> forwarding to", clientsInRoom?.size ?? 0, "clients");
 
       if (clientsInRoom) {
         clientsInRoom.forEach((client) => {
@@ -89,13 +98,18 @@ class TeamBattleHandler {
   ): void {
     if (!this.activeRooms.has(battleId)) {
       this.activeRooms.set(battleId, new Set<WebSocket>());
+          console.log("[TEAM][server] first client — subscribing redis channel", channel);
       redisSubscriber.subscribe(channel, (err) => {
-        if (err) console.error(`Failed to subscribe to ${channel}`, err);
+        if (err) console.error(`Failed to subscribe to ${channel}`, err);      
+         else console.log("[TEAM][server] subscribe confirmed for", channel);
+
       });
     }
 
     this.activeRooms.get(battleId)!.add(ws);
     this.clientRoomMap.set(ws, battleId);
+      console.log("[TEAM][server] registered client. room size now:", this.activeRooms.get(battleId)!.size);
+
   }
 
   public async syncBattleToSupabase(
@@ -153,27 +167,54 @@ class TeamBattleHandler {
     const lKey = leaderboardKey(battleId);
     const tKey = teamsKey(battleId);
     const qKey = questionsKey(battleId);
-
+    const gKey = groupsKey(battleId);
+    const szKey = teamSizeKey(battleId); // alongside gKey etc.
     // ── JOIN TEAM LOBBY (pre-battle team picking, sent from Lobby_TeamMode) ──
     if (type === 'JOIN_TEAM_LOBBY') {
-      this.registerClient(ws, battleId, channel, redisSubscriber);
+  this.registerClient(ws, battleId, channel, redisSubscriber);
 
-      const rawTeams = await redisPublisher.hgetall(tKey);
+  const rawTeams = await redisPublisher.hgetall(tKey);
+  const rawGroups = await redisPublisher.get(gKey);
+  const groups = rawGroups ? JSON.parse(rawGroups) : ['Team 1', 'Team 2'];
+  const rawTeamSize = await redisPublisher.get(szKey);
+  const teamSize = rawTeamSize ? parseInt(rawTeamSize, 10) : 4; // NEW
 
-      ws.send(
-        JSON.stringify({
-          type: 'TEAM_LOBBY_STATE_SYNC',
-          battleId,
-          teams: rawTeams, // { [userId]: "teamId" } — current picks so far
-        })
-      );
-      return;
-    }
+  ws.send(
+    JSON.stringify({
+      type: 'TEAM_LOBBY_STATE_SYNC',
+      battleId,
+      teams: rawTeams,
+      groups,
+      teamSize, // NEW
+    })
+  );
+
+  // FIX: the send above only reaches this joining/reconnecting socket.
+  // A student who reconnects gets auto-restored to their previous team
+  // locally (since `teams` already has their entry), but nobody else in
+  // the room — the professor especially — ever learns that happened,
+  // because nothing else was ever told. Broadcast the same authoritative
+  // state to the whole channel so already-connected clients converge too.
+  await redisPublisher.publish(
+    channel,
+    JSON.stringify({
+      type: 'TEAM_LOBBY_STATE_SYNC',
+      battleId,
+      teams: rawTeams,
+      groups,
+      teamSize,
+    })
+  );
+  return;
+}
 
     // ── TEAM ASSIGNMENT UPDATE (student joins/leaves a team in the lobby) ──
     if (type === 'TEAM_ASSIGNMENT_UPDATE') {
       // Defensive: register even if JOIN_TEAM_LOBBY was somehow missed, so
       // this client still gets included in the broadcast below.
+
+        console.log("[TEAM][server] received TEAM_ASSIGNMENT_UPDATE", { battleId, userId, teamId });
+
       this.registerClient(ws, battleId, channel, redisSubscriber);
 
       if (!userId) return;
@@ -222,6 +263,36 @@ class TeamBattleHandler {
       );
       return;
     }
+
+    if (type === 'PROF_UPDATE_GROUPS') {
+  this.registerClient(ws, battleId, channel, redisSubscriber);
+
+  if (Array.isArray(payload.groups)) {
+    await redisPublisher.set(gKey, JSON.stringify(payload.groups));
+    await redisPublisher.expire(gKey, COMPLETED_ROOM_TTL_SECONDS);
+  }
+
+  if (typeof payload.teamSize === 'number' && payload.teamSize > 0) { // NEW
+    await redisPublisher.set(szKey, String(payload.teamSize));
+    await redisPublisher.expire(szKey, COMPLETED_ROOM_TTL_SECONDS);
+  }
+
+  const rawGroups = await redisPublisher.get(gKey);
+  const groups = rawGroups ? JSON.parse(rawGroups) : ['Team 1', 'Team 2'];
+  const rawTeamSize = await redisPublisher.get(szKey);
+  const teamSize = rawTeamSize ? parseInt(rawTeamSize, 10) : 4;
+
+  await redisPublisher.publish(
+    channel,
+    JSON.stringify({
+      type: 'TEAM_GROUPS_UPDATED',
+      battleId,
+      groups,
+      teamSize, // NEW
+    })
+  );
+  return;
+}
 
     // ── PROFESSOR STARTS THE TEAM BATTLE ── (NEW — mirrors LiveBattle's
     // PROF_START_BATTLE; this case did not exist before, which is the root

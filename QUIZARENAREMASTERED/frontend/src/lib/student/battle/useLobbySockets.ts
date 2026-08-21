@@ -4,24 +4,18 @@ import { useEffect, useRef, useState, MutableRefObject } from "react";
 import { AVATAR_COLORS, LobbyPlayerT } from "@/components/studentONLY/ComponentsLobby/LobbyConstants";
 
 export interface UseLobbySocketOptions {
-  /** quiz_sessions.id — the unique session UUID (NOT section_id). */
   sessionId: string;
   userId?: string;
   userName?: string;
-  /** Skip connecting until this is true (e.g. wait for sessionId to resolve). */
   enabled: boolean;
-  /**
-   * Whether to run the shared 3-2-1 lobby countdown when the professor starts
-   * the battle. Live/Team/Royale = true. Own-Paced = false (no shared start,
-   * each student begins the moment they join).
-   */
   autoCountdown?: boolean;
-  /**
-   * Extra handler for mode-specific payloads this hook doesn't already cover
-   * (team assignments, royale eliminations, self-paced progress, etc).
-   * Called for every parsed message, in addition to this hook's own handling.
-   */
   onMessage?: (data: any) => void;
+  /**
+   * Called once the socket is open and this hook's own JOIN_BATTLE handshake
+   * has been sent. Use this to fire any mode-specific join message (e.g.
+   * Team mode's JOIN_TEAM_LOBBY) without re-implementing connect/reconnect.
+   */
+  onOpen?: (socket: WebSocket) => void; // NEW
 }
 
 export interface UseLobbySocketResult {
@@ -45,6 +39,7 @@ export function useLobbySocket({
   userName,
   enabled,
   autoCountdown = true,
+  onOpen, // NEW
   onMessage,
 }: UseLobbySocketOptions): UseLobbySocketResult {
   const socketRef = useRef<WebSocket | null>(null);
@@ -55,6 +50,8 @@ export function useLobbySocket({
   const [countdown, setCountdown] = useState<number | null>(null);
   const [battleStarted, setBattleStarted] = useState(false);
   const [battleMode, setBattleMode] = useState("LIVE");
+  const onOpenRef = useRef(onOpen); // NEW
+  onOpenRef.current = onOpen;       // NEW
 
   useEffect(() => { 
     if (!enabled || !sessionId) return;
@@ -115,6 +112,11 @@ export function useLobbySocket({
           }));
         }
       }, 150);
+
+
+
+
+      onOpenRef.current?.(socket);
     };
 
     socket.onmessage = (event) => {
