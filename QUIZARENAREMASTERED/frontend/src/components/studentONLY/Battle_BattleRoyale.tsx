@@ -1,14 +1,18 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Skull, Heart, Zap, LogOut, ChevronRight } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
   useBattleSocket,
   formatBattleQuestions,
   getStudentIdentity,
+  computeTimeLeft,
   AVATAR_COLORS,
 } from '@/lib/student/battle/useBattleConnection';
+import type { BattleQuestion } from '@/lib/student/battle/useBattleConnection';
+import { CountdownBar } from './LiveBattleCOMPONENTONLY/CountdownBar';
+import { AnswerInput } from './battle/Answer_Input';
 
 export interface Survivor {
   id: string;
@@ -19,14 +23,35 @@ export interface Survivor {
   lives: number;
 }
 
-interface RoyaleQuestion {
-  id: string | number;
-  number: number;
-  total: number;
-  subject: string;
-  text: string;
-  options: string[];
-  answer: string; // the correct option TEXT, matches SUBMIT_ROYALE_ANSWER's correctAnswer contract
+// NEW: was a Multiple-Choice-only shape (options/answer). Now reuses the
+// same normalized BattleQuestion union AnswerInput expects, so every
+// question type (not just MCQ) carries its type-specific fields through.
+type RoyaleQuestion = BattleQuestion;
+
+// The server grades ROYALE answers by simple string equality between
+// optionKey and correctAnswer (see handlers/BattleRoyale.ts), so for the
+// AnswerInput-routed types we just need the correct answer's display text.
+function getCorrectAnswerText(question: RoyaleQuestion): string {
+  switch (question.type) {
+    case 'Multiple Choice':
+      return question.options[question.correct] ?? '';
+    case 'True / False':
+      return question.correct ? 'True' : 'False';
+    case 'Identification':
+    case 'Short Answer':
+      return question.acceptedAnswers[0] ?? '';
+    case 'Numerical Input':
+      return String(question.correctValue);
+    case 'Mathematics':
+      return question.correctExpression;
+    default:
+      return '';
+  }
+}
+
+function stringifyAnswerValue(value: any): string {
+  if (typeof value === 'boolean') return value ? 'True' : 'False';
+  return String(value ?? '');
 }
 
 export interface BattleRoyaleProps {
@@ -36,17 +61,19 @@ export interface BattleRoyaleProps {
 }
 
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
+const DEFAULT_TIME_LIMIT = 20;
 
-export function BattleRoyale({
-  battleId = '',
-  initialStartingHp = 3,
-  onLeaveBattle,
-}: BattleRoyaleProps) {
+export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBattle }: BattleRoyaleProps) {
   const { user, navigate, setLastBattleMode } = useApp();
 
   const [questions, setQuestions] = useState<RoyaleQuestion[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const currentQuestion = questions[questionIndex];
+
+  // NEW: server-driven timer state, same pattern as Battle_LiveQuiz.
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [timeLimit, setTimeLimit] = useState<number>(DEFAULT_TIME_LIMIT);
+  const [timeLeft, setTimeLeft] = useState<number>(DEFAULT_TIME_LIMIT);
 
   const [startingHp, setStartingHp] = useState<number>(initialStartingHp);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
@@ -57,39 +84,26 @@ export function BattleRoyale({
   const { studentName: myName, currentUserId: myId } = getStudentIdentity(user);
 
   function applyPlayers(players: any[]) {
-    setSurvivors(players.map((p, idx) => ({
-      id: p.id,
-      name: p.id === myId ? myName : (p.name || `Player ${idx + 1}`),
-      initials: (p.initials || p.name || 'P').substring(0, 2).toUpperCase(),
-      color: p.color || AVATAR_COLORS[idx % AVATAR_COLORS.length],
-      isYou: p.id === myId,
-      lives: p.lives ?? 0,
-    })));
-  }
-
-  // NEW: extracts questions from a Royale WS payload the same way LiveQuiz's
-  // formatQuestions/formatBattleQuestions handles data.questions — Royale
-  // reads correctness off the option TEXT (`answer`), not an index.
-  function applyRoyaleQuestions(rawQuestions: unknown[]) {
-    setQuestions(
-      formatBattleQuestions(rawQuestions).map((q) => ({
-        id: q.id,
-        number: q.number,
-        total: q.total,
-        subject: q.subject,
-        text: q.text,
-        options: q.options,
-        answer: q.answer,
+    setSurvivors(
+      players.map((p, idx) => ({
+        id: p.id,
+        name: p.id === myId ? myName : p.name || `Player ${idx + 1}`,
+        initials: (p.initials || p.name || 'P').substring(0, 2).toUpperCase(),
+        color: p.color || AVATAR_COLORS[idx % AVATAR_COLORS.length],
+        isYou: p.id === myId,
+        lives: p.lives ?? 0,
       }))
     );
   }
 
-  // 1. Fallback questions loader. This previously was the ONLY source of
-  // questions for Royale, which is why it was stuck on "Waiting for
-  // questions to load…" — /api/questions is scoped to the CALLER's own
-  // user id, so a student calling it always gets an empty array back.
-  // Now it's just a fallback; the real source is the WS payload below,
-  // matching how Battle_LiveQuiz.tsx already worked.
+  function applyRoyaleQuestions(rawQuestions: unknown[]) {
+    console.log('[BattleRoyale][client] applying', rawQuestions.length, 'questions from server');
+    // NEW: keep every normalized field (not just the MCQ-only ones) so
+    // non-Multiple-Choice questions have what AnswerInput needs to render.
+    setQuestions(formatBattleQuestions(rawQuestions));
+  }
+
+  // Fallback loader only — real source of truth is always the WS payload.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -99,6 +113,7 @@ export function BattleRoyale({
         if (res.ok) {
           const data = await res.json();
           if (!cancelled && Array.isArray(data) && data.length > 0) {
+            console.log('[BattleRoyale][client] fallback /api/questions returned', data.length, 'questions');
             applyRoyaleQuestions(data);
           }
         }
@@ -106,47 +121,73 @@ export function BattleRoyale({
         console.error('[BattleRoyale] Failed to load fallback questions:', err);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [questions.length]);
 
-  // 2. Real WebSocket connection — connect/reconnect lifecycle now lives in
-  // useBattleSocket (shared with the other 3 battle modes).
   const { send } = useBattleSocket({
     battleId,
     deps: [myId, myName],
     onOpen: (socket) => {
-      socket.send(JSON.stringify({
-        type: 'JOIN_ROYALE',
-        mode: 'ROYALE',
-        battleId,
-        startingHp: initialStartingHp,
-        playerData: {
-          id: myId,
-          name: myName,
-          initials: myName.substring(0, 2).toUpperCase(),
-          color: AVATAR_COLORS[0],
-        },
-      }));
+      console.log('[BattleRoyale][client] socket open -> sending JOIN_ROYALE', { battleId, myId });
+      socket.send(
+        JSON.stringify({
+          type: 'JOIN_ROYALE',
+          mode: 'ROYALE',
+          battleId,
+          startingHp: initialStartingHp,
+          playerData: {
+            id: myId,
+            name: myName,
+            initials: myName.substring(0, 2).toUpperCase(),
+            color: AVATAR_COLORS[0],
+          },
+        })
+      );
     },
     onMessage: (data) => {
+      console.log('[BattleRoyale][client] received', data.type, data);
+
       if (data.type === 'ROYALE_STATE_SYNC') {
         if (typeof data.startingHp === 'number') setStartingHp(data.startingHp);
+        if (typeof data.questionIndex === 'number') setQuestionIndex(data.questionIndex);
+        if (typeof data.startedAt === 'number') setStartedAt(data.startedAt);
+        if (typeof data.timeLimit === 'number') setTimeLimit(data.timeLimit);
         if (Array.isArray(data.players)) applyPlayers(data.players);
-        // NEW: the professor's PROF_START_ROYALE broadcast (and JOIN_ROYALE's
-        // reply for late joiners) now carries the real question set here.
         if (Array.isArray(data.questions) && data.questions.length > 0) {
           applyRoyaleQuestions(data.questions);
         }
       }
 
+      // NEW: the server broadcasts this when its own timer fires (or once
+      // every alive player has answered) — the only thing that should move
+      // the whole match to the next question at once.
+      if (data.type === 'ROYALE_QUESTION_ADVANCED') {
+        console.log(
+          `[BattleRoyale][client] server advanced match to question ${data.questionIndex}, timeLimit=${data.timeLimit}s`
+        );
+        setQuestionIndex(data.questionIndex);
+        setStartedAt(data.startedAt);
+        setTimeLimit(data.timeLimit);
+        if (Array.isArray(data.players)) applyPlayers(data.players);
+        setSelectedOption(null);
+        setLocked(false);
+      }
+
       if (data.type === 'ROYALE_HP_UPDATED') {
         if (Array.isArray(data.players)) applyPlayers(data.players);
         if (data.playerId === myId && data.isAlive === false) {
+          console.log('[BattleRoyale][client] you were eliminated');
           setEliminated(true);
+        }
+        if (data.reason === 'timeout') {
+          console.log('[BattleRoyale][client] some players auto-eliminated for not answering in time');
         }
       }
 
       if (data.type === 'ROYALE_MATCH_ENDED') {
+        console.log('[BattleRoyale][client] match ended, navigating to results');
         if (Array.isArray(data.players)) applyPlayers(data.players);
         setLastBattleMode('ROYALE');
         navigate('results');
@@ -154,29 +195,79 @@ export function BattleRoyale({
     },
   });
 
+  // NEW: countdown driven off the server's startedAt/timeLimit.
+  useEffect(() => {
+    if (!startedAt) {
+      setTimeLeft(timeLimit);
+      return;
+    }
+    const tick = () => {
+      const left = computeTimeLeft(timeLimit, startedAt);
+      setTimeLeft(left);
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [startedAt, timeLimit]);
+
+  // FIX: no longer starts a local setTimeout that unilaterally moves THIS
+  // browser to the next question. It submits the answer and waits for the
+  // server's ROYALE_QUESTION_ADVANCED (driven by its shared timer, or by
+  // every alive player having answered) so the whole match stays in step.
   const handleSelectOption = (optionKey: string) => {
-    if (locked || eliminated) return;
+    if (locked || eliminated || currentQuestion?.type !== 'Multiple Choice') return;
     setSelectedOption(optionKey);
 
     const opt = OPTION_KEYS.indexOf(optionKey);
-    const answerText = currentQuestion?.options[opt];
+    const answerText = currentQuestion.options[opt];
     setLocked(true);
+
+    // NOTE: was `currentQuestion?.answer`, but the normalized BattleQuestion
+    // shape only carries `correct` (the index) for Multiple Choice, not an
+    // `answer` string — getCorrectAnswerText resolves the same option text
+    // this always meant to compare against.
+    const correctAnswer = getCorrectAnswerText(currentQuestion);
+
+    console.log('[BattleRoyale][client] submitting answer', {
+      optionKey: answerText,
+      correctAnswer,
+      questionIndex,
+    });
 
     send({
       type: 'SUBMIT_ROYALE_ANSWER',
       battleId,
       playerData: { id: myId, name: myName },
       optionKey: answerText,
-      correctAnswer: currentQuestion?.answer,
+      correctAnswer,
+    });
+  };
+
+  // Handles submissions coming from AnswerInput for every question type
+  // other than Multiple Choice (which keeps its own colored option grid
+  // below). Mirrors handleSelectOption's send, just with the AnswerInput
+  // value's display text in place of the resolved A/B/C/D option text.
+  const handleAnswerInputSubmit = (value: any) => {
+    if (locked || eliminated || !currentQuestion) return;
+    const answerText = stringifyAnswerValue(value);
+    setSelectedOption(answerText);
+    setLocked(true);
+
+    const correctAnswer = getCorrectAnswerText(currentQuestion);
+
+    console.log('[BattleRoyale][client] submitting answer', {
+      optionKey: answerText,
+      correctAnswer,
+      questionIndex,
     });
 
-    // Advance locally to the next question after a short reveal beat.
-    // The server decides (via ROYALE_MATCH_ENDED) if the match is actually over.
-    setTimeout(() => {
-      setQuestionIndex((i) => Math.min(i + 1, questions.length - 1));
-      setSelectedOption(null);
-      setLocked(false);
-    }, 2500);
+    send({
+      type: 'SUBMIT_ROYALE_ANSWER',
+      battleId,
+      playerData: { id: myId, name: myName },
+      optionKey: answerText,
+      correctAnswer,
+    });
   };
 
   const activeSurvivorsCount = survivors.filter((s) => s.lives > 0).length;
@@ -191,11 +282,16 @@ export function BattleRoyale({
     );
   }
 
-  const options = currentQuestion.options.map((text, i) => ({
-    key: OPTION_KEYS[i] || String(i),
-    text,
-    color: ['#A06AF6', '#FF6B4A', '#2ED47A', '#FFC93C'][i] || '#A06AF6',
-  }));
+  // Only Multiple Choice questions have `.options` — other types render
+  // through AnswerInput instead, so this stays empty for them.
+  const isMultipleChoice = currentQuestion.type === 'Multiple Choice';
+  const options = isMultipleChoice
+    ? currentQuestion.options.map((text, i) => ({
+        key: OPTION_KEYS[i] || String(i),
+        text,
+        color: ['#A06AF6', '#FF6B4A', '#2ED47A', '#FFC93C'][i] || '#A06AF6',
+      }))
+    : [];
 
   return (
     <div className="min-h-screen bg-[#131524] text-white flex flex-col font-sans">
@@ -216,6 +312,9 @@ export function BattleRoyale({
         </div>
 
         <div className="flex items-center gap-3">
+          <div className="w-40">
+            <CountdownBar timeLeft={timeLeft} timeLimit={timeLimit} />
+          </div>
           <div className="bg-[#FF4757]/15 border border-[#FF4757] px-3 py-1 rounded-full text-xs font-extrabold text-[#FF4757] flex items-center gap-1.5">
             <Skull size={14} /> ROYALE
           </div>
@@ -234,25 +333,21 @@ export function BattleRoyale({
           {/* Round Header */}
           <div className="flex items-center justify-between px-2">
             <div className="flex items-center gap-1.5 bg-white/5 px-3 py-1 rounded-lg">
-              <span className="text-[10px] font-extrabold text-[#8F93A8] uppercase">
-                QUESTION
+              <span className="text-[10px] font-extrabold text-[#8F93A8] uppercase">QUESTION</span>
+              <span className="text-base font-black">
+                {currentQuestion.number} / {currentQuestion.total}
               </span>
-              <span className="text-base font-black">{currentQuestion.number} / {currentQuestion.total}</span>
             </div>
 
             <div className="flex flex-col items-center">
-              <span className="text-3xl font-black leading-none">
-                {activeSurvivorsCount || survivors.length}
-              </span>
+              <span className="text-3xl font-black leading-none">{activeSurvivorsCount || survivors.length}</span>
               <span className="text-[9px] font-extrabold text-[#8F93A8] tracking-widest uppercase">
                 PLAYERS REMAINING
               </span>
             </div>
 
             <div className="flex items-center gap-1.5 bg-[#FF4757]/10 border border-[#FF4757]/30 px-3 py-1 rounded-xl">
-              <span className="text-[10px] font-extrabold text-[#FF4757] uppercase">
-                HP:
-              </span>
+              <span className="text-[10px] font-extrabold text-[#FF4757] uppercase">HP:</span>
               <span className="text-sm font-black text-white">
                 {myLives} / {startingHp}
               </span>
@@ -269,9 +364,7 @@ export function BattleRoyale({
                 WRONG ANSWER = ELIMINATED
               </span>
             </div>
-            <h2 className="m-0 text-xl font-extrabold leading-snug">
-              {currentQuestion.text}
-            </h2>
+            <h2 className="m-0 text-xl font-extrabold leading-snug">{currentQuestion.text}</h2>
           </div>
 
           {/* Options */}
@@ -280,15 +373,13 @@ export function BattleRoyale({
               <div className="p-6 rounded-xl bg-[#FF4757]/10 border border-[#FF4757]/30 text-center font-bold text-[#FF4757]">
                 You've been eliminated. Spectating the rest of the match…
               </div>
-            ) : (
+            ) : isMultipleChoice ? (
               options.map((opt) => (
                 <div
                   key={opt.key}
                   onClick={() => handleSelectOption(opt.key)}
                   className={`p-4 rounded-xl flex items-center gap-4 cursor-pointer transition-all border ${
-                    selectedOption === opt.key
-                      ? 'bg-white/10 border-indigo-500'
-                      : 'bg-white/[0.03] border-white/10'
+                    selectedOption === opt.key ? 'bg-white/10 border-indigo-500' : 'bg-white/[0.03] border-white/10'
                   } ${locked ? 'pointer-events-none opacity-70' : ''}`}
                 >
                   <div
@@ -297,11 +388,17 @@ export function BattleRoyale({
                   >
                     {opt.key}
                   </div>
-                  <span className="font-bold text-base text-white/90">
-                    {opt.text}
-                  </span>
+                  <span className="font-bold text-base text-white/90">{opt.text}</span>
                 </div>
               ))
+            ) : (
+              <AnswerInput
+                key={currentQuestion.id}
+                question={currentQuestion}
+                disabled={locked}
+                revealed={false}
+                onSubmit={handleAnswerInputSubmit}
+              />
             )}
           </div>
         </div>
@@ -336,9 +433,7 @@ export function BattleRoyale({
                     >
                       {isDead ? <Skull size={18} /> : s.initials}
                     </div>
-                    <span className="text-[10px] text-[#8F93A8] font-bold">
-                      {s.name}
-                    </span>
+                    <span className="text-[10px] text-[#8F93A8] font-bold">{s.name}</span>
                     <div className="flex gap-0.5">
                       {Array.from({ length: startingHp }).map((_, i) => (
                         <Heart

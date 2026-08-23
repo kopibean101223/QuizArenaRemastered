@@ -4,6 +4,7 @@ import { finalizeAndSaveBattle, PlayerResult } from '../src/lib/student/battle/b
 
 const COMPLETED_ROOM_TTL_SECONDS = 3600;
 const ACTIVE_ROOM_TTL_SECONDS = 4 * 60 * 60;
+const DEFAULT_TIME_LIMIT_SECONDS = 30;
 
 function roomChannel(battleId: string): string {
   return `battle:team:${battleId}`;
@@ -17,22 +18,15 @@ function teamAnswersKey(battleId: string, questionIndex: number): string {
 function leaderboardKey(battleId: string): string {
   return `battle:team:${battleId}:leaderboard`;
 }
-// which student picked which team, kept separate from in-battle answer
-// state since team picking happens during the lobby, before a battle exists.
 function teamsKey(battleId: string): string {
   return `battle:team:${battleId}:teams`;
 }
-
 function groupsKey(battleId: string): string {
   return `battle:team:${battleId}:groups`;
 }
-// NEW: mirrors LiveBattle's `battle:{battleId}:questions` key — this was
-// missing entirely, which is why TeamBattle had no way to receive or relay
-// the professor's question set.
 function questionsKey(battleId: string): string {
   return `battle:team:${battleId}:questions`;
 }
-
 function teamSizeKey(battleId: string): string {
   return `battle:team:${battleId}:teamSize`;
 }
@@ -43,8 +37,6 @@ export interface TeamMemberAnswerPayload {
   selectedOption: string;
   submittedAt: number;
 }
-
-
 
 export interface TeamBattlePayload {
   type: string;
@@ -57,16 +49,22 @@ export interface TeamBattlePayload {
   teamId?: number | string | null;
   questions?: unknown[];
   forceReset?: boolean;
-  groups?: string[]; // NEW — professor's group/team-name list
+  groups?: string[];
+  teamSize?: number;
 }
 
 class TeamBattleHandler {
   private activeRooms: Map<string, Set<WebSocket>>;
   private clientRoomMap: Map<WebSocket, string>;
+  // NEW: one authoritative advance-timer per battleId, held in the server
+  // process. This is what makes the timer/question-index "real" instead of
+  // each client silently deciding on its own when to move on.
+  private questionTimers: Map<string, NodeJS.Timeout>;
 
   constructor() {
     this.activeRooms = new Map<string, Set<WebSocket>>();
     this.clientRoomMap = new Map<WebSocket, string>();
+    this.questionTimers = new Map<string, NodeJS.Timeout>();
   }
 
   public initSubscriber(redisSubscriber: Redis): void {
@@ -74,7 +72,7 @@ class TeamBattleHandler {
       if (!channel.startsWith('battle:team:')) return;
       const battleId = channel.replace('battle:team:', '');
       const clientsInRoom = this.activeRooms.get(battleId);
-    console.log("[TEAM][server] redis message on", channel, "-> forwarding to", clientsInRoom?.size ?? 0, "clients");
+      console.log('[TEAM][server] redis message on', channel, '-> forwarding to', clientsInRoom?.size ?? 0, 'clients');
 
       if (clientsInRoom) {
         clientsInRoom.forEach((client) => {
@@ -86,10 +84,6 @@ class TeamBattleHandler {
     });
   }
 
-  // shared by JOIN_TEAM_BATTLE, JOIN_TEAM_LOBBY, and (defensively)
-  // TEAM_ASSIGNMENT_UPDATE — registers this socket as a member of the room
-  // so it receives future broadcasts on `channel`, and subscribes the Redis
-  // channel the first time anyone joins.
   private registerClient(
     ws: WebSocket,
     battleId: string,
@@ -98,18 +92,126 @@ class TeamBattleHandler {
   ): void {
     if (!this.activeRooms.has(battleId)) {
       this.activeRooms.set(battleId, new Set<WebSocket>());
-          console.log("[TEAM][server] first client — subscribing redis channel", channel);
+      console.log('[TEAM][server] first client — subscribing redis channel', channel);
       redisSubscriber.subscribe(channel, (err) => {
-        if (err) console.error(`Failed to subscribe to ${channel}`, err);      
-         else console.log("[TEAM][server] subscribe confirmed for", channel);
-
+        if (err) console.error(`Failed to subscribe to ${channel}`, err);
+        else console.log('[TEAM][server] subscribe confirmed for', channel);
       });
     }
 
     this.activeRooms.get(battleId)!.add(ws);
     this.clientRoomMap.set(ws, battleId);
-      console.log("[TEAM][server] registered client. room size now:", this.activeRooms.get(battleId)!.size);
+    console.log('[TEAM][server] registered client. room size now:', this.activeRooms.get(battleId)!.size);
+  }
 
+  // ── Timer bookkeeping ────────────────────────────────────────────────
+  // NEW: cancels any in-flight auto-advance timer for a battle. Must be
+  // called before scheduling a new one (double timers were part of why
+  // question index could jump around independently on different runs).
+  private clearQuestionTimer(battleId: string): void {
+    const existing = this.questionTimers.get(battleId);
+    if (existing) {
+      clearTimeout(existing);
+      this.questionTimers.delete(battleId);
+      console.log(`[TEAM][TIMER] cleared existing timer for ${battleId}`);
+    }
+  }
+
+  private scheduleQuestionTimeout(
+    battleId: string,
+    delayMs: number,
+    redisPublisher: Redis,
+    roomCode?: string
+  ): void {
+    this.clearQuestionTimer(battleId);
+    console.log(`[TEAM][TIMER] scheduling auto-advance for ${battleId} in ${delayMs}ms`);
+    const handle = setTimeout(() => {
+      console.log(`[TEAM][TIMER] timer FIRED for ${battleId}`);
+      this.advanceOrEnd(battleId, redisPublisher, roomCode, 'timeout').catch((err) =>
+        console.error(`[TEAM][TIMER] advanceOrEnd failed for ${battleId}:`, err)
+      );
+    }, delayMs);
+    this.questionTimers.set(battleId, handle);
+  }
+
+  // NEW: the single source of truth for moving every client in the room to
+  // the next question (or ending the battle). Previously each student's
+  // browser called setTimeout(...) locally and flipped its OWN questionIndex
+  // — nothing told the server, nothing told teammates, so everyone drifted
+  // out of sync the moment one player answered faster than another.
+  private async advanceOrEnd(
+    battleId: string,
+    redisPublisher: Redis,
+    roomCode: string | undefined,
+    reason: 'timeout' | 'manual'
+  ): Promise<void> {
+    console.log(`[TEAM][ADVANCE] triggered for ${battleId} reason=${reason}`);
+    this.clearQuestionTimer(battleId);
+
+    const sKey = stateKey(battleId);
+    const qKey = questionsKey(battleId);
+    const lKey = leaderboardKey(battleId);
+    const channel = roomChannel(battleId);
+
+    const [rawQuestions, roomState] = await Promise.all([
+      redisPublisher.get(qKey),
+      redisPublisher.hgetall(sKey),
+    ]);
+    const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
+    const currentIndex = parseInt(roomState.questionIndex || '0', 10);
+    const nextIndex = currentIndex + 1;
+
+    console.log(
+      `[TEAM][ADVANCE] ${battleId} currentIndex=${currentIndex} nextIndex=${nextIndex} totalQuestions=${questions.length}`
+    );
+
+    if (nextIndex >= questions.length) {
+      await redisPublisher.hset(sKey, { status: 'completed' });
+      await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
+
+      await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
+
+      const rawScores = await redisPublisher.hgetall(lKey);
+      const leaderboard = Object.values(rawScores || {}).map((item) => JSON.parse(item));
+
+      console.log(`[TEAM][END] ${battleId} out of questions -> TEAM_BATTLE_COMPLETED`);
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({ type: 'TEAM_BATTLE_COMPLETED', battleId, leaderboard })
+      );
+      return;
+    }
+
+    const startedAt = Date.now();
+    const timeLimit = Number(questions[nextIndex]?.timeLimit) || DEFAULT_TIME_LIMIT_SECONDS;
+
+    await redisPublisher.hset(sKey, {
+      questionIndex: String(nextIndex),
+      startedAt: String(startedAt),
+      timeLimit: String(timeLimit),
+    });
+    await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
+
+    // fresh answer bucket for the new question
+    await redisPublisher.del(teamAnswersKey(battleId, currentIndex));
+
+    console.log(
+      `[TEAM][ADVANCE] ${battleId} -> question ${nextIndex}, timeLimit=${timeLimit}s, broadcasting TEAM_QUESTION_ADVANCED`
+    );
+
+    await redisPublisher.publish(
+      channel,
+      JSON.stringify({
+        type: 'TEAM_QUESTION_ADVANCED',
+        battleId,
+        questionIndex: nextIndex,
+        startedAt,
+        timeLimit,
+        teamAnswers: [],
+      })
+    );
+
+    this.scheduleQuestionTimeout(battleId, timeLimit * 1000, redisPublisher, roomCode);
   }
 
   public async syncBattleToSupabase(
@@ -154,7 +256,8 @@ class TeamBattleHandler {
     redisPublisher: Redis,
     redisSubscriber: Redis
   ): Promise<void> {
-    const { type, battleId, roomCode, questionIndex = 0, answer, isLastQuestion, userId, teamId } = payload;
+    const { type, battleId, roomCode, answer, userId, teamId } = payload;
+    console.log(`[TEAM][server] handleMessage type=${type} battleId=${battleId}`);
 
     if (!battleId) {
       ws.send(JSON.stringify({ error: 'battleId is required for Team operations' }));
@@ -163,58 +266,48 @@ class TeamBattleHandler {
 
     const channel = roomChannel(battleId);
     const sKey = stateKey(battleId);
-    const ansKey = teamAnswersKey(battleId, questionIndex);
     const lKey = leaderboardKey(battleId);
     const tKey = teamsKey(battleId);
     const qKey = questionsKey(battleId);
     const gKey = groupsKey(battleId);
-    const szKey = teamSizeKey(battleId); // alongside gKey etc.
-    // ── JOIN TEAM LOBBY (pre-battle team picking, sent from Lobby_TeamMode) ──
+    const szKey = teamSizeKey(battleId);
+
+    // ── JOIN TEAM LOBBY ──
     if (type === 'JOIN_TEAM_LOBBY') {
-  this.registerClient(ws, battleId, channel, redisSubscriber);
+      this.registerClient(ws, battleId, channel, redisSubscriber);
 
-  const rawTeams = await redisPublisher.hgetall(tKey);
-  const rawGroups = await redisPublisher.get(gKey);
-  const groups = rawGroups ? JSON.parse(rawGroups) : ['Team 1', 'Team 2'];
-  const rawTeamSize = await redisPublisher.get(szKey);
-  const teamSize = rawTeamSize ? parseInt(rawTeamSize, 10) : 4; // NEW
+      const rawTeams = await redisPublisher.hgetall(tKey);
+      const rawGroups = await redisPublisher.get(gKey);
+      const groups = rawGroups ? JSON.parse(rawGroups) : ['Team 1', 'Team 2'];
+      const rawTeamSize = await redisPublisher.get(szKey);
+      const teamSize = rawTeamSize ? parseInt(rawTeamSize, 10) : 4;
 
-  ws.send(
-    JSON.stringify({
-      type: 'TEAM_LOBBY_STATE_SYNC',
-      battleId,
-      teams: rawTeams,
-      groups,
-      teamSize, // NEW
-    })
-  );
+      ws.send(
+        JSON.stringify({
+          type: 'TEAM_LOBBY_STATE_SYNC',
+          battleId,
+          teams: rawTeams,
+          groups,
+          teamSize,
+        })
+      );
 
-  // FIX: the send above only reaches this joining/reconnecting socket.
-  // A student who reconnects gets auto-restored to their previous team
-  // locally (since `teams` already has their entry), but nobody else in
-  // the room — the professor especially — ever learns that happened,
-  // because nothing else was ever told. Broadcast the same authoritative
-  // state to the whole channel so already-connected clients converge too.
-  await redisPublisher.publish(
-    channel,
-    JSON.stringify({
-      type: 'TEAM_LOBBY_STATE_SYNC',
-      battleId,
-      teams: rawTeams,
-      groups,
-      teamSize,
-    })
-  );
-  return;
-}
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({
+          type: 'TEAM_LOBBY_STATE_SYNC',
+          battleId,
+          teams: rawTeams,
+          groups,
+          teamSize,
+        })
+      );
+      return;
+    }
 
-    // ── TEAM ASSIGNMENT UPDATE (student joins/leaves a team in the lobby) ──
+    // ── TEAM ASSIGNMENT UPDATE ──
     if (type === 'TEAM_ASSIGNMENT_UPDATE') {
-      // Defensive: register even if JOIN_TEAM_LOBBY was somehow missed, so
-      // this client still gets included in the broadcast below.
-
-        console.log("[TEAM][server] received TEAM_ASSIGNMENT_UPDATE", { battleId, userId, teamId });
-
+      console.log('[TEAM][server] received TEAM_ASSIGNMENT_UPDATE', { battleId, userId, teamId });
       this.registerClient(ws, battleId, channel, redisSubscriber);
 
       if (!userId) return;
@@ -239,24 +332,36 @@ class TeamBattleHandler {
     }
 
     // ── JOIN TEAM BATTLE ──
+    // FIX: previously trusted whatever questionIndex the client happened to
+    // have locally (and even reconnected the socket every time that local
+    // index changed). Now the server's own state (sKey) is the only source
+    // of truth for where in the question set this room currently is.
     if (type === 'JOIN_TEAM_BATTLE') {
       this.registerClient(ws, battleId, channel, redisSubscriber);
 
+      const roomState = await redisPublisher.hgetall(sKey);
+      const serverQuestionIndex = parseInt(roomState.questionIndex || '0', 10);
+      const startedAt = parseInt(roomState.startedAt || String(Date.now()), 10);
+      const timeLimit = parseInt(roomState.timeLimit || String(DEFAULT_TIME_LIMIT_SECONDS), 10);
+
+      const ansKey = teamAnswersKey(battleId, serverQuestionIndex);
       const rawAnswers = await redisPublisher.hgetall(ansKey);
       const teamAnswers = Object.values(rawAnswers || {}).map((item) => JSON.parse(item));
 
-      // NEW: hand back whatever question set the professor already started
-      // this match with, same as LiveBattle's JOIN_BATTLE does. Without
-      // this, a student who joins/reconnects after PROF_START_TEAM never
-      // gets the questions at all.
       const rawQuestions = await redisPublisher.get(qKey);
       const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
+
+      console.log(
+        `[TEAM][JOIN] ${battleId} client joined at server questionIndex=${serverQuestionIndex}, timeLimit=${timeLimit}s`
+      );
 
       ws.send(
         JSON.stringify({
           type: 'TEAM_STATE_SYNC',
           battleId,
-          questionIndex,
+          questionIndex: serverQuestionIndex,
+          startedAt,
+          timeLimit,
           teamAnswers,
           questions,
         })
@@ -265,44 +370,49 @@ class TeamBattleHandler {
     }
 
     if (type === 'PROF_UPDATE_GROUPS') {
-  this.registerClient(ws, battleId, channel, redisSubscriber);
+      this.registerClient(ws, battleId, channel, redisSubscriber);
 
-  if (Array.isArray(payload.groups)) {
-    await redisPublisher.set(gKey, JSON.stringify(payload.groups));
-    await redisPublisher.expire(gKey, COMPLETED_ROOM_TTL_SECONDS);
-  }
+      if (Array.isArray(payload.groups)) {
+        await redisPublisher.set(gKey, JSON.stringify(payload.groups));
+        await redisPublisher.expire(gKey, COMPLETED_ROOM_TTL_SECONDS);
+      }
 
-  if (typeof payload.teamSize === 'number' && payload.teamSize > 0) { // NEW
-    await redisPublisher.set(szKey, String(payload.teamSize));
-    await redisPublisher.expire(szKey, COMPLETED_ROOM_TTL_SECONDS);
-  }
+      if (typeof payload.teamSize === 'number' && payload.teamSize > 0) {
+        await redisPublisher.set(szKey, String(payload.teamSize));
+        await redisPublisher.expire(szKey, COMPLETED_ROOM_TTL_SECONDS);
+      }
 
-  const rawGroups = await redisPublisher.get(gKey);
-  const groups = rawGroups ? JSON.parse(rawGroups) : ['Team 1', 'Team 2'];
-  const rawTeamSize = await redisPublisher.get(szKey);
-  const teamSize = rawTeamSize ? parseInt(rawTeamSize, 10) : 4;
+      const rawGroups = await redisPublisher.get(gKey);
+      const groups = rawGroups ? JSON.parse(rawGroups) : ['Team 1', 'Team 2'];
+      const rawTeamSize = await redisPublisher.get(szKey);
+      const teamSize = rawTeamSize ? parseInt(rawTeamSize, 10) : 4;
 
-  await redisPublisher.publish(
-    channel,
-    JSON.stringify({
-      type: 'TEAM_GROUPS_UPDATED',
-      battleId,
-      groups,
-      teamSize, // NEW
-    })
-  );
-  return;
-}
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({
+          type: 'TEAM_GROUPS_UPDATED',
+          battleId,
+          groups,
+          teamSize,
+        })
+      );
+      return;
+    }
 
-    // ── PROFESSOR STARTS THE TEAM BATTLE ── (NEW — mirrors LiveBattle's
-    // PROF_START_BATTLE; this case did not exist before, which is the root
-    // cause of Team clients being stuck on "Waiting for questions to load…")
+    // ── PROFESSOR STARTS THE TEAM BATTLE ──
+    // FIX: now seeds questionIndex/startedAt/timeLimit in Redis (sKey) and
+    // schedules the first auto-advance timer, exactly like LiveBattle does
+    // for PROF_START_BATTLE. This is what the timer UI needs to exist at all.
     if (type === 'PROF_START_TEAM') {
-      await redisPublisher.hset(sKey, { status: 'active', roomCode: roomCode || '' });
-      await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
+      this.registerClient(ws, battleId, channel, redisSubscriber);
 
       if (payload.forceReset) {
-        await redisPublisher.del(ansKey);
+        // clear out any answers from a previous run before we touch qIndex 0
+        const rawQuestionsBefore = await redisPublisher.get(qKey);
+        const questionsBefore = rawQuestionsBefore ? JSON.parse(rawQuestionsBefore) : [];
+        await Promise.all(
+          questionsBefore.map((_: unknown, i: number) => redisPublisher.del(teamAnswersKey(battleId, i)))
+        );
         await redisPublisher.del(lKey);
       }
 
@@ -312,6 +422,21 @@ class TeamBattleHandler {
 
       const rawQuestions = await redisPublisher.get(qKey);
       const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
+      const startedAt = Date.now();
+      const timeLimit = Number(questions[0]?.timeLimit) || DEFAULT_TIME_LIMIT_SECONDS;
+
+      await redisPublisher.hset(sKey, {
+        status: 'active',
+        roomCode: roomCode || '',
+        questionIndex: '0',
+        startedAt: String(startedAt),
+        timeLimit: String(timeLimit),
+      });
+      await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
+
+      console.log(
+        `[TEAM][START] ${battleId} starting with ${questions.length} questions, first timeLimit=${timeLimit}s`
+      );
 
       await redisPublisher.publish(
         channel,
@@ -319,35 +444,47 @@ class TeamBattleHandler {
           type: 'TEAM_STATE_SYNC',
           battleId,
           questionIndex: 0,
+          startedAt,
+          timeLimit,
           teamAnswers: [],
           questions,
         })
       );
 
-      // FIX: the pre-battle lobby screen (useLobbySocket) only ever joins
-      // via JOIN_BATTLE, which subscribes it to the generic `battle:{battleId}`
-      // channel through liveBattleHandler — it is NEVER registered with this
-      // handler's own `battle:team:{battleId}` channel, so the broadcast
-      // above can never reach it no matter what message type it's looking
-      // for. Without this second publish, students stay stuck on the lobby
-      // screen forever even though the match has actually started.
+      // also reach clients still sitting on the pre-battle lobby channel
       await redisPublisher.publish(
         `battle:${battleId}`,
         JSON.stringify({
           type: 'TEAM_STATE_SYNC',
           battleId,
+          questionIndex: 0,
+          startedAt,
+          timeLimit,
           questions,
         })
       );
 
-      console.log(`Professor started Team Battle Room ${battleId} with ${questions.length} synchronized questions.`);
+      this.scheduleQuestionTimeout(battleId, timeLimit * 1000, redisPublisher, roomCode);
+
+      console.log(`[TeamBattle] Professor started Team Battle Room ${battleId} with ${questions.length} questions.`);
       return;
     }
 
     // ── SUBMIT MEMBER ANSWER & BROADCAST ALL TEAM ANSWERS ──
-
+    // NOTE: submitting no longer moves the question forward by itself — it
+    // only records the vote. The server's timer (scheduled above) is the
+    // only thing that advances the room, so every member sees the same
+    // question at the same time regardless of who answered first.
     if (type === 'SUBMIT_TEAM_MEMBER_ANSWER') {
       if (!answer || !answer.memberId) return;
+
+      const roomState = await redisPublisher.hgetall(sKey);
+      const serverQuestionIndex = parseInt(roomState.questionIndex || '0', 10);
+      const ansKey = teamAnswersKey(battleId, serverQuestionIndex);
+
+      console.log(
+        `[TEAM][ANSWER] ${battleId} member=${answer.memberId} option=${answer.selectedOption} at serverQuestionIndex=${serverQuestionIndex}`
+      );
 
       await redisPublisher.hset(ansKey, answer.memberId, JSON.stringify(answer));
       await redisPublisher.expire(ansKey, COMPLETED_ROOM_TTL_SECONDS);
@@ -358,12 +495,11 @@ class TeamBattleHandler {
       const voteCounts: Record<string, number> = {};
       let leaderVote = '';
 
-      teamAnswers.forEach(ans => {
+      teamAnswers.forEach((ans) => {
         voteCounts[ans.selectedOption] = (voteCounts[ans.selectedOption] || 0) + 1;
         if ((ans as any).isDesignatedLeader) leaderVote = ans.selectedOption;
       });
 
-     
       let maxVotes = 0;
       let winningOption = '';
       let isTie = false;
@@ -387,17 +523,25 @@ class TeamBattleHandler {
         JSON.stringify({
           type: 'TEAM_ANSWERS_UPDATED',
           battleId,
-          questionIndex,
+          questionIndex: serverQuestionIndex,
           teamAnswers,
           currentWinningOption: winningOption,
-          isTieResolvedByLeader: isTie
+          isTieResolvedByLeader: isTie,
         })
       );
       return;
     }
 
+    // ── MANUAL ADVANCE (professor override) ──
+    if (type === 'ADVANCE_QUESTION') {
+      console.log(`[TEAM][server] manual ADVANCE_QUESTION received for ${battleId}`);
+      await this.advanceOrEnd(battleId, redisPublisher, roomCode, 'manual');
+      return;
+    }
+
     // ── END BATTLE ──
-    if (type === 'END_TEAM_BATTLE' || (type === 'ADVANCE_QUESTION' && isLastQuestion)) {
+    if (type === 'END_TEAM_BATTLE') {
+      this.clearQuestionTimer(battleId);
       await redisPublisher.hset(sKey, { status: 'completed' });
       await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
 
@@ -405,6 +549,8 @@ class TeamBattleHandler {
 
       const rawScores = await redisPublisher.hgetall(lKey);
       const leaderboard = Object.values(rawScores || {}).map((item) => JSON.parse(item));
+
+      console.log(`[TEAM][END] ${battleId} manually ended -> TEAM_BATTLE_COMPLETED`);
 
       await redisPublisher.publish(
         channel,
@@ -427,6 +573,7 @@ class TeamBattleHandler {
       roomClients.delete(ws);
       if (roomClients.size === 0) {
         this.activeRooms.delete(battleId);
+        this.clearQuestionTimer(battleId);
         redisSubscriber.unsubscribe(roomChannel(battleId));
       }
     }
