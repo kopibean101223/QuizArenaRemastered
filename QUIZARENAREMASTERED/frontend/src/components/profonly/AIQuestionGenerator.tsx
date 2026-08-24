@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { toast } from "sonner";
 import { ProfSidebar } from "../shared/ProfSidebar";
 
 import { CheckSquare } from "lucide-react"; 
@@ -584,7 +585,7 @@ export function AIQuestionGenerator() {
 
       setDocs(d => d.map(x => x.id === tempId ? { ...x, id: savedDoc.id, status: "ready", pages: savedDoc.pages } : x));
     } catch (error: any) {
-      alert(error?.message || "Upload failed");
+      toast.error(error?.message || "Upload failed");
       setDocs(d => d.filter(x => x.id !== tempId));
     } finally {
       if (fileRef.current) fileRef.current.value = "";
@@ -599,7 +600,7 @@ export function AIQuestionGenerator() {
     docId: number | "all";
   }) => {
     if (docs.length === 0) {
-      alert("Please upload at least one syllabus document first.");
+      toast.error("Please upload at least one syllabus document first.");
       return;
     }
 
@@ -624,7 +625,18 @@ export function AIQuestionGenerator() {
 
       if (!response.ok) {
         const errorMessage = resData?.detail || resData?.error || "Failed to generate questions.";
-        throw new Error(errorMessage);
+        if (errorMessage.includes("still reading") || errorMessage.includes("wait a moment") || errorMessage.includes("processing")) {
+          // Keep the button spinning and poll again in 5 seconds
+          toast.loading("AI is crafting questions... this can take a moment.", { id: "generating", duration: 6000 });
+          setTimeout(() => {
+            handleGenerate(config);
+          }, 5000);
+          return; // Do NOT set generating to false
+        } else {
+          toast.error(errorMessage, { id: "generating" });
+          setGenerating(false);
+          return;
+        }
       }
       
       const normalizedData = (Array.isArray(resData) ? resData : resData.questions || []).map((q: any) => ({
@@ -633,10 +645,11 @@ export function AIQuestionGenerator() {
       }));
 
       setQuestions((prev) => [...normalizedData, ...prev]);
+      toast.success("Questions generated successfully!", { id: "generating" });
+      setGenerating(false);
     } catch (error: any) {
       console.error("Error generating questions:", error);
-      alert(error.message || "Failed to generate questions.");
-    } finally {
+      toast.error(error.message || "Failed to generate questions.", { id: "generating" });
       setGenerating(false);
     }
   };

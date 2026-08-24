@@ -60,25 +60,18 @@ export async function finalizeAndSaveBattle(data: FinalBattleData): Promise<bool
   console.log('====================================================================\n');
 
   try {
-    // 🔍 CHECKER 3: Before Quiz Sessions Update
-    // FIX (3b): battleId is the section_id, NOT quiz_sessions.id. The old code
-    // upserted with `id: battleId`, which either fails (id isn't a valid FK/PK
-    // match) or silently creates/updates a completely different, fabricated
-    // row — leaving the REAL active session's status stuck on 'ACTIVE' forever.
-    // We now update the existing active row for this section instead.
+    // FIX: battleId is indeed the quiz_sessions.id!
     const sessionUpdatePayload = {
       status: 'COMPLETED',
       finished_at: new Date().toISOString(),
-      mode: battleMode,
-      ...(roomCode ? { room_code: roomCode } : {}),
+      mode: battleMode
     };
-    console.log('[BattleSync DB Query] Updating quiz_sessions (by section_id) with:', sessionUpdatePayload);
+    console.log('[BattleSync DB Query] Updating quiz_sessions (by id) with:', sessionUpdatePayload);
 
     const { data: sessionData, error: sessionError } = await supabaseAdmin
       .from('quiz_sessions')
       .update(sessionUpdatePayload)
-      .eq('section_id', battleId)
-      .eq('status', 'ACTIVE')
+      .eq('id', battleId)
       .select('id')
       .single();
 

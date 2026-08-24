@@ -13,15 +13,10 @@ import selfPacedBattleHandler, { SelfPacedPayload } from './handlers/OwnPace';
 const PORT = Number(process.env.PORT) || 8080;
 const wss = new WebSocketServer({ port: PORT });
 
-const redisConfig: string | RedisOptions = process.env.REDIS_URL
-  ? process.env.REDIS_URL
-  : {
-      host: process.env.REDIS_HOST || '127.0.0.1',
-      port: Number(process.env.REDIS_PORT) || 6379,
-    };
+const redisUrl = process.env.REDIS_URL;
 
-const redisPublisher = new Redis(redisConfig);
-const redisSubscriber = new Redis(redisConfig);
+const redisPublisher = redisUrl ? new Redis(redisUrl, { family: 4 }) : new Redis({ host: process.env.REDIS_HOST || '127.0.0.1', port: Number(process.env.REDIS_PORT) || 6379, family: 4 });
+const redisSubscriber = redisUrl ? new Redis(redisUrl, { family: 4 }) : new Redis({ host: process.env.REDIS_HOST || '127.0.0.1', port: Number(process.env.REDIS_PORT) || 6379, family: 4 });
 
 // RoomPresenceHandler owns battle:{battleId} — the shared join/roster
 // channel every mode rides on. Init this FIRST.

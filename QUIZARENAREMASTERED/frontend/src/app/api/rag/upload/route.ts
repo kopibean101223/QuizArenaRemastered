@@ -41,7 +41,21 @@ if (error || !user) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
-  
+    // Prevent duplicate files for this specific user
+    const existingDoc = await prisma.syllabusDoc.findFirst({
+      where: {
+        userId: userId,
+        filename: file.name,
+      },
+    });
+
+    if (existingDoc) {
+      return NextResponse.json(
+        { error: `File '${file.name}' has already been uploaded.` },
+        { status: 400 }
+      );
+    }
+
     const docRecord = await prisma.syllabusDoc.create({
       data: {
         userId: userId,
@@ -62,7 +76,13 @@ if (error || !user) {
     );
 
     if (!pyRes.ok) {
-      throw new Error("FastAPI PDF ingestion failed");
+      const errorData = await pyRes.json().catch(() => null);
+      const errorMessage = errorData?.detail || "FastAPI PDF ingestion failed";
+      
+      // Cleanup the dangling database record since processing failed
+      await prisma.syllabusDoc.delete({ where: { id: docRecord.id } }).catch(() => null);
+      
+      return NextResponse.json({ error: errorMessage }, { status: pyRes.status });
     }
 
     const pyData = await pyRes.json();

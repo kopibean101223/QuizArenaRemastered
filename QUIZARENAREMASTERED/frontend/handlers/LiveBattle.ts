@@ -215,14 +215,8 @@ class LiveBattleHandler {
     }
 
     if (type === 'ADVANCE_QUESTION') {
-      const nextIndex = await redisPublisher.hincrby(sKey, 'currentIndex', 1);
       const startedAt = Date.now();
       const newLimit = nextTimeLimit || 15;
-
-      await redisPublisher.hset(sKey, {
-        startedAt: String(startedAt),
-        timeLimit: String(newLimit),
-      });
 
       if (isLastQuestion) {
         await redisPublisher.hset(sKey, { status: 'completed' });
@@ -239,6 +233,11 @@ class LiveBattleHandler {
           JSON.stringify({ type: 'QUIZ_COMPLETED', battleId, leaderboard })
         );
       } else {
+        const nextIndex = await redisPublisher.hincrby(sKey, 'currentIndex', 1);
+        await redisPublisher.hset(sKey, {
+          startedAt: String(startedAt),
+          timeLimit: String(newLimit),
+        });
         await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
         await redisPublisher.publish(
           channel,

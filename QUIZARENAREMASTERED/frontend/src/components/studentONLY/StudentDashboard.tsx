@@ -82,12 +82,32 @@ useEffect(() => {
     enterBattle(pending.code, pending.sessionId, pending.mode);
     return;
   }
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) {
-    const { code, sid, mode } = JSON.parse(saved);
-    enterBattle(code, sid, mode);
+  async function restoreSession() {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved && !hasJoined) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.sid && parsed.code) {
+          const { data } = await supabase
+            .from('quiz_sessions')
+            .select('status')
+            .eq('id', parsed.sid)
+            .maybeSingle();
+          
+          if (data?.status === 'ACTIVE') {
+            enterBattle(parsed.code, parsed.sid, parsed.mode);
+          } else {
+            localStorage.removeItem(STORAGE_KEY);
+          }
+        }
+      } catch (e) {
+        localStorage.removeItem(STORAGE_KEY);
+        console.warn("Failed to parse saved session:", e);
+      }
+    }
   }
-}, []);
+  restoreSession();
+}, [hasJoined, supabase]);
 
   useEffect(() => {
     if (!user) return;

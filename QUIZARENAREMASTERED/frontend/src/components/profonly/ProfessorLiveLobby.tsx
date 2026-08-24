@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
+import { CountdownDisplay } from "../studentONLY/ComponentsLobby/CountdownDisplay";
 
 const C = {
   indigo: "#5B3DF6", indigoLight: "rgba(91,61,246,0.07)", indigoMid: "rgba(91,61,246,0.14)",
@@ -26,7 +27,7 @@ const C = {
   muted: "#717182", border: "rgba(0,0,0,0.07)", inputBg: "#F3F3F7",
   indigoDeep: "#4228D4", yellowGlow: "rgba(255,201,60,0.5)",
 };
-const [activeSessionId, setActiveSessionId] = useState("");
+
 
 const TEAM_PALETTE = [
   { bg: "#5B3DF6", light: "rgba(91,61,246,0.1)",  text: "#5B3DF6",  label: "Team Alpha" },
@@ -239,6 +240,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [sectionsList, setSectionsList] = useState<{ id: string; name: string }[]>([]);
   const [selectedSection, setSelectedSection] = useState<{ id: string; name: string }>({ id: '', name: 'Loading...' });
   const [rawStudents, setRawStudents] = useState<Omit<Student, "team">[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState("");
+
   
   const [questionBanks, setQuestionBanks] = useState<{ id: string; name: string }[]>([]);
   const [selectedBank, setSelectedBank] = useState<{ id: string; name: string }>({ id: '', name: 'Select Question Bank...' });
@@ -258,8 +261,13 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [copied, setCopied] = useState(false);
   const [battleStarted, setBattleStarted] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [isAdvancing, setIsAdvancing] = useState(false);
+  const [startedAt, setStartedAt] = useState(Date.now());
+  const [timeLimit, setTimeLimit] = useState(60);
   const [timeRemaining, setTimeRemaining] = useState(60);
   const [liveFeed, setLiveFeed] = useState<any[]>([]);
+  const [quizCompleted, setQuizCompleted] = useState(false);
+  const [finalLeaderboard, setFinalLeaderboard] = useState<any[]>([]);
 
   // Randomized Question State for Active Session
   const [randomizedQuestions, setRandomizedQuestions] = useState<QuestionItem[]>([]);
@@ -277,6 +285,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
 
       if (data && data.length > 0) {
         setActiveSessionExists(true);
+        setActiveSessionId(data[0].id);
         setInLobby(true);
       }
     };
@@ -441,7 +450,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
 
   // WebSocket Connection Handler for Synchronized Multiplayer State
   useEffect(() => {
-    if (!inLobby) return;
+    if (!inLobby || !activeSessionId) return;
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -452,7 +461,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
         battleId: activeSessionId,
         totalQuestions: randomizedQuestions.length || 10,
         timeLimit: 60,
-        sender: 'Professor'
+        sender: 'Professor',
+        role: 'host'
       }));
     };
 
@@ -463,13 +473,35 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
           if (typeof data.currentIndex === 'number') {
             setCurrentIndex(data.currentIndex);
           }
-          if (data.status === 'active') setBattleStarted(true);
+          if (data.status === 'completed') {
+            setQuizCompleted(true);
+            setFinalLeaderboard(data.leaderboard || []);
+          } else if (data.status === 'active') {
+            setBattleStarted(true);
+          }
           if (data.history) setLiveFeed(data.history);
+          if (data.questions && data.questions.length > 0) {
+            setRandomizedQuestions(data.questions);
+          }
+          
+          if (data.startedAt && data.timeLimit) {
+            const limit = Number(data.timeLimit) || 60;
+            const activeStart = Number(data.startedAt) || Date.now();
+            setStartedAt(activeStart);
+            setTimeLimit(limit);
+            const now = Date.now();
+            const elapsed = Math.floor((now - activeStart) / 1000);
+            const remaining = Math.max(0, limit - elapsed);
+            setTimeRemaining(remaining);
+          }
         } else if (data.type === 'BATTLE_ACTION') {
           setLiveFeed(prev => [data, ...prev]);
           if (data.userId && data.scoreIncrement) {
             setLobbyPlayers(prev => prev.map(p => p.id === data.userId ? { ...p, score: p.score + data.scoreIncrement } : p));
           }
+        } else if (data.type === 'QUIZ_COMPLETED' || data.type === 'ROOM_COMPLETED') {
+          setQuizCompleted(true);
+          setFinalLeaderboard(data.leaderboard || []);
         }
       } catch (err) {
         console.error("WS message parse error:", err);
@@ -479,15 +511,68 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     return () => ws.close();
   }, [inLobby, selectedSection.id, randomizedQuestions.length]);
 
+  const currentIndexRef = useRef(currentIndex);
+  useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
+
+  const totalQCountRef = useRef(randomizedQuestions.length || 1);
+  useEffect(() => { totalQCountRef.current = randomizedQuestions.length || 1; }, [randomizedQuestions]);
+
+  const isAdvancingRef = useRef(isAdvancing);
+  useEffect(() => { isAdvancingRef.current = isAdvancing; }, [isAdvancing]);
+
   useEffect(() => {
-    if (!battleStarted) return;
+    if (!battleStarted || quizCompleted) return;
     const timer = setInterval(() => {
-      setTimeRemaining(prev => (prev > 0 ? prev - 1 : 0));
+      const now = Date.now();
+      const elapsed = Math.floor((now - startedAt) / 1000);
+      const remaining = Math.max(0, timeLimit - elapsed);
+      setTimeRemaining(remaining);
+      
+      if (remaining <= 0) {
+        clearInterval(timer);
+        if (isAdvancingRef.current) return;
+        setIsAdvancing(true);
+
+        setTimeout(() => {
+          const currentIdx = currentIndexRef.current;
+          const total = totalQCountRef.current;
+          const nextIdx = currentIdx + 1;
+          
+          if (nextIdx < total) {
+            setCurrentIndex(nextIdx);
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({
+                type: 'ADVANCE_QUESTION',
+                battleId: activeSessionId,
+                currentIndex: nextIdx,
+                nextTimeLimit: 60,
+                isLastQuestion: false
+              }));
+            }
+            setTimeRemaining(60);
+            setTimeLimit(60);
+            setStartedAt(Date.now());
+            setTimeout(() => setIsAdvancing(false), 500);
+          } else {
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({
+                type: 'ADVANCE_QUESTION',
+                battleId: activeSessionId,
+                currentIndex: currentIdx,
+                isLastQuestion: true
+              }));
+            }
+            toast.success("Quiz completed!");
+            setQuizCompleted(true);
+            setIsAdvancing(false);
+          }
+        }, 1000);
+      }
     }, 1000);
     return () => clearInterval(timer);
-  }, [battleStarted, currentIndex]);
+  }, [battleStarted, currentIndex, quizCompleted, activeSessionId, startedAt, timeLimit]);
 
- async function handleConfirmAndDeploy() {
+  async function handleConfirmAndDeploy() {
     if (activeSessionExists) {
       return toast.error("A live quiz session is currently active. You must end it before deploying a new one.");
     }
@@ -517,7 +602,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
 
       if (existingSession) {
         // Collision detected! Generate a new one and try again.
-        finalRoomCode = generateSecureRoomCode();
+        finalRoomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
       } else {
         isCodeUnique = true;
       }
@@ -551,25 +636,40 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     if (isLive) {
       setActiveSessionExists(true);
       setInLobby(true);
-      setJoinedStudents([]); 
       toast.success(`Live Match Session initialized using bank: ${selectedBank.name}! Session Locked.`);
     } else {
       toast.success("Own-pace session successfully deployed!");
     }
   }
+  const [countdown, setCountdown] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown > 0) {
+      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+      return () => clearTimeout(timer);
+    } else {
+      handleStartBattle();
+      setCountdown(null);
+    }
+  }, [countdown]);
+
   const handleStartBattle = () => {
-  setBattleStarted(true);
-  if (wsRef.current?.readyState === WebSocket.OPEN) {
-    wsRef.current.send(JSON.stringify({
-      type: 'PROF_START_BATTLE',
-      battleId: activeSessionId,
-      bankId: selectedBank.id,
-      questions: randomizedQuestions,   // ✅ this is what the server actually needs to relay
-    }));
-  }
-};
+    setBattleStarted(true);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'PROF_START_BATTLE',
+        battleId: activeSessionId,
+        bankId: selectedBank.id,
+        questions: randomizedQuestions,
+      }));
+    }
+  };
 
   const handleNextQuestion = () => {
+    if (isAdvancing) return;
+    setIsAdvancing(true);
+    
     const totalQCount = randomizedQuestions.length || 1;
     const nextIdx = currentIndex + 1;
 
@@ -584,6 +684,10 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
           isLastQuestion: false
         }));
       }
+      setTimeRemaining(60);
+      setTimeLimit(60);
+      setStartedAt(Date.now());
+      setTimeout(() => setIsAdvancing(false), 500);
     } else {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
@@ -593,33 +697,33 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
           isLastQuestion: true
         }));
       }
+      toast.success("Quiz completed!");
+      setQuizCompleted(true);
+      setIsAdvancing(false);
     }
-    setTimeRemaining(60);
   };
 
- const handleEndSession = async () => {
-    if (window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
+  const handleEndSession = async (skipConfirm = false) => {
+    if (skipConfirm || window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
        if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'PROF_END_BATTLE',
-        battleId: sessionId,
+        battleId: activeSessionId,
       }));
     }
       if (wsRef.current) wsRef.current.close();
-      cleanupBots(); 
       
       await supabase
         .from('quiz_sessions')
         .update({ status: 'COMPLETED' })
-        .eq('id', sessionId); 
+        .eq('id', activeSessionId); 
 
       setInLobby(false);
       setActiveSessionExists(false);
       setBattleStarted(false);
-      setJoinedStudents([]);
       setCurrentIndex(0);
-      setSessionId(''); 
-      setRoomCode(generateSecureRoomCode());
+      setActiveSessionId(''); 
+      setRoomCode(Math.random().toString(36).substring(2, 8).toUpperCase());
       
       toast.success("Live session ended successfully. Configuration unlocked.");
     }
@@ -639,13 +743,45 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
             <span style={{ fontSize: 12, fontFamily: "Manrope, sans-serif", color: C.yellow, fontWeight: 700 }}>🔒 STRICT SESSION LOCK:Navigation is locked until session completion.</span>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Bank: {selectedBank.name} ({randomizedQuestions.length} Questions)</span>
-              <button type="button" onClick={handleEndSession} style={{ background: C.red, border: "none", borderRadius: 8, padding: "5px 12px", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+              <button type="button" onClick={() => handleEndSession(false)} style={{ background: C.red, border: "none", borderRadius: 8, padding: "5px 12px", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                 End Session & Unlock
               </button>
             </div>
           </div>
 
-          {!battleStarted ? (
+
+
+          {quizCompleted ? (
+            <div style={{ maxWidth: 900, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 24 }}>
+              <div style={{ textAlign: "center", marginBottom: 20 }}>
+                <h1 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 42, fontWeight: 700, color: C.green, margin: 0 }}>🎉 Quiz Completed!</h1>
+                <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 16 }}>Final Results for {selectedSection.name}</p>
+              </div>
+              <div style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "30px" }}>
+                <h2 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 24, marginTop: 0, marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
+                  <Trophy size={24} color={C.yellow} /> Final Leaderboard
+                </h2>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {finalLeaderboard.sort((a, b) => b.score - a.score).map((p, idx) => (
+                    <div key={p.id || idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: idx === 0 ? "rgba(255,201,60,0.15)" : "rgba(255,255,255,0.06)", padding: "16px 20px", borderRadius: 16, border: idx === 0 ? `1px solid ${C.yellow}` : "none" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                        <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 22, fontWeight: 700, color: idx === 0 ? C.yellow : idx === 1 ? "#C0C0C0" : idx === 2 ? "#CD7F32" : "rgba(255,255,255,0.5)", width: 30 }}>#{idx + 1}</span>
+                        <span style={{ fontWeight: 700, fontFamily: "Manrope, sans-serif", fontSize: 18 }}>{p.name || p.userId || `Player ${idx + 1}`}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+                         {p.correctAnswers !== undefined && <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 14 }}>{p.correctAnswers} / {p.totalQuestions || totalQCount} Correct</span>}
+                         <span style={{ color: C.green, fontWeight: 800, fontFamily: "Fredoka, sans-serif", fontSize: 20 }}>{p.score || 0} pts</span>
+                      </div>
+                    </div>
+                  ))}
+                  {finalLeaderboard.length === 0 && <p style={{ color: "rgba(255,255,255,0.5)", textAlign: "center" }}>No players participated.</p>}
+                </div>
+              </div>
+              <button type="button" onClick={() => handleEndSession(true)} style={{ width: "100%", background: C.indigo, border: "none", borderRadius: 20, padding: "18px 0", fontFamily: "Fredoka, sans-serif", fontSize: 20, fontWeight: 700, color: "#fff", cursor: "pointer", marginTop: 20 }}>
+                Return to Dashboard
+              </button>
+            </div>
+          ) : !battleStarted ? (
             <div style={{ maxWidth: 900, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 24 }}>
               <div style={{ textAlign: "center" }}>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,201,60,0.15)", border: "1.5px solid rgba(255,201,60,0.3)", borderRadius: 20, padding: "5px 16px", marginBottom: 12 }}>
@@ -667,7 +803,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                 </div>
               </div>
 
-              <button type="button" onClick={handleStartBattle} style={{ width: "100%", background: `linear-gradient(135deg, ${C.indigo}, ${C.indigoDeep})`, border: "none", borderRadius: 20, padding: "18px 0", fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 8px 32px rgba(91,61,246,0.5)" }}>
+              {countdown !== null && countdown > 0 && <CountdownDisplay count={countdown} />}
+              <button type="button" onClick={() => setCountdown(3)} style={{ width: "100%", background: `linear-gradient(135deg, ${C.indigo}, ${C.indigoDeep})`, border: "none", borderRadius: 20, padding: "18px 0", fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 8px 32px rgba(91,61,246,0.5)" }}>
                 Start Live Battle Now! ⚡
               </button>
             </div>
@@ -683,7 +820,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
                     <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block" }}>Timer</span>
                     <span style={{ fontSize: 22, fontFamily: "Fredoka, sans-serif", color: timeRemaining <= 10 ? C.coral : C.yellow }}>{timeRemaining}s</span>
                   </div>
-                  <button type="button" onClick={handleNextQuestion} style={{ background: C.coral, border: "none", borderRadius: 14, padding: "12px 24px", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: "#fff", cursor: "pointer" }}>
+                  <button type="button" onClick={handleNextQuestion} disabled={isAdvancing || timeRemaining <= 0} style={{ background: (isAdvancing || timeRemaining <= 0) ? C.muted : C.coral, border: "none", borderRadius: 14, padding: "12px 24px", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: "#fff", cursor: (isAdvancing || timeRemaining <= 0) ? "not-allowed" : "pointer", opacity: (isAdvancing || timeRemaining <= 0) ? 0.7 : 1 }}>
                     {currentIndex >= totalQCount - 1 ? 'Finish Quiz' : 'Next Question →'}
                   </button>
                 </div>

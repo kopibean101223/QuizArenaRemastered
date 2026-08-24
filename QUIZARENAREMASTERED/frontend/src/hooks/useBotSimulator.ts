@@ -35,6 +35,7 @@ export function useBotSimulator(
       const teamName = `Team ${TEAM_NAMES[teamIndex % TEAM_NAMES.length]}`;
       
       let currentScore = 0;
+      let correctAnswers = 0;
 
       ws.onopen = () => {
         // Join the battle room
@@ -80,7 +81,10 @@ export function useBotSimulator(
               }
 
               // Submit standard score to update leaderboard
-              if (isCorrect) currentScore += 100;
+              if (isCorrect) {
+                currentScore += 100;
+                correctAnswers += 1;
+              }
               ws.send(JSON.stringify({
                 type: 'SUBMIT_SCORE',
                 battleId,
@@ -88,7 +92,11 @@ export function useBotSimulator(
                   id: botId,
                   name: botName,
                   score: currentScore,
-                  correctAnswers: isCorrect ? 1 : 0,
+                  correct: correctAnswers,
+                  correctAnswers: correctAnswers,
+                  total: questions.length,
+                  totalQuestions: questions.length,
+                  accuracy: Math.round((correctAnswers / questions.length) * 100),
                   team: teamName
                 }
               }));

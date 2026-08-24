@@ -1,15 +1,13 @@
 import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next'
+import { NextResponse, type NextRequest } from 'next/server'
 
 // 1. Define Role Page Access Rules
-const STUDENT_PAGES = ['lobby', 'battle', 'results']
+const STUDENT_PAGES = ['lobby', 'battle', 'results', 'student_dashboard', 'history', 'classes', 'profile']
 const PROFESSOR_PAGES = ['dashboard', 'sections', 'questions', 'aigen', 'matchmaking', 'analyzer']
 
 export default async function middleware(request: NextRequest) {
-  let response = NextResponse.next({
-    request: {
-      headers: request.headers,
-    },
+  let supabaseResponse = NextResponse.next({
+    request,
   })
 
   // 2. Initialize Supabase Server Client
@@ -23,11 +21,11 @@ export default async function middleware(request: NextRequest) {
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-          response = NextResponse.next({
+          supabaseResponse = NextResponse.next({
             request,
           })
           cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
+            supabaseResponse.cookies.set(name, value, options)
           )
         },
       },
@@ -60,7 +58,7 @@ export default async function middleware(request: NextRequest) {
     const redirectRes = NextResponse.redirect(targetUrl)
 
     // Copy updated auth cookies to redirect response
-    response.cookies.getAll().forEach((cookie) => {
+    supabaseResponse.cookies.getAll().forEach((cookie) => {
       redirectRes.cookies.set(cookie.name, cookie.value, cookie)
     })
 
@@ -75,7 +73,7 @@ export default async function middleware(request: NextRequest) {
     if (!isAuthPage) {
       return redirectWithNoCache('login')
     }
-    return response
+    return supabaseResponse
   }
 
   // ----------------------------------------------------
@@ -100,22 +98,22 @@ export default async function middleware(request: NextRequest) {
     if (!isRolePage) {
       return redirectWithNoCache('role')
     }
-    return response
+    return supabaseResponse
   }
 
   // ----------------------------------------------------
   // CASE D: Role-Based Routing & Authorization Checks
   // ----------------------------------------------------
-  const defaultPage = role === 'professor' ? 'dashboard' : 'lobby'
+  const defaultPage = role === 'professor' ? 'dashboard' : 'student_dashboard'
 
   // Block logged-in users from Auth, Role Selection, or root '/'
- if (isAuthPage || isRolePage || isRootPath) {
-  return redirectWithNoCache(defaultPage);
-}
+  if (isAuthPage || isRolePage || isRootPath) {
+    return redirectWithNoCache(defaultPage);
+  }
 
   // Prevent Students from accessing Professor pages
   if (role === 'student' && PROFESSOR_PAGES.includes(activeRoute)) {
-    return redirectWithNoCache('lobby', { key: 'error', val: 'unauthorized_professor_access' })
+    return redirectWithNoCache('student_dashboard', { key: 'error', val: 'unauthorized_professor_access' })
   }
 
   // Prevent Professors from accessing Student pages
@@ -123,8 +121,7 @@ export default async function middleware(request: NextRequest) {
     return redirectWithNoCache('dashboard', { key: 'error', val: 'unauthorized_student_access' })
   }
 
-  response.headers.set('Cache-Control', 'no-store, max-age=0, must-revalidate')
-  return response
+  return supabaseResponse
 }
 
 export const config = {

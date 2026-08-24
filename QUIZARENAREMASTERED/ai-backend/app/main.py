@@ -14,10 +14,13 @@ load_dotenv()
 
 # 2. Safely import config variables
 try:
-    from app.config import REDIS_HOST, REDIS_PORT, FRONTEND_ORIGIN
+    from app.config import REDIS_HOST, REDIS_PORT, FRONTEND_ORIGIN, REDIS_URL
 except ImportError:
-    REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+    REDIS_URL = os.getenv("REDIS_URL")
+    REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
     REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+    if not REDIS_URL:
+        REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
     FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
 
 if not FRONTEND_ORIGIN:
@@ -32,7 +35,8 @@ from openai import OpenAI
 import redis
 from fastapi import Request
 
-redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+redis_url_safe = REDIS_URL.replace("CERT_NONE", "none") if REDIS_URL else ""
+redis_client = redis.from_url(redis_url_safe, decode_responses=True) if redis_url_safe.startswith("redis") else redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
 def check_rate_limit_and_audit(student_id: str, endpoint: str, limit: int = 5, window_seconds: int = 60):
     """
@@ -83,21 +87,26 @@ LOCAL_CHUNKS_BACKEND_STORE = {}
 # --- SAFE EMBEDDING SELECTOR (Updated Model Name) ---
 # --- SAFE EMBEDDING SELECTOR (Standard Gemini -> OpenAI Fallback) ---
 def get_embedding_model():
-    try:
-        print("Attempting to initialize Google Gemini embedding model...")
-        return GoogleGenerativeAIEmbeddings(
-            model="text-embedding-004", 
-            google_api_key=os.getenv("GEMINI_API_KEY")
-        )
-    except Exception as gemini_err:
-        print(f"Gemini embedding failed ({gemini_err}). Falling back to OpenAI embeddings...")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if gemini_key:
+        try:
+            return GoogleGenerativeAIEmbeddings(
+                model="text-embedding-004", 
+                google_api_key=gemini_key
+            )
+        except Exception as gemini_err:
+            print(f"Gemini embedding failed: {gemini_err}")
+    if openai_key:
         try:
             return OpenAIEmbeddings(
                 model="text-embedding-3-small", 
-                api_key=os.getenv("OPENAI_API_KEY")
+                api_key=openai_key
             )
         except Exception as openai_err:
-            raise RuntimeError(f"Both Gemini and OpenAI embedding models failed to initialize: {openai_err}")
+            print(f"OpenAI embedding failed: {openai_err}")
+    print("Warning: No valid GEMINI_API_KEY or OPENAI_API_KEY provided for embeddings.")
+    return None
 
 embeddings = get_embedding_model()
 # Initialize Google GenAI Client if available
@@ -130,7 +139,7 @@ fastapi_app.add_middleware(
 sio = socketio.AsyncServer(
     async_mode="asgi",
     cors_allowed_origins=[FRONTEND_ORIGIN, "http://localhost:3000", "http://127.0.0.1:3000"],
-    client_manager=socketio.AsyncRedisManager(f"redis://{REDIS_HOST}:{REDIS_PORT}"),
+    client_manager=socketio.AsyncRedisManager(REDIS_URL),
 )
 
 register_game_events(sio)
@@ -171,70 +180,57 @@ def clean_and_parse_json(raw_str: str):
 
 # 5. HTTP Endpoints
 
+import tempfile
+
 @fastapi_app.post("/ingest")
 async def ingest_file(file: UploadFile = File(...), docId: str = Form(...)):
-    """Extracts text, splits with LangChain, and stores vectors/chunks for retrieval."""
+    """Extracts text from PDF synchronously and returns chunks for the frontend to save."""
     try:
         contents = await file.read()
-        pdf_reader = PdfReader(io.BytesIO(contents))
+        import tempfile, os
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        tmp.write(contents)
+        tmp.close()
         
-        full_text = ""
-        extracted_chunks = []
-        for page_num, page in enumerate(pdf_reader.pages, start=1):
-            text = page.extract_text() or ""
-            full_text += f"\n--- Page {page_num} ---\n" + text
+        import pymupdf4llm
+        md_text = pymupdf4llm.to_markdown(tmp.name)
+        os.unlink(tmp.name)
             
-            paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-            for para_num, para_text in enumerate(paragraphs, start=1):
-                if len(para_text) > 20:
-                    extracted_chunks.append({
-                        "page": page_num,
-                        "paragraph": para_num,
-                        "text": para_text
-                    })
-
-        LOCAL_CHUNKS_BACKEND_STORE[str(docId)] = {
-            "filename": file.filename,
-            "chunks": extracted_chunks
-        }
-
-      
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50,
-            add_start_index=True
-        )
-        raw_chunks = text_splitter.split_text(full_text)
-
-        texts_to_embed = []
-        metadatas = []
-        for idx, chunk in enumerate(raw_chunks):
-            texts_to_embed.append(chunk)
-            metadatas.append({
-                "docId": str(docId),
-                "filename": file.filename,
-                "chunkIndex": idx
+        from langchain_text_splitters import MarkdownHeaderTextSplitter
+        headers_to_split_on = [("#", "Header 1"), ("##", "Header 2"), ("###", "Header 3")]
+        markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
+        md_header_splits = markdown_splitter.split_text(md_text)
+        
+        passages = []
+        for i, chunk in enumerate(md_header_splits):
+            if len(chunk.page_content.strip()) > 100:
+                passages.append({
+                    "id": str(i),
+                    "text": chunk.page_content,
+                    "meta": chunk.metadata
+                })
+                
+        from flashrank import Ranker, RerankRequest
+        ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2")
+        query = "mathematical equations, formulas, definitions, theorems, and worked examples"
+        rerankrequest = RerankRequest(query=query, passages=passages)
+        reranked = ranker.rerank(rerankrequest)
+        
+        # Sanitize chunks to avoid numpy.float32 JSON serialization errors
+        top_chunks = []
+        for c in reranked[:10]:
+            top_chunks.append({
+                "id": str(c.get("id", "")),
+                "text": str(c.get("text", ""))
             })
-
-        if supabase_client:
-            try:
-                SupabaseVectorStore.from_texts(
-                    texts=texts_to_embed,
-                    embedding=embeddings,
-                    metadatas=metadatas,
-                    client=supabase_client,
-                    table_name="documents",
-                    query_name="match_documents"
-                )
-            except Exception as sb_err:
-                print(f"Supabase vector insert warning (using local fallback memory): {sb_err}")
 
         return {
             "status": "success", 
+            "message": "File processed.",
             "docId": docId, 
             "filename": file.filename,
-            "pages": len(pdf_reader.pages),
-            "chunksInserted": len(raw_chunks)
+            "chunks": top_chunks,
+            "pages": 1
         }
     except Exception as e:
         print(f"Ingestion error: {e}")
@@ -285,174 +281,46 @@ class GenerateRequest(BaseModel):
 
 @fastapi_app.post("/generate")
 async def generate_questions(req: GenerateRequest):
-    """Generates questions using pgvector, Next.js payload chunks, or local backup memory."""
+    """Starts Celery with dynamic config if not started, or fetches results if done."""
     doc_key = str(req.document_id)
-    relevant_docs = []
-
-    if supabase_client:
-        try:
-            vector_store = SupabaseVectorStore(
-                client=supabase_client,
-                embedding=embeddings,
-                table_name="documents",
-                query_name="match_documents"
-            )
-            search_query = f"{req.category} {req.difficulty} level concepts"
-            filter_clause = {"docId": doc_key} if doc_key != "all" else {}
-
-            relevant_docs = vector_store.similarity_search(
-                query=search_query,
-                k=req.count,
-                filter=filter_clause
-            )
-        except Exception as v_err:
-            print(f"Vector search warning: {v_err}")
-
-    if not relevant_docs and req.chunks and len(req.chunks) > 0:
-        class DummyDoc:
-            def __init__(self, text, meta):
-                self.page_content = text
-                self.metadata = meta
+    redis_key = f"generated_questions:{doc_key}"
+    task_key = f"celery_task:{doc_key}"
+    
+    # Check if done
+    cached = redis_client.get(redis_key)
+    if cached:
+        questions = json.loads(cached)
+        if isinstance(questions, list) and len(questions) > 0 and "error" in questions[0]:
+            raise HTTPException(status_code=400, detail=questions[0]["error"])
+        return questions[:req.count]
         
-        relevant_docs = [
-            DummyDoc(
-                c.get('text', str(c)), 
-                {"filename": req.filename or "Syllabus.pdf", "chunkIndex": idx, "page": c.get('page', 1)}
-            ) for idx, c in enumerate(req.chunks)
-        ]
-
-    if not relevant_docs and doc_key in LOCAL_CHUNKS_BACKEND_STORE:
-        stored_doc = LOCAL_CHUNKS_BACKEND_STORE[doc_key]
-        class DummyDoc:
-            def __init__(self, text, meta):
-                self.page_content = text
-                self.metadata = meta
-        relevant_docs = [
-            DummyDoc(c['text'], {"filename": stored_doc["filename"], "chunkIndex": idx, "page": c.get('page', 1)}) 
-            for idx, c in enumerate(stored_doc["chunks"])
-        ]
-
-    if not relevant_docs:
+    # Check if already running
+    is_running = redis_client.get(task_key)
+    if is_running:
         raise HTTPException(
-            status_code=400, 
-            detail="No uploaded PDF vectors or chunks found. Please re-upload your PDF."
+            status_code=404, 
+            detail="The AI is still reading your document and crafting questions. This usually takes about 30-45 seconds. Please wait a moment and click Generate again!"
         )
-
-    selected_types = req.types if req.types else ["Multiple Choice"]
-    context_items = []
+        
+    # Start generation
+    if not req.chunks:
+        raise HTTPException(status_code=400, detail="No chunks provided for generation.")
+        
+    redis_client.setex(task_key, 300, "running")
     
-    sampled_docs = random.sample(relevant_docs, k=min(req.count, len(relevant_docs)))
+    config = {
+        "count": req.count,
+        "difficulty": req.difficulty,
+        "types": req.types
+    }
     
-    for idx, doc in enumerate(sampled_docs):
-        q_type = selected_types[idx % len(selected_types)]
-        excerpt = doc.page_content[:300].replace('\n', ' ')
-        context_items.append(
-            f"Item {idx+1} [Target Type: '{q_type}']: \"{excerpt}\""
-        )
-
-    full_context = "\n".join(context_items)
-    filename = req.filename or "Syllabus.pdf"
-
-   # Inside ai-backend/app/main.py
-
-    prompt = f"""
-Create exactly {req.count} Mathematics test questions based on these excerpts from "{filename}":
-
-CONTEXT EXCERPTS:
-{full_context}
-
-Difficulty Level: {req.difficulty}
-Target Category: Mathematics ({req.category})
-
-CRITICAL QUESTION TYPE VALIDATION RULE:
-If the excerpts DO NOT contain mathematical concepts, formulas, or numbers, you MUST abort and return EXACTLY this JSON object:
-{{
-  "error": "Selected question type requires mathematics concepts, but none were detected in the uploaded document."
-}}
-
-Otherwise, return ONLY a raw JSON object containing the questions array matching this exact structure:
-{{
-  "questions": [
-    {{
-      "text": "The mathematical problem derived from the concept",
-      "type": "Target Type",
-      "difficulty": "{req.difficulty}",
-      "topic": "Specific Math Topic",
-      "answer": "Correct answer text/explanation",
-      "choices": [],
-      "stepWeights": {{"Formula setup": 40, "Substitution": 30, "Calculation": 30}},
-      "partialCreditRules": "Give 40% if formula is correct but calculation is wrong."
-    }}
-  ]
-}}
-
-STRICT TYPE FORMATTING RULES:
-1. For "Step-by-step Solution":
-   - "choices" MUST BE AN EMPTY ARRAY: []
-   - You MUST provide "stepWeights" (a dictionary mapping logical steps to percentage weights totaling 100).
-   - You MUST provide "partialCreditRules" explaining how to grade mistakes.
-2. For "Multiple Choice":
-   - "choices" MUST be an array of exactly 4 objects (A, B, C, D) with one correct choice.
-   - "stepWeights" and "partialCreditRules" can be null.
-3. For "Numerical Input":
-   - "choices" MUST BE AN EMPTY ARRAY: [].
-   - "answer" MUST be the exact number or expression.
-4. GENERAL RULE:
-   - NEVER include phrases like "According to page X" in the question text.
-"""
-
-    raw_text = None
+    from app.celery_worker import process_and_generate_quiz
+    process_and_generate_quiz.delay(doc_key, req.filename, req.chunks, config)
     
-    # --- GROQ FALLBACK CHAIN (2 Groq Models) ---
-    groq_models = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
-
-    for model_name in groq_models:
-        try:
-            response = groq_client.chat.completions.create(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                response_format={"type": "json_object"}
-            )
-            raw_text = response.choices[0].message.content.strip()
-            if raw_text:
-                break
-        except Exception as groq_err:
-            print(f"Groq ({model_name}) failed: {groq_err}")
-
-    # --- GEMINI LLM FINAL FALLBACK ---
-    if not raw_text and gemini_client:
-        try:
-            print("All Groq models failed. Falling back to Gemini LLM...")
-            response = gemini_client.models.generate_content(
-                model="gemini-2.5-pro",
-                contents=prompt
-            )
-            raw_text = response.text.strip()
-        except Exception as gemini_err:
-            print(f"Gemini fallback failed: {gemini_err}")
-
-    if not raw_text:
-        raise HTTPException(status_code=500, detail="All AI generation models failed.")
-
-    parsed = clean_and_parse_json(raw_text)
-    if isinstance(parsed, dict) and "error" in parsed:
-        raise HTTPException(status_code=400, detail=parsed["error"])
-
-    questions_data = parsed if isinstance(parsed, list) else parsed.get("questions", [])
-
-    for idx, q in enumerate(questions_data):
-        doc = sampled_docs[idx % len(sampled_docs)]
-        meta = doc.metadata if hasattr(doc, 'metadata') else {}
-        q["citation"] = {
-            "docId": req.document_id,
-            "docName": filename,
-            "topic": q.get("topic", req.category),
-            "confidence": "strong",
-            "excerpt": doc.page_content[:250] + "..." if len(doc.page_content) > 250 else doc.page_content
-        }
-
-    return questions_data
+    raise HTTPException(
+        status_code=404, 
+        detail="The AI is still reading your document and crafting questions. This usually takes about 30-45 seconds. Please wait a moment and click Generate again!"
+    )
 
 app = socketio.ASGIApp(sio, other_asgi_app=fastapi_app)
 

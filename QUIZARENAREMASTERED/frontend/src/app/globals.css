@@ -10,3 +10,6 @@ body,
 #__next {
   height: 100%;
 }
+
+@keyframes burstRing { 0%{transform:scale(0.8);opacity:1} 100%{transform:scale(1.5);opacity:0} }
+@keyframes countPop { 0%{transform:scale(0.5);opacity:0} 100%{transform:scale(1);opacity:1} }

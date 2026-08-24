@@ -57,7 +57,7 @@ function RouterContent() {
 
   useEffect(() => {
     if (isMounted && !isLoading && user && page === "login") {
-      const targetRoute = user.role === "professor" ? "dashboard" : "student_dashboard";
+      const targetRoute = !user.role ? "role" : user.role === "professor" ? "dashboard" : "student_dashboard";
       setPage(targetRoute);
     }
   }, [isMounted, isLoading, user, page, setPage]);
@@ -95,6 +95,7 @@ function RouterContent() {
     case "login":
     default:
       if (user) {
+        if (!user.role) return <ChooseRole />;
         return user.role === "professor" ? <ProfessorDashboard /> : <StudentDashboard />;
       }
       return <AuthScreen />;

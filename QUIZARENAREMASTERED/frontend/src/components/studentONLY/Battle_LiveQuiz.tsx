@@ -185,11 +185,17 @@ export function LiveBattle({ battleId }: { battleId: string }) {
     setLastCorrect(isCorrect);
     const scoreAdd = isCorrect ? (currentQuestion.points || 10) : 0;
 
-    // FIX: track the running correct-answer count ourselves. The server
-    // fully overwrites this player's leaderboard entry on every submit
-    // (it doesn't increment anything), so unless we send the cumulative
-    // count each time, only the most recent question's result survives.
+    // FIX: track the running correct-answer count ourselves.
     if (isCorrect) correctCountRef.current += 1;
+
+    // Send answer to professor chat stream
+    send({
+      type: "BATTLE_ACTION",
+      battleId: battleId || "room_101",
+      userId: currentUserId,
+      sender: studentName,
+      message: `answered: ${userAnswer} (${isCorrect ? 'Correct' : 'Incorrect'})`,
+    });
 
     // Send score to server so Redis & Supabase update
     send({
@@ -197,14 +203,14 @@ export function LiveBattle({ battleId }: { battleId: string }) {
       battleId: battleId || "room_101",
       playerData: {
         id: currentUserId,
+        userId: currentUserId,
         name: studentName,
         score: (players.find(p => p.isMe)?.score || 0) + scoreAdd,
-        // FIX: was "correctCount" - the results screen reads "correct",
-        // so the old field name was never picked up at all. "total" is
-        // now the real question count instead of the missing/defaulted
-        // value the results screen used to fall back to.
         correct: correctCountRef.current,
+        correctAnswers: correctCountRef.current,
         total: questions.length,
+        totalQuestions: questions.length,
+        accuracy: questions.length > 0 ? Math.round((correctCountRef.current / questions.length) * 100) : 0,
       }
     });
   }

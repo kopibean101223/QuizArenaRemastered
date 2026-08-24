@@ -1,5 +1,6 @@
 'use client';
 
+import React, { useEffect } from 'react';
 import { useApp } from "../../../context/AppContext";
 import { StudentTopBar } from "../../shared/StudentTopBar";
 import { Zap, Users, Trophy } from "lucide-react";
@@ -28,8 +29,14 @@ export interface LobbyModeProps {
  * only ever one.
  */
 export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
-  const { user } = useApp();
-  const { players, countdown, battleStarted } = useBattleSocketContext();
+  const { user, navigate } = useApp();
+  const { players, countdown, battleStarted, lastMessage } = useBattleSocketContext();
+
+  useEffect(() => {
+    if (lastMessage?.type === 'ROOM_COMPLETED' || lastMessage?.type === 'QUIZ_COMPLETED' || lastMessage?.status === 'completed') {
+      navigate('results');
+    }
+  }, [lastMessage, navigate]);
 
   if (battleStarted) {
     return <LiveBattle battleId={sessionId} />;

@@ -11,6 +11,7 @@ import {
 import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
 import { useBotSimulator } from "@/hooks/useBotSimulator";
+import { CountdownDisplay } from "./studentONLY/ComponentsLobby/CountdownDisplay";
 
 // ─── Tokens ────────────────────────────────────────────────────────────────────
 const C = {
@@ -187,6 +188,83 @@ function EmptySlot() {
   );
 }
 
+function Counter({ to, delay = 0 }: { to: number; delay?: number }) {
+  const [val, setVal] = useState(0);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const steps = 40;
+      let i = 0;
+      const iv = setInterval(() => {
+        i++;
+        setVal(Math.round((to * i) / steps));
+        if (i >= steps) clearInterval(iv);
+      }, 22);
+      return () => clearInterval(iv);
+    }, delay);
+    return () => clearTimeout(t);
+  }, [to, delay]);
+  return <>{val.toLocaleString()}</>;
+}
+
+function PodiumAvatar({ player, rank }: { player: any; rank: 1|2|3 }) {
+  const sizes   = { 1:72, 2:60, 3:56 } as const;
+  const rings   = { 1:C.yellow, 2:"rgba(255,255,255,0.5)", 3:"#CD7F32" } as const;
+  const glows   = { 1:C.yellowGlow, 2:"rgba(255,255,255,0.2)", 3:"rgba(205,127,50,0.3)" } as const;
+  const medals  = ["🥇","🥈","🥉"];
+  const sz = sizes[rank];
+
+  const pName = player.name || player.userId || "Anonymous";
+  const initials = String(pName).substring(0, 2).toUpperCase();
+  const pColor = player.color || AVATAR_COLORS[Math.abs(pName.charCodeAt(0)) % AVATAR_COLORS.length];
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
+      {rank === 1 && (
+        <Crown size={28} fill={C.yellow} color="transparent" style={{ filter:`drop-shadow(0 2px 6px ${C.yellowGlow})` }} />
+      )}
+      {rank !== 1 && <div style={{ height:22 }}/>}
+      <div style={{ position:"relative" }}>
+        <div style={{
+          width:sz, height:sz, borderRadius:"50%", background: pColor,
+          display:"flex", alignItems:"center", justifyContent:"center",
+          fontFamily:"Fredoka, sans-serif", fontSize:sz*0.3, fontWeight:700, color:"#fff",
+          border:`${rank===1?4:3}px solid ${rings[rank]}`,
+          boxShadow:`0 0 0 ${rank===1?6:4}px ${glows[rank]}, 0 8px 24px rgba(0,0,0,0.4)`,
+        }}>
+          {initials}
+        </div>
+      </div>
+      <span style={{ fontSize:22 }}>{medals[rank-1]}</span>
+      <div style={{ textAlign:"center" }}>
+        <p style={{ fontFamily:"Fredoka, sans-serif", fontSize:rank===1?17:15, fontWeight:700, color:"#fff", margin:0, lineHeight:1.2 }}>
+          {pName}
+        </p>
+        <p style={{ fontFamily:"Fredoka, sans-serif", fontSize:rank===1?22:18, fontWeight:700, color:rank===1?C.yellow:"rgba(255,255,255,0.7)", margin:"2px 0 0" }}>
+          <Counter to={player.score || 0} delay={rank===1?600:rank===2?400:800} />
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function PodiumStep({ rank }: { rank: 1|2|3 }) {
+  const heights = { 1:100, 2:72, 3:56 } as const;
+  const colors  = {
+    1:`linear-gradient(160deg,${C.yellow},rgba(232,168,0,1))`,
+    2:`linear-gradient(160deg,rgba(255,255,255,0.18),rgba(255,255,255,0.08))`,
+    3:`linear-gradient(160deg,rgba(205,127,50,0.5),rgba(205,127,50,0.25))`,
+  } as const;
+  const labels  = { 1:"1st", 2:"2nd", 3:"3rd" };
+
+  return (
+    <div style={{ width:100, height:heights[rank], background:colors[rank], border: rank===1 ? `2px solid ${C.yellow}99` : rank===2 ? "2px solid rgba(255,255,255,0.25)" : "2px solid rgba(205,127,50,0.4)", borderRadius:"14px 14px 0 0", display:"flex", alignItems:"center", justifyContent:"center", position:"relative", flexShrink:0 }}>
+      <span style={{ fontFamily:"Fredoka, sans-serif", fontSize:22, fontWeight:700, color: rank===1?"#1B1E2B":rank===2?"rgba(255,255,255,0.7)":"rgba(205,127,50,0.9)" }}>
+        {labels[rank]}
+      </span>
+    </div>
+  );
+}
+
 // ─── Main Page Component ───────────────────────────────────────────────────────
 export function Matchmaking({ professorId }: { professorId?: string }) {
   const supabase = createBrowserSupabaseClient();
@@ -218,6 +296,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   
   // State for globally unique session routing
   const [sessionId, setSessionId] = useState<string>('');
+  const [isSyncing, setIsSyncing] = useState(false);
   
   const [joinedStudents, setJoinedStudents] = useState<Student[]>([]);
   const [copied, setCopied] = useState(false);
@@ -225,18 +304,36 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [timeRemaining, setTimeRemaining] = useState(60);
   const [liveFeed, setLiveFeed] = useState<any[]>([]);
+  const [finalLeaderboard, setFinalLeaderboard] = useState<any[]>([]);
 
   // ─── PROFESSOR GROUP MANAGEMENT STATE (ONLY FOR TEAM MODE) ───
   const [groups, setGroups] = useState<string[]>(['Team 1', 'Team 2']);
 
-  const handleAddGroup = () => {
-  const existingNums = groups
-    .map(g => parseInt(g.replace('Team ', '')))
-    .filter(n => !isNaN(n));
-  const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
-  const next = [...groups, `Team ${nextNum}`];
+  const [quizCompleted, setQuizCompleted] = useState(false);
+  const [isAdvancing, setIsAdvancing] = useState(false);
+  const isAdvancingRef = useRef(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
 
-  setGroups(next);
+  useEffect(() => { isAdvancingRef.current = isAdvancing; }, [isAdvancing]);
+
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown > 0) {
+      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+      return () => clearTimeout(timer);
+    } else {
+      handleStartBattle();
+      setCountdown(null);
+    }
+  }, [countdown]);
+
+  const handleAddGroup = () => {
+    const existingNums = groups
+      .map(g => parseInt(g.replace('Team ', '')))
+      .filter(n => !isNaN(n));
+    const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+    const next = [...groups, `Team ${nextNum}`];
+    setGroups(next);
 
   if (wsRef.current?.readyState === WebSocket.OPEN) {
     wsRef.current.send(JSON.stringify({
@@ -288,6 +385,7 @@ const handleRemoveGroup = (groupName: string) => {
         .limit(1);
 
       if (data && data.length > 0) {
+        setIsSyncing(true);
         setSessionId(data[0].id); 
         setRoomCode(data[0].room_code);
         setLobbyType(data[0].mode as LobbyType || "individual");
@@ -458,10 +556,19 @@ const handleRemoveGroup = (groupName: string) => {
           const data = JSON.parse(event.data);
             console.log("[TEAM][prof] received message type:", data.type, data);   // <-- add this line first thing
           if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'SCORE_UPDATED') {
+            setIsSyncing(false);
             if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
+            if (data.startedAt) {
+              const limit = data.timeLimit || 60;
+              const elapsed = Math.floor((Date.now() - data.startedAt) / 1000);
+              setTimeRemaining(Math.max(0, limit - elapsed));
+            }
             if (data.history) setLiveFeed(data.history);
-              if (data.status === 'active') setBattleStarted(true);   // <-- add this
-
+            if (data.status === 'completed') {
+              setQuizCompleted(true);
+            } else if (data.status === 'active') {
+              setBattleStarted(true);
+            }
             
             // Handle Live Points Update to populate and sort the Ranking Leaderboard dynamically
             if (data.leaderboard && Array.isArray(data.leaderboard)) {
@@ -491,8 +598,10 @@ const handleRemoveGroup = (groupName: string) => {
                 return updated;
               });
             }
-          } 
-          else if (data.type === 'BATTLE_ACTION') {
+          } else if (data.type === 'QUIZ_COMPLETED' || data.type === 'ROOM_COMPLETED') {
+            setQuizCompleted(true);
+            setFinalLeaderboard(data.leaderboard || []);
+          } else if (data.type === 'BATTLE_ACTION') {
             const uniqueId = data.userId || data.sender;
             const rawName = data.rawName || data.sender;
             const isJoinEvent = data.isJoinEvent || (data.message && data.message.includes('joined'));
@@ -552,13 +661,19 @@ const handleRemoveGroup = (groupName: string) => {
           }
           // NEW — lets the professor's screen recover "battle already
           // running" state after a reload, for Royale and Team.
-          else if (data.type === 'ROYALE_STATE_SYNC' && data.status === 'active') {
-            setBattleStarted(true);
-            if (typeof data.questionIndex === 'number') setCurrentIndex(data.questionIndex);
+          else if (data.type === 'ROYALE_STATE_SYNC') {
+            setIsSyncing(false);
+            if (data.status === 'active') {
+              setBattleStarted(true);
+              if (typeof data.questionIndex === 'number') setCurrentIndex(data.questionIndex);
+            }
           }
-          else if (data.type === 'TEAM_STATE_SYNC' && Array.isArray(data.questions) && data.questions.length > 0) {
-            setBattleStarted(true);
-            if (typeof data.questionIndex === 'number') setCurrentIndex(data.questionIndex);
+          else if (data.type === 'TEAM_STATE_SYNC') {
+            setIsSyncing(false);
+            if (Array.isArray(data.questions) && data.questions.length > 0) {
+              setBattleStarted(true);
+              if (typeof data.questionIndex === 'number') setCurrentIndex(data.questionIndex);
+            }
           }
         } catch (err) {
           console.error("WS message parse error:", err);
@@ -581,18 +696,20 @@ const handleRemoveGroup = (groupName: string) => {
   }, [inLobby, sessionId, randomizedQuestions.length]);
 
   useEffect(() => {
-    if (!battleStarted) return;
+    if (!battleStarted || quizCompleted) return;
     const timer = setInterval(() => {
       setTimeRemaining(prev => {
         if (prev <= 1) {
+          clearInterval(timer);
+          if (isAdvancingRef.current) return 0;
           handleNextQuestion();
-          return 60; 
+          return 0; 
         }
         return prev - 1;
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [battleStarted, currentIndex, randomizedQuestions.length]);
+  }, [battleStarted, currentIndex, randomizedQuestions.length, quizCompleted]);
    
 async function handleConfirmAndDeploy() {
     if (activeSessionExists) {
@@ -723,6 +840,9 @@ async function handleConfirmAndDeploy() {
   };
 
   const handleNextQuestion = () => {
+    if (isAdvancingRef.current) return;
+    setIsAdvancing(true);
+
     const totalQCount = randomizedQuestions.length || 1;
     const nextIdx = currentIndex + 1;
 
@@ -737,6 +857,8 @@ async function handleConfirmAndDeploy() {
           isLastQuestion: false
         }));
       }
+      setTimeRemaining(60);
+      setTimeout(() => setIsAdvancing(false), 500);
     } else {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
@@ -746,8 +868,10 @@ async function handleConfirmAndDeploy() {
           isLastQuestion: true
         }));
       }
+      toast.success("Quiz completed!");
+      setQuizCompleted(true);
+      setIsAdvancing(false);
     }
-    setTimeRemaining(60);
   };
 
  const handleEndSession = async () => {
@@ -769,6 +893,9 @@ async function handleConfirmAndDeploy() {
       setInLobby(false);
       setActiveSessionExists(false);
       setBattleStarted(false);
+      setQuizCompleted(false);
+      setFinalLeaderboard([]);
+      setCountdown(null);
       setJoinedStudents([]);
       setCurrentIndex(0);
       setSessionId(''); 
@@ -815,13 +942,101 @@ async function handleConfirmAndDeploy() {
             </div>
           </div>
 
-          {!battleStarted ? (
+          {quizCompleted ? (
+            <div style={{ maxWidth: 900, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 24 }}>
+              <div style={{ background: "rgba(255,255,255,0.05)", border: "1.5px solid rgba(255,255,255,0.08)", borderRadius: 24, padding: "32px", textAlign: "center" }}>
+                <Trophy size={64} color={C.yellow} style={{ margin: "0 auto 16px" }} />
+                <h2 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 32, color: "#fff", margin: "0 0 8px" }}>Session Complete!</h2>
+                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 16, color: "rgba(255,255,255,0.7)", margin: 0 }}>The live match has ended. Here are the final results.</p>
+              </div>
+
+              <div style={{ background: "rgba(255,255,255,0.03)", border: "1.5px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 24 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
+                  <Trophy size={20} fill={C.yellow} color="transparent" />
+                  <h3 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 20, color: "#fff", margin: 0 }}>Final Leaderboard</h3>
+                </div>
+
+                {finalLeaderboard.length > 0 && (() => {
+                  const sorted = [...finalLeaderboard].sort((a, b) => b.score - a.score);
+                  const top3 = [sorted[1], sorted[0], sorted[2]];
+                  return (
+                    <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"center", gap:0, marginBottom: 40, marginTop: 20 }}>
+                      {top3.map((player, idx) => {
+                        const rank = [2, 1, 3][idx] as 1|2|3;
+                        return (
+                          <div key={player ? player.id : `empty-${idx}`} style={{ display:"flex", flexDirection:"column", alignItems:"center", animation:`slideUp 0.6s ${idx*0.15}s cubic-bezier(0.34,1.56,0.64,1) both` }}>
+                            <div style={{ paddingBottom:12, minHeight: 160, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+                              {player ? <PodiumAvatar player={player} rank={rank} /> : null}
+                            </div>
+                            <PodiumStep rank={rank} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {finalLeaderboard.sort((a, b) => b.score - a.score).map((p, i) => {
+                    const idx = i;
+                    const tot = p.total || p.totalQuestions || 0;
+                    const cor = p.correct || p.correctAnswers || 0;
+                    return (
+                    <div key={p.id || idx} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "rgba(255,255,255,0.04)", borderRadius: 14 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        <span style={{ fontSize: 16, fontWeight: 700, color: idx === 0 ? C.yellow : idx === 1 ? "#C0C0C0" : idx === 2 ? "#CD7F32" : C.muted }}>
+                          #{idx + 1}
+                        </span>
+                        <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 16, color: "#fff" }}>
+                          {p.name || p.userId || "Anonymous"}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                        <div style={{ textAlign: "right" }}>
+                          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block" }}>Accuracy</span>
+                          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 700, color: C.green }}>
+                            {tot > 0 ? Math.round((cor / tot) * 100) : 0}%
+                          </span>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block" }}>Score</span>
+                          <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, fontWeight: 700, color: C.yellow }}>
+                            {p.score}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    );
+                  })}
+                  {finalLeaderboard.length === 0 && (
+                    <div style={{ padding: 20, textAlign: "center", color: "rgba(255,255,255,0.4)" }}>No players joined this session.</div>
+                  )}
+                </div>
+              </div>
+
+              <button type="button" onClick={() => handleEndSession()} style={{ width: "100%", background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 14, padding: "16px", color: "#fff", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 600, cursor: "pointer" }}>
+                Close Session & Return to Setup
+              </button>
+            </div>
+          ) : isSyncing ? (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+              <Loader2 size={48} className="animate-spin mb-4" style={{ color: C.indigo }} />
+              <h2 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 24, color: "#fff" }}>Syncing Live Session...</h2>
+              <p style={{ color: "rgba(255,255,255,0.6)", marginTop: 8 }}>Reconnecting to the active arena.</p>
+            </div>
+          ) : !battleStarted ? (
             <div style={{ maxWidth: 900, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 24 }}>
               <style>{`
                 @keyframes popIn { 0%{opacity:0;transform:scale(0.4)} 100%{opacity:1;transform:scale(1)} }
                 @keyframes dotPulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.35;transform:scale(0.75)} }
+                @keyframes burstRing { 0%{transform:scale(0.8);opacity:1} 100%{transform:scale(1.5);opacity:0} }
+                @keyframes countPop { 0%{transform:scale(0.5);opacity:0} 100%{transform:scale(1);opacity:1} }
+                @keyframes fadeUp { 0%{transform:translateY(20px);opacity:0} 100%{transform:translateY(0);opacity:1} }
+                @keyframes slideUp { 0%{opacity:0;transform:translateY(30px)} 100%{opacity:1;transform:translateY(0)} }
+                @keyframes floatA { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+                @keyframes floatB { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
+                @keyframes floatC { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
               `}</style>
-
               <div style={{ textAlign: "center" }}>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,201,60,0.15)", border: "1.5px solid rgba(255,201,60,0.3)", borderRadius: 20, padding: "5px 16px", marginBottom: 12 }}>
                   <Zap size={13} fill={C.yellow} color="transparent" />
@@ -948,9 +1163,10 @@ async function handleConfirmAndDeploy() {
                 )}
               </div>
 
-              <button type="button" onClick={handleStartBattle} style={{ width: "100%", background: `linear-gradient(135deg, ${C.indigo}, ${C.indigoDeep})`, border: "none", borderRadius: 20, padding: "18px 0", fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 8px 32px rgba(91,61,246,0.5)" }}>
+              <button type="button" onClick={() => setCountdown(3)} style={{ width: "100%", background: `linear-gradient(135deg, ${C.indigo}, ${C.indigoDeep})`, border: "none", borderRadius: 20, padding: "18px 0", fontFamily: "Fredoka, sans-serif", fontSize: 26, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 8px 32px rgba(91,61,246,0.5)" }}>
                 Start Live Battle Now! ⚡
               </button>
+              {countdown !== null && countdown > 0 && <CountdownDisplay count={countdown} />}
             </div>
           ) : (
             <div style={{ maxWidth: 1000, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 20 }}>
