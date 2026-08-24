@@ -3,7 +3,7 @@
 import { useApp } from "../../../context/AppContext";
 import { StudentTopBar } from "../../shared/StudentTopBar";
 import { Zap, Users, Trophy } from "lucide-react";
-import { useLobbySocket } from "@/lib/student/battle/useLobbySockets";
+import { useBattleSocketContext } from "@/lib/student/battle/useBattleSocketProvider";
 import { C, CAPACITY } from "../ComponentsLobby/LobbyConstants";
 import { PlayerChip } from "../ComponentsLobby/PlayerChip";
 import { EmptySlot } from "../ComponentsLobby/EmptySlot";
@@ -15,23 +15,21 @@ export interface LobbyModeProps {
   roomCode: string;
 }
 
-/** The classic "everyone answers together, on the professor's clock" lobby. */
+/**
+ * The classic "everyone answers together, on the professor's clock" lobby.
+ *
+ * No longer owns its own WebSocket (useLobbySocket) — the connection now
+ * lives in BattleSocketProvider, mounted once above both this component and
+ * LiveBattle (see StudentDashboard.tsx). That fixes a real bug: this
+ * component doesn't unmount when battleStarted flips true (it just returns
+ * <LiveBattle/> instead of its own JSX below), so its old socket kept
+ * running for the whole battle in parallel with LiveBattle's own socket —
+ * two live connections at once. Reading from context instead means there's
+ * only ever one.
+ */
 export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
   const { user } = useApp();
-
-  const studentName =
-    user?.username ||
-    user?.user_metadata?.full_name ||
-    user?.email?.split('@')[0] ||
-    "Unknown Student";
-
-  const { players, countdown, battleStarted } = useLobbySocket({
-    sessionId,
-    userId: user?.id,
-    userName: studentName,
-    enabled: true,
-    autoCountdown: true,
-  });
+  const { players, countdown, battleStarted } = useBattleSocketContext();
 
   if (battleStarted) {
     return <LiveBattle battleId={sessionId} />;

@@ -4,15 +4,16 @@ import React, { useState, useEffect } from 'react';
 import { Skull, Heart, Zap, LogOut, ChevronRight } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
-  useBattleSocket,
   formatBattleQuestions,
   getStudentIdentity,
   computeTimeLeft,
   AVATAR_COLORS,
 } from '@/lib/student/battle/useBattleConnection';
 import type { BattleQuestion } from '@/lib/student/battle/useBattleConnection';
+import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProvider';
 import { CountdownBar } from './LiveBattleCOMPONENTONLY/CountdownBar';
 import { AnswerInput } from './battle/Answer_Input';
+import { BattleChat, BattleChatMessage } from './battle/BattleChat';
 
 export interface Survivor {
   id: string;
@@ -63,14 +64,25 @@ export interface BattleRoyaleProps {
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
 const DEFAULT_TIME_LIMIT = 20;
 
+/**
+ * No longer owns a WebSocket (useBattleSocket) — connection now lives in
+ * BattleSocketProvider, mounted with mode="ROYALE" above this component
+ * (and above whatever royale lobby renders it) so JOIN_ROYALE goes out on
+ * the same socket the lobby already opened, instead of a second connection.
+ *
+ * All the message handling that used to live inside useBattleSocket's
+ * onMessage callback is now a useEffect watching `lastMessage` from
+ * context — same logic, same message types, just re-triggered whenever the
+ * provider sees a new message instead of via a callback.
+ */
 export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBattle }: BattleRoyaleProps) {
   const { user, navigate, setLastBattleMode } = useApp();
+const { send, lastMessage, questions: contextQuestions } = useBattleSocketContext();
 
   const [questions, setQuestions] = useState<RoyaleQuestion[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const currentQuestion = questions[questionIndex];
 
-  // NEW: server-driven timer state, same pattern as Battle_LiveQuiz.
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [timeLimit, setTimeLimit] = useState<number>(DEFAULT_TIME_LIMIT);
   const [timeLeft, setTimeLeft] = useState<number>(DEFAULT_TIME_LIMIT);
@@ -80,6 +92,8 @@ export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBatt
   const [locked, setLocked] = useState(false);
   const [survivors, setSurvivors] = useState<Survivor[]>([]);
   const [eliminated, setEliminated] = useState(false);
+
+  const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
 
   const { studentName: myName, currentUserId: myId } = getStudentIdentity(user);
 
@@ -97,105 +111,75 @@ export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBatt
   }
 
   function applyRoyaleQuestions(rawQuestions: unknown[]) {
-    console.log('[BattleRoyale][client] applying', rawQuestions.length, 'questions from server');
-    // NEW: keep every normalized field (not just the MCQ-only ones) so
-    // non-Multiple-Choice questions have what AnswerInput needs to render.
     setQuestions(formatBattleQuestions(rawQuestions));
   }
 
   // Fallback loader only — real source of truth is always the WS payload.
+useEffect(() => {
+  if (questions.length === 0 && contextQuestions.length > 0) {
+    setQuestions(contextQuestions);
+  }
+}, [contextQuestions, questions.length]);
+
+  // Message routing — same logic as the old onMessage callback, now
+  // reacting to the shared socket's lastMessage instead of owning the
+  // connection itself.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        if (questions.length > 0) return;
-        const res = await fetch('/api/questions');
-        if (res.ok) {
-          const data = await res.json();
-          if (!cancelled && Array.isArray(data) && data.length > 0) {
-            console.log('[BattleRoyale][client] fallback /api/questions returned', data.length, 'questions');
-            applyRoyaleQuestions(data);
-          }
-        }
-      } catch (err) {
-        console.error('[BattleRoyale] Failed to load fallback questions:', err);
+    const data = lastMessage;
+    if (!data) return;
+
+    if (data.type === 'ROYALE_STATE_SYNC') {
+      if (typeof data.startingHp === 'number') setStartingHp(data.startingHp);
+      if (typeof data.questionIndex === 'number') setQuestionIndex(data.questionIndex);
+      if (typeof data.startedAt === 'number') setStartedAt(data.startedAt);
+      if (typeof data.timeLimit === 'number') setTimeLimit(data.timeLimit);
+      if (Array.isArray(data.players)) applyPlayers(data.players);
+      if (Array.isArray(data.questions) && data.questions.length > 0) {
+        applyRoyaleQuestions(data.questions);
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [questions.length]);
+    }
 
-  const { send } = useBattleSocket({
-    battleId,
-    deps: [myId, myName],
-    onOpen: (socket) => {
-      console.log('[BattleRoyale][client] socket open -> sending JOIN_ROYALE', { battleId, myId });
-      socket.send(
-        JSON.stringify({
-          type: 'JOIN_ROYALE',
-          mode: 'ROYALE',
-          battleId,
-          startingHp: initialStartingHp,
-          playerData: {
-            id: myId,
-            name: myName,
-            initials: myName.substring(0, 2).toUpperCase(),
-            color: AVATAR_COLORS[0],
-          },
-        })
-      );
-    },
-    onMessage: (data) => {
-      console.log('[BattleRoyale][client] received', data.type, data);
+    // The server broadcasts this when its own timer fires (or once every
+    // alive player has answered) — the only thing that should move the
+    // whole match to the next question at once.
+    if (data.type === 'ROYALE_QUESTION_ADVANCED') {
+      setQuestionIndex(data.questionIndex);
+      setStartedAt(data.startedAt);
+      setTimeLimit(data.timeLimit);
+      if (Array.isArray(data.players)) applyPlayers(data.players);
+      setSelectedOption(null);
+      setLocked(false);
+    }
 
-      if (data.type === 'ROYALE_STATE_SYNC') {
-        if (typeof data.startingHp === 'number') setStartingHp(data.startingHp);
-        if (typeof data.questionIndex === 'number') setQuestionIndex(data.questionIndex);
-        if (typeof data.startedAt === 'number') setStartedAt(data.startedAt);
-        if (typeof data.timeLimit === 'number') setTimeLimit(data.timeLimit);
-        if (Array.isArray(data.players)) applyPlayers(data.players);
-        if (Array.isArray(data.questions) && data.questions.length > 0) {
-          applyRoyaleQuestions(data.questions);
-        }
+    if (data.type === 'ROYALE_HP_UPDATED') {
+      if (Array.isArray(data.players)) applyPlayers(data.players);
+      if (data.playerId === myId && data.isAlive === false) {
+        setEliminated(true);
       }
+    }
 
-      // NEW: the server broadcasts this when its own timer fires (or once
-      // every alive player has answered) — the only thing that should move
-      // the whole match to the next question at once.
-      if (data.type === 'ROYALE_QUESTION_ADVANCED') {
-        console.log(
-          `[BattleRoyale][client] server advanced match to question ${data.questionIndex}, timeLimit=${data.timeLimit}s`
-        );
-        setQuestionIndex(data.questionIndex);
-        setStartedAt(data.startedAt);
-        setTimeLimit(data.timeLimit);
-        if (Array.isArray(data.players)) applyPlayers(data.players);
-        setSelectedOption(null);
-        setLocked(false);
-      }
+    if (data.type === 'ROYALE_MATCH_ENDED') {
+      if (Array.isArray(data.players)) applyPlayers(data.players);
+      setLastBattleMode('ROYALE');
+      navigate('results');
+    }
 
-      if (data.type === 'ROYALE_HP_UPDATED') {
-        if (Array.isArray(data.players)) applyPlayers(data.players);
-        if (data.playerId === myId && data.isAlive === false) {
-          console.log('[BattleRoyale][client] you were eliminated');
-          setEliminated(true);
-        }
-        if (data.reason === 'timeout') {
-          console.log('[BattleRoyale][client] some players auto-eliminated for not answering in time');
-        }
-      }
+    // Global chat — CHAT_MESSAGE is relayed to everyone in the room.
+    if (data.type === 'CHAT_MESSAGE' && data.message) {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `${data.userId || data.sender}-${data.timestamp || Date.now()}`,
+          sender: data.sender || 'Anonymous',
+          text: data.message,
+          isMe: data.userId === myId,
+        },
+      ]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastMessage]);
 
-      if (data.type === 'ROYALE_MATCH_ENDED') {
-        console.log('[BattleRoyale][client] match ended, navigating to results');
-        if (Array.isArray(data.players)) applyPlayers(data.players);
-        setLastBattleMode('ROYALE');
-        navigate('results');
-      }
-    },
-  });
-
-  // NEW: countdown driven off the server's startedAt/timeLimit.
+  // Countdown driven off the server's startedAt/timeLimit.
   useEffect(() => {
     if (!startedAt) {
       setTimeLeft(timeLimit);
@@ -210,10 +194,6 @@ export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBatt
     return () => clearInterval(interval);
   }, [startedAt, timeLimit]);
 
-  // FIX: no longer starts a local setTimeout that unilaterally moves THIS
-  // browser to the next question. It submits the answer and waits for the
-  // server's ROYALE_QUESTION_ADVANCED (driven by its shared timer, or by
-  // every alive player having answered) so the whole match stays in step.
   const handleSelectOption = (optionKey: string) => {
     if (locked || eliminated || currentQuestion?.type !== 'Multiple Choice') return;
     setSelectedOption(optionKey);
@@ -222,17 +202,7 @@ export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBatt
     const answerText = currentQuestion.options[opt];
     setLocked(true);
 
-    // NOTE: was `currentQuestion?.answer`, but the normalized BattleQuestion
-    // shape only carries `correct` (the index) for Multiple Choice, not an
-    // `answer` string — getCorrectAnswerText resolves the same option text
-    // this always meant to compare against.
     const correctAnswer = getCorrectAnswerText(currentQuestion);
-
-    console.log('[BattleRoyale][client] submitting answer', {
-      optionKey: answerText,
-      correctAnswer,
-      questionIndex,
-    });
 
     send({
       type: 'SUBMIT_ROYALE_ANSWER',
@@ -243,10 +213,6 @@ export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBatt
     });
   };
 
-  // Handles submissions coming from AnswerInput for every question type
-  // other than Multiple Choice (which keeps its own colored option grid
-  // below). Mirrors handleSelectOption's send, just with the AnswerInput
-  // value's display text in place of the resolved A/B/C/D option text.
   const handleAnswerInputSubmit = (value: any) => {
     if (locked || eliminated || !currentQuestion) return;
     const answerText = stringifyAnswerValue(value);
@@ -254,12 +220,6 @@ export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBatt
     setLocked(true);
 
     const correctAnswer = getCorrectAnswerText(currentQuestion);
-
-    console.log('[BattleRoyale][client] submitting answer', {
-      optionKey: answerText,
-      correctAnswer,
-      questionIndex,
-    });
 
     send({
       type: 'SUBMIT_ROYALE_ANSWER',
@@ -274,6 +234,16 @@ export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBatt
   const me = survivors.find((s) => s.isYou);
   const myLives = me?.lives ?? startingHp;
 
+  const handleSendChat = (text: string) => {
+    send({
+      type: 'CHAT_MESSAGE',
+      battleId,
+      sender: myName,
+      userId: myId,
+      message: text,
+    });
+  };
+
   if (!currentQuestion) {
     return (
       <div className="min-h-screen bg-[#131524] text-white flex items-center justify-center font-sans">
@@ -282,8 +252,6 @@ export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBatt
     );
   }
 
-  // Only Multiple Choice questions have `.options` — other types render
-  // through AnswerInput instead, so this stays empty for them.
   const isMultipleChoice = currentQuestion.type === 'Multiple Choice';
   const options = isMultipleChoice
     ? currentQuestion.options.map((text, i) => ({
@@ -449,10 +417,15 @@ export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBatt
               })
             )}
           </div>
+
+          {/* Global match chat — everyone in the room sees this, preset messages only. */}
+          <div className="border-t border-white/10 pt-4">
+            <BattleChat mode="preset" title="Match Chat" messages={chatMessages} onSend={handleSendChat} height={220} />
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-export default BattleRoyale;
+export default BattleRoyale;  

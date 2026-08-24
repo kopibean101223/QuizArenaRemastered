@@ -24,6 +24,8 @@ import { Lobby_TeamMode } from "./Lobby/Lobby_TeamMode";
 import { Lobby_BattleRoyale } from "./Lobby/Lobby_BattleRoyale";
 import { Lobby_OwnPaced } from "./Lobby/Lobby_OwnPaced";
 
+import { BattleSocketProvider } from "@/lib/student/battle/useBattleSocketProvider";
+
 const C = {
   bg: "#100E1C",
   card: "rgba(255,255,255,0.04)",
@@ -62,24 +64,30 @@ export function StudentDashboard() {
   const [roomCode, setRoomCode] = useState("");
   const [sessionId, setSessionId] = useState("");
   const [mode, setMode] = useState<ResolvedMode>("LIVE");
+  const STORAGE_KEY = 'active_battle_session';
 
-  function enterBattle(code: string, sid: string, rawMode: string | null | undefined) {
-    setRoomCode(code);
-    setSessionId(sid);
-    setMode(normalizeMode(rawMode));
-    setActiveSectionId(sid);
-    setHasJoined(true);
-    toast.success("Successfully joined the live lobby!");
+function enterBattle(code: string, sid: string, rawMode: string | null | undefined) {
+  setRoomCode(code);
+  setSessionId(sid);
+  setMode(normalizeMode(rawMode));
+  setActiveSectionId(sid);
+  setHasJoined(true);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ code, sid, mode: rawMode }));
+  toast.success("Successfully joined the live lobby!");
+}
+
+useEffect(() => {
+  const pending = consumePendingJoin();
+  if (pending) {
+    enterBattle(pending.code, pending.sessionId, pending.mode);
+    return;
   }
-
-  // Picks up a room code staged elsewhere (e.g. a deep link) via
-  // stagePendingJoin(), so the student doesn't have to re-type it here.
-  useEffect(() => {
-    const pending = consumePendingJoin();
-    if (pending) {
-      enterBattle(pending.code, pending.sessionId, pending.mode);
-    }
-  }, []);
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved) {
+    const { code, sid, mode } = JSON.parse(saved);
+    enterBattle(code, sid, mode);
+  }
+}, []);
 
   useEffect(() => {
     if (!user) return;
@@ -155,19 +163,81 @@ export function StudentDashboard() {
 
   // Handoff to the mode-specific lobby once we know which room + mode.
   // Replaces what Lobby.tsx used to render — no dashboard chrome here.
-  if (hasJoined && sessionId) {
-    switch (mode) {
-      case "TEAM":
-        return <Lobby_TeamMode sessionId={sessionId} roomCode={roomCode} />;
-      case "ROYALE":
-        return <Lobby_BattleRoyale sessionId={sessionId} roomCode={roomCode} />;
-      case "SELF_PACED":
-        return <Lobby_OwnPaced sessionId={sessionId} roomCode={roomCode} />;
-      case "LIVE":
-      default:
-        return <Lobby_LiveQuiz sessionId={sessionId} roomCode={roomCode} />;
-    }
+  // AFTER
+// Find this block in StudentDashboard.tsx (search for "hasJoined && sessionId")
+// and replace it with the version below. Nothing else in the file changes —
+// imports for Lobby_TeamMode, Lobby_BattleRoyale, Lobby_OwnPaced, Lobby_LiveQuiz,
+// and BattleSocketProvider are already correct as-is.
+
+// ============================= FIND THIS =============================
+//
+// if (hasJoined && sessionId) {
+//   switch (mode) {
+//     case "TEAM":
+//       return <Lobby_TeamMode sessionId={sessionId} roomCode={roomCode} />;
+//     case "ROYALE":
+//       return <Lobby_BattleRoyale sessionId={sessionId} roomCode={roomCode} />;
+//     case "SELF_PACED":
+//       return <Lobby_OwnPaced sessionId={sessionId} roomCode={roomCode} />;
+//     case "LIVE":
+//     default:
+//       return (
+//         <BattleSocketProvider
+//           sessionId={sessionId}
+//           userId={user?.id}
+//           userName={user?.username || user?.user_metadata?.full_name || user?.email?.split('@')[0]}
+//         >
+//           <Lobby_LiveQuiz sessionId={sessionId} roomCode={roomCode} />
+//         </BattleSocketProvider>
+//       );
+//   }
+// }
+//
+// ========================= REPLACE WITH THIS =========================
+
+if (hasJoined && sessionId) {
+  const resolvedUserName =
+    user?.username || user?.user_metadata?.full_name || user?.email?.split('@')[0];
+
+  switch (mode) {
+    case "TEAM":
+      return (
+        <BattleSocketProvider
+          sessionId={sessionId}
+          userId={user?.id}
+          userName={resolvedUserName}
+          mode="TEAM"
+        >
+          <Lobby_TeamMode sessionId={sessionId} roomCode={roomCode} />
+        </BattleSocketProvider>
+      );
+    case "ROYALE":
+      return (
+        <BattleSocketProvider
+          sessionId={sessionId}
+          userId={user?.id}
+          userName={resolvedUserName}
+          mode="ROYALE"
+        >
+          <Lobby_BattleRoyale sessionId={sessionId} roomCode={roomCode} />
+        </BattleSocketProvider>
+      );
+    case "SELF_PACED":
+      return <Lobby_OwnPaced sessionId={sessionId} roomCode={roomCode} />;
+    case "LIVE":
+    default:
+      return (
+        <BattleSocketProvider
+          sessionId={sessionId}
+          userId={user?.id}
+          userName={resolvedUserName}
+          mode="LIVE"
+        >
+          <Lobby_LiveQuiz sessionId={sessionId} roomCode={roomCode} />
+        </BattleSocketProvider>
+      );
   }
+}
 
   const initials = (user?.name || "??").slice(0, 2).toUpperCase();
 

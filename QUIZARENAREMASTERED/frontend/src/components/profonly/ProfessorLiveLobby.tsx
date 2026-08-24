@@ -597,18 +597,30 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     setTimeRemaining(60);
   };
 
-  const handleEndSession = async () => {
+ const handleEndSession = async () => {
     if (window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
+       if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'PROF_END_BATTLE',
+        battleId: sessionId,
+      }));
+    }
       if (wsRef.current) wsRef.current.close();
+      cleanupBots(); 
+      
       await supabase
         .from('quiz_sessions')
         .update({ status: 'COMPLETED' })
-        .eq('section_id', selectedSection.id);
+        .eq('id', sessionId); 
 
       setInLobby(false);
       setActiveSessionExists(false);
       setBattleStarted(false);
+      setJoinedStudents([]);
       setCurrentIndex(0);
+      setSessionId(''); 
+      setRoomCode(generateSecureRoomCode());
+      
       toast.success("Live session ended successfully. Configuration unlocked.");
     }
   };

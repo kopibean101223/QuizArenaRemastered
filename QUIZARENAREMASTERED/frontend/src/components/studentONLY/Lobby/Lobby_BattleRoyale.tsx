@@ -9,7 +9,7 @@ import {
   Info,
 } from "lucide-react";
 
-import { useLobbySocket } from "@/lib/student/battle/useLobbySockets";
+import { useBattleSocketContext } from "@/lib/student/battle/useBattleSocketProvider";
 
 import { C } from "../ComponentsLobby/LobbyConstants";
 import { PlayerChip } from "../ComponentsLobby/PlayerChip";
@@ -19,32 +19,26 @@ import { CountdownDisplay } from "../ComponentsLobby/CountdownDisplay";
 import { BattleRoyale } from "../Battle_BattleRoyale";
 import type { LobbyModeProps } from "./Lobby_LiveQuiz";
 
+/**
+ * No longer owns a WebSocket (useLobbySocket) — connection now lives in
+ * BattleSocketProvider, mounted with mode="ROYALE" above this component
+ * (see StudentDashboard.tsx), so JOIN_ROYALE goes out on the same socket
+ * that stays open through the whole lobby -> battle transition.
+ */
 export function Lobby_BattleRoyale({
   sessionId,
   roomCode,
 }: LobbyModeProps) {
   const { user } = useApp();
 
-  const studentName =
-    user?.username ||
-    user?.user_metadata?.full_name ||
-    user?.email?.split("@")[0] ||
-    "Unknown Student";
-
   const {
     players,
     countdown,
     battleStarted,
-  } = useLobbySocket({
-    sessionId,
-    userId: user?.id,
-    userName: studentName,
-    enabled: Boolean(sessionId),
-    autoCountdown: true,
-  });
+  } = useBattleSocketContext();
 
   /*
-   * The shared socket hook handles the real-time lobby.
+   * The shared socket context handles the real-time lobby.
    * Once the professor starts the battle, immediately hand
    * the SAME quiz_sessions.id to BattleRoyale.
    */
@@ -76,38 +70,24 @@ export function Lobby_BattleRoyale({
         }}
       >
         {/* HEADER */}
-        <div
-          style={{
-            maxWidth: 1100,
-            margin: "0 auto",
-            textAlign: "center",
-          }}
-        >
+        <div style={{ maxWidth: 1100, margin: "0 auto", textAlign: "center" }}>
           {/* ROYALE BADGE */}
           <div
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: 8,
-              background:
-                "rgba(255,107,74,0.10)",
-              border:
-                "1px solid rgba(255,107,74,0.28)",
+              background: "rgba(255,107,74,0.10)",
+              border: "1px solid rgba(255,107,74,0.28)",
               borderRadius: 20,
               padding: "6px 16px",
               marginBottom: 14,
             }}
           >
-            <Crown
-              size={14}
-              color={C.coral}
-              strokeWidth={2.5}
-            />
-
+            <Crown size={14} color={C.coral} strokeWidth={2.5} />
             <span
               style={{
-                fontFamily:
-                  "Manrope, sans-serif",
+                fontFamily: "Manrope, sans-serif",
                 fontSize: 12,
                 fontWeight: 800,
                 color: C.coral,
@@ -122,20 +102,15 @@ export function Lobby_BattleRoyale({
           {/* TITLE */}
           <h1
             style={{
-              fontFamily:
-                "Fredoka, sans-serif",
-              fontSize:
-                "clamp(36px, 5vw, 52px)",
+              fontFamily: "Fredoka, sans-serif",
+              fontSize: "clamp(36px, 5vw, 52px)",
               fontWeight: 700,
               color: "#fff",
               margin: 0,
               lineHeight: 1.05,
             }}
           >
-            Ready for{" "}
-            <span style={{ color: C.coral }}>
-              Battle Royale?
-            </span>
+            Ready for <span style={{ color: C.coral }}>Battle Royale?</span>
           </h1>
         </div>
 
@@ -158,20 +133,17 @@ export function Lobby_BattleRoyale({
               margin: "0 auto",
               background:
                 "linear-gradient(145deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))",
-              border:
-                "1px solid rgba(255,255,255,0.10)",
+              border: "1px solid rgba(255,255,255,0.10)",
               borderRadius: 22,
               padding: "20px 24px",
               textAlign: "center",
-              boxShadow:
-                "0 10px 35px rgba(0,0,0,0.18)",
+              boxShadow: "0 10px 35px rgba(0,0,0,0.18)",
             }}
           >
             <p
               style={{
                 margin: "0 0 8px",
-                fontFamily:
-                  "Manrope, sans-serif",
+                fontFamily: "Manrope, sans-serif",
                 fontSize: 12,
                 fontWeight: 800,
                 color: C.green,
@@ -184,8 +156,7 @@ export function Lobby_BattleRoyale({
 
             <div
               style={{
-                fontFamily:
-                  "Fredoka, sans-serif",
+                fontFamily: "Fredoka, sans-serif",
                 fontSize: 40,
                 fontWeight: 700,
                 color: C.yellow,
@@ -205,26 +176,14 @@ export function Lobby_BattleRoyale({
               gap: 12,
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 9,
-              }}
-            >
-              <Users
-                size={17}
-                color="rgba(255,255,255,0.48)"
-              />
-
+            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+              <Users size={17} color="rgba(255,255,255,0.48)" />
               <span
                 style={{
-                  fontFamily:
-                    "Manrope, sans-serif",
+                  fontFamily: "Manrope, sans-serif",
                   fontSize: 13,
                   fontWeight: 800,
-                  color:
-                    "rgba(255,255,255,0.52)",
+                  color: "rgba(255,255,255,0.52)",
                   letterSpacing: "0.08em",
                   textTransform: "uppercase",
                 }}
@@ -238,23 +197,16 @@ export function Lobby_BattleRoyale({
                 display: "flex",
                 alignItems: "center",
                 gap: 7,
-                background:
-                  "rgba(255,71,87,0.08)",
-                border:
-                  "1px solid rgba(255,71,87,0.18)",
+                background: "rgba(255,71,87,0.08)",
+                border: "1px solid rgba(255,71,87,0.18)",
                 borderRadius: 20,
                 padding: "6px 11px",
               }}
             >
-              <Crown
-                size={13}
-                color={C.coral}
-              />
-
+              <Crown size={13} color={C.coral} />
               <span
                 style={{
-                  fontFamily:
-                    "Manrope, sans-serif",
+                  fontFamily: "Manrope, sans-serif",
                   fontSize: 11,
                   fontWeight: 800,
                   color: C.coral,
@@ -270,8 +222,7 @@ export function Lobby_BattleRoyale({
             style={{
               background:
                 "linear-gradient(145deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))",
-              border:
-                "1px solid rgba(255,255,255,0.10)",
+              border: "1px solid rgba(255,255,255,0.10)",
               borderRadius: 22,
               padding: 22,
             }}
@@ -285,23 +236,11 @@ export function Lobby_BattleRoyale({
                 marginBottom: 22,
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 9,
-                }}
-              >
-                <Crown
-                  size={19}
-                  color={C.yellow}
-                  fill={C.yellow}
-                />
-
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <Crown size={19} color={C.yellow} fill={C.yellow} />
                 <span
                   style={{
-                    fontFamily:
-                      "Manrope, sans-serif",
+                    fontFamily: "Manrope, sans-serif",
                     fontSize: 15,
                     fontWeight: 800,
                     color: "#fff",
@@ -313,12 +252,10 @@ export function Lobby_BattleRoyale({
 
               <span
                 style={{
-                  fontFamily:
-                    "Manrope, sans-serif",
+                  fontFamily: "Manrope, sans-serif",
                   fontSize: 12,
                   fontWeight: 800,
-                  color:
-                    "rgba(255,255,255,0.45)",
+                  color: "rgba(255,255,255,0.45)",
                 }}
               >
                 {players.length}/12 JOINED
@@ -329,45 +266,30 @@ export function Lobby_BattleRoyale({
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(100px, 1fr))",
+                gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))",
                 gap: "26px 14px",
               }}
             >
               {players.map((player) => (
-                <PlayerChip
-                  key={player.id}
-                  player={player}
-                />
+                <PlayerChip key={player.id} player={player} />
               ))}
 
-              {Array.from({
-                length: emptySlots,
-              }).map((_, index) => (
-                <EmptySlot
-                  key={`empty-${index}`}
-                />
+              {Array.from({ length: emptySlots }).map((_, index) => (
+                <EmptySlot key={`empty-${index}`} />
               ))}
             </div>
           </div>
 
           {/* WAITING */}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-            }}
-          >
+          <div style={{ display: "flex", justifyContent: "center" }}>
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
                 padding: "15px 22px",
-                background:
-                  "rgba(255,255,255,0.045)",
-                border:
-                  "1px solid rgba(255,255,255,0.09)",
+                background: "rgba(255,255,255,0.045)",
+                border: "1px solid rgba(255,255,255,0.09)",
                 borderRadius: 17,
               }}
             >
@@ -377,25 +299,19 @@ export function Lobby_BattleRoyale({
                   height: 8,
                   borderRadius: "50%",
                   background: C.yellow,
-                  boxShadow:
-                    `0 0 10px ${C.yellow}`,
-                  animation:
-                    "dotPulse 1s ease-in-out infinite",
+                  boxShadow: `0 0 10px ${C.yellow}`,
+                  animation: "dotPulse 1s ease-in-out infinite",
                 }}
               />
-
               <span
                 style={{
-                  fontFamily:
-                    "Manrope, sans-serif",
+                  fontFamily: "Manrope, sans-serif",
                   fontSize: 13,
                   fontWeight: 700,
-                  color:
-                    "rgba(255,255,255,0.55)",
+                  color: "rgba(255,255,255,0.55)",
                 }}
               >
-                Waiting for the professor to
-                start the battle…
+                Waiting for the professor to start the battle…
               </span>
             </div>
           </div>
@@ -405,8 +321,7 @@ export function Lobby_BattleRoyale({
             style={{
               background:
                 "linear-gradient(145deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))",
-              border:
-                "1px solid rgba(255,255,255,0.10)",
+              border: "1px solid rgba(255,255,255,0.10)",
               borderRadius: 22,
               padding: 24,
             }}
@@ -419,22 +334,11 @@ export function Lobby_BattleRoyale({
                 marginBottom: 20,
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 9,
-                }}
-              >
-                <Info
-                  size={18}
-                  color="rgba(255,255,255,0.6)"
-                />
-
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <Info size={18} color="rgba(255,255,255,0.6)" />
                 <span
                   style={{
-                    fontFamily:
-                      "Manrope, sans-serif",
+                    fontFamily: "Manrope, sans-serif",
                     fontSize: 15,
                     fontWeight: 800,
                     color: "#fff",
@@ -450,8 +354,7 @@ export function Lobby_BattleRoyale({
                   alignItems: "center",
                   gap: 7,
                   color: C.coral,
-                  fontFamily:
-                    "Manrope, sans-serif",
+                  fontFamily: "Manrope, sans-serif",
                   fontSize: 13,
                   fontWeight: 800,
                 }}
@@ -461,14 +364,7 @@ export function Lobby_BattleRoyale({
               </div>
             </div>
 
-            <div
-              style={{
-                height: 1,
-                background:
-                  "rgba(255,255,255,0.08)",
-                marginBottom: 4,
-              }}
-            />
+            <div style={{ height: 1, background: "rgba(255,255,255,0.08)", marginBottom: 4 }} />
 
             {[
               ["Room Code", roomCode],
@@ -483,34 +379,24 @@ export function Lobby_BattleRoyale({
                   alignItems: "center",
                   justifyContent: "space-between",
                   padding: "15px 0",
-                  borderBottom:
-                    index < 3
-                      ? "1px solid rgba(255,255,255,0.06)"
-                      : "none",
+                  borderBottom: index < 3 ? "1px solid rgba(255,255,255,0.06)" : "none",
                 }}
               >
                 <span
                   style={{
-                    fontFamily:
-                      "Manrope, sans-serif",
+                    fontFamily: "Manrope, sans-serif",
                     fontSize: 13,
-                    color:
-                      "rgba(255,255,255,0.58)",
+                    color: "rgba(255,255,255,0.58)",
                   }}
                 >
                   {label}
                 </span>
-
                 <span
                   style={{
-                    fontFamily:
-                      "Manrope, sans-serif",
+                    fontFamily: "Manrope, sans-serif",
                     fontSize: 13,
                     fontWeight: 800,
-                    color:
-                      label === "Status"
-                        ? C.yellow
-                        : "#fff",
+                    color: label === "Status" ? C.yellow : "#fff",
                   }}
                 >
                   {value}
@@ -522,9 +408,7 @@ export function Lobby_BattleRoyale({
       </div>
 
       {/* SHARED COUNTDOWN */}
-      {countdown !== null && (
-        <CountdownDisplay count={countdown} />
-      )}
+      {countdown !== null && <CountdownDisplay count={countdown} />}
 
       {/* START TRANSITION */}
       {countdown === 0 && !battleStarted && (
@@ -537,21 +421,14 @@ export function Lobby_BattleRoyale({
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            background:
-              "linear-gradient(135deg, #3D1508, #5A1F0C)",
+            background: "linear-gradient(135deg, #3D1508, #5A1F0C)",
             gap: 20,
           }}
         >
-          <Crown
-            fill={C.coral}
-            color="transparent"
-            size={64}
-          />
-
+          <Crown fill={C.coral} color="transparent" size={64} />
           <span
             style={{
-              fontFamily:
-                "Fredoka, sans-serif",
+              fontFamily: "Fredoka, sans-serif",
               fontSize: 56,
               fontWeight: 700,
               color: "#fff",

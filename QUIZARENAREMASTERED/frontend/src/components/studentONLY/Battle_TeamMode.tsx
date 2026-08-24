@@ -4,14 +4,15 @@ import React, { useState, useEffect } from 'react';
 import { Trophy, MessageSquare, Crown, CheckCircle, Zap } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
-  useBattleSocket,
   formatBattleQuestions,
   getStudentIdentity,
   computeTimeLeft,
 } from '@/lib/student/battle/useBattleConnection';
 import type { BattleQuestion } from '@/lib/student/battle/useBattleConnection';
+import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProvider';
 import { CountdownBar } from './LiveBattleCOMPONENTONLY/CountdownBar';
 import { AnswerInput } from './battle/Answer_Input';
+import { BattleChat, BattleChatMessage } from './battle/BattleChat';
 
 export interface TeamMemberAnswer {
   memberId: string;
@@ -37,20 +38,32 @@ function stringifyAnswerValue(value: any): string {
 export interface TeamBattleProps {
   battleId?: string;
   onLeaveBattle?: () => void;
+  // Which team this player picked in the lobby — needed so the shared
+  // socket's JOIN_TEAM_BATTLE (sent by BattleSocketProvider) tells the
+  // server which team's chat this player should join.
+  teamId?: string | null;
 }
 
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
 const DEFAULT_TIME_LIMIT = 30;
 
-export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
+/**
+ * No longer owns a WebSocket (useBattleSocket) — connection now lives in
+ * BattleSocketProvider, mounted with mode="TEAM" (and extraJoinPayload:
+ * { teamId }) above this component, so JOIN_TEAM_BATTLE goes out on the
+ * same socket the lobby already opened.
+ *
+ * Message handling that used to live in useBattleSocket's onMessage is now
+ * a useEffect watching `lastMessage` from context.
+ */
+export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: TeamBattleProps) {
   const { user, navigate, setLastBattleMode } = useApp();
+  const { send, lastMessage } = useBattleSocketContext();
 
   const [questions, setQuestions] = useState<TeamQuestion[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const currentQuestion = questions[questionIndex];
 
-  // NEW: server-driven timer state. startedAt/timeLimit now come from the
-  // server (TEAM_STATE_SYNC / TEAM_QUESTION_ADVANCED), not a local guess.
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [timeLimit, setTimeLimit] = useState<number>(DEFAULT_TIME_LIMIT);
   const [timeLeft, setTimeLeft] = useState<number>(DEFAULT_TIME_LIMIT);
@@ -59,12 +72,11 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
   const [confirmed, setConfirmed] = useState(false);
   const [teamMemberAnswers, setTeamMemberAnswers] = useState<TeamMemberAnswer[]>([]);
 
+  const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
+
   const { studentName: memberName, currentUserId: memberId } = getStudentIdentity(user);
 
   function applyTeamQuestions(rawQuestions: unknown[]) {
-    console.log('[TeamBattle][client] applying', rawQuestions.length, 'questions from server');
-    // NEW: keep every normalized field (not just the MCQ-only ones) so
-    // non-Multiple-Choice questions have what AnswerInput needs to render.
     setQuestions(formatBattleQuestions(rawQuestions));
   }
 
@@ -78,7 +90,6 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
         if (res.ok) {
           const data = await res.json();
           if (!cancelled && Array.isArray(data) && data.length > 0) {
-            console.log('[TeamBattle][client] fallback /api/questions returned', data.length, 'questions');
             applyTeamQuestions(data);
           }
         }
@@ -91,66 +102,63 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
     };
   }, [questions.length]);
 
-  // FIX: no longer reconnects per questionIndex. The server owns
-  // questionIndex now, so tearing the socket down every time it changed
-  // (as before) just risked missing the exact broadcast that changed it.
-  // One persistent connection for the whole battle, keyed only on battleId.
-  const { send } = useBattleSocket({
-    battleId,
-    onOpen: (socket) => {
-      console.log('[TeamBattle][client] socket open -> sending JOIN_TEAM_BATTLE', { battleId });
-      socket.send(
-        JSON.stringify({
-          type: 'JOIN_TEAM_BATTLE',
-          mode: 'TEAM',
-          battleId,
-        })
-      );
-    },
-    onMessage: (data) => {
-      console.log('[TeamBattle][client] received', data.type, data);
+  // Message routing — same logic as the old onMessage callback, now
+  // reacting to the shared socket's lastMessage instead of owning the
+  // connection itself.
+  useEffect(() => {
+    const data = lastMessage;
+    if (!data) return;
 
-      if (data.type === 'TEAM_STATE_SYNC') {
-        if (typeof data.questionIndex === 'number') setQuestionIndex(data.questionIndex);
-        if (typeof data.startedAt === 'number') setStartedAt(data.startedAt);
-        if (typeof data.timeLimit === 'number') setTimeLimit(data.timeLimit);
-        if (Array.isArray(data.teamAnswers)) setTeamMemberAnswers(data.teamAnswers);
-        if (Array.isArray(data.questions) && data.questions.length > 0) {
-          applyTeamQuestions(data.questions);
-        }
-        setSelectedOption('');
-        setConfirmed(false);
+    if (data.type === 'TEAM_STATE_SYNC') {
+      if (typeof data.questionIndex === 'number') setQuestionIndex(data.questionIndex);
+      if (typeof data.startedAt === 'number') setStartedAt(data.startedAt);
+      if (typeof data.timeLimit === 'number') setTimeLimit(data.timeLimit);
+      if (Array.isArray(data.teamAnswers)) setTeamMemberAnswers(data.teamAnswers);
+      if (Array.isArray(data.questions) && data.questions.length > 0) {
+        applyTeamQuestions(data.questions);
       }
+      setSelectedOption('');
+      setConfirmed(false);
+    }
 
-      // NEW: the server now broadcasts this when its own timer fires (or a
-      // professor manually advances) — this is the ONLY thing that should
-      // move every teammate to the next question at the same time.
-      if (data.type === 'TEAM_QUESTION_ADVANCED') {
-        console.log(
-          `[TeamBattle][client] server advanced room to question ${data.questionIndex}, timeLimit=${data.timeLimit}s`
-        );
-        setQuestionIndex(data.questionIndex);
-        setStartedAt(data.startedAt);
-        setTimeLimit(data.timeLimit);
-        setTeamMemberAnswers(Array.isArray(data.teamAnswers) ? data.teamAnswers : []);
-        setSelectedOption('');
-        setConfirmed(false);
-      }
+    // The server broadcasts this when its own timer fires (or a professor
+    // manually advances) — the ONLY thing that should move every teammate
+    // to the next question at the same time.
+    if (data.type === 'TEAM_QUESTION_ADVANCED') {
+      setQuestionIndex(data.questionIndex);
+      setStartedAt(data.startedAt);
+      setTimeLimit(data.timeLimit);
+      setTeamMemberAnswers(Array.isArray(data.teamAnswers) ? data.teamAnswers : []);
+      setSelectedOption('');
+      setConfirmed(false);
+    }
 
-      if (data.type === 'TEAM_ANSWERS_UPDATED') {
-        if (Array.isArray(data.teamAnswers)) setTeamMemberAnswers(data.teamAnswers);
-      }
+    if (data.type === 'TEAM_ANSWERS_UPDATED') {
+      if (Array.isArray(data.teamAnswers)) setTeamMemberAnswers(data.teamAnswers);
+    }
 
-      if (data.type === 'TEAM_BATTLE_COMPLETED') {
-        console.log('[TeamBattle][client] battle completed, navigating to results');
-        setLastBattleMode('TEAM');
-        navigate('results');
-      }
-    },
-  });
+    if (data.type === 'TEAM_BATTLE_COMPLETED') {
+      setLastBattleMode('TEAM');
+      navigate('results');
+    }
 
-  // NEW: countdown driven off the server's startedAt/timeLimit, ticking
-  // every second like LiveQuiz's timer, instead of not existing at all.
+    // Teammate-only chat — the server only forwards this to sockets on the
+    // same team, so anything received here is safe to show as-is.
+    if (data.type === 'TEAM_CHAT_MESSAGE' && data.message) {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `${data.userId || data.sender}-${data.timestamp || Date.now()}`,
+          sender: data.sender || 'Anonymous',
+          text: data.message,
+          isMe: data.userId === memberId,
+        },
+      ]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastMessage]);
+
+  // Countdown driven off the server's startedAt/timeLimit.
   useEffect(() => {
     if (!startedAt) {
       setTimeLeft(timeLimit);
@@ -170,10 +178,6 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
     setSelectedOption(optionKey);
   };
 
-  // FIX: confirming an answer no longer starts a local setTimeout that
-  // silently flips this ONE browser's questionIndex. It just submits the
-  // vote and waits — the server's shared timer (or all-teammates-answered
-  // shortcut, if you add one server-side) is what advances everyone.
   const handleConfirmAnswer = () => {
     if (!selectedOption || confirmed) return;
     setConfirmed(true);
@@ -185,8 +189,6 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
       submittedAt: Date.now(),
     };
 
-    console.log('[TeamBattle][client] submitting answer', myAnswer, 'at questionIndex', questionIndex);
-
     send({
       type: 'SUBMIT_TEAM_MEMBER_ANSWER',
       battleId,
@@ -195,10 +197,6 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
     });
   };
 
-  // Handles submissions coming from AnswerInput for every question type
-  // other than Multiple Choice (which keeps its own select-then-confirm
-  // grid below). Mirrors handleConfirmAnswer's send, just with a
-  // stringified value in place of the A/B/C/D option key.
   const handleAnswerInputSubmit = (value: any) => {
     if (confirmed) return;
     const stringValue = stringifyAnswerValue(value);
@@ -211,8 +209,6 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
       selectedOption: stringValue,
       submittedAt: Date.now(),
     };
-
-    console.log('[TeamBattle][client] submitting answer', myAnswer, 'at questionIndex', questionIndex);
 
     send({
       type: 'SUBMIT_TEAM_MEMBER_ANSWER',
@@ -228,6 +224,17 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
     return Math.round((count / teamMemberAnswers.length) * 100);
   };
 
+  const handleSendChat = (text: string) => {
+    send({
+      type: 'TEAM_CHAT_MESSAGE',
+      battleId,
+      userId: memberId,
+      teamId,
+      sender: memberName,
+      message: text,
+    });
+  };
+
   if (!currentQuestion) {
     return (
       <div className="min-h-screen bg-[#131524] text-white flex items-center justify-center font-sans">
@@ -236,8 +243,6 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
     );
   }
 
-  // Only Multiple Choice questions have `.options` — other types render
-  // through AnswerInput instead, so this stays undefined for them.
   const isMultipleChoice = currentQuestion.type === 'Multiple Choice';
   const options = isMultipleChoice
     ? currentQuestion.options.map((text, i) => ({ key: OPTION_KEYS[i] || String(i), text }))
@@ -353,6 +358,18 @@ export function TeamBattle({ battleId = '', onLeaveBattle }: TeamBattleProps) {
                 </div>
               ))
             )}
+          </div>
+
+          {/* Teammate-only chat — free text, not visible outside this team. */}
+          <div style={{ padding: "10px", borderTop: "1.5px solid rgba(255,255,255,0.06)" }}>
+            <BattleChat
+              mode="free"
+              title="Team Chat"
+              messages={chatMessages}
+              onSend={handleSendChat}
+              placeholder="Message your team…"
+              height={260}
+            />
           </div>
         </div>
       </div>

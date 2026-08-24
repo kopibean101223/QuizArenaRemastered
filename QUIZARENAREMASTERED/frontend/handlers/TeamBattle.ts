@@ -51,6 +51,9 @@ export interface TeamBattlePayload {
   forceReset?: boolean;
   groups?: string[];
   teamSize?: number;
+  // NEW: team-only free-text chat (see TEAM_CHAT_MESSAGE below).
+  sender?: string;
+  message?: string;
 }
 
 class TeamBattleHandler {
@@ -60,11 +63,17 @@ class TeamBattleHandler {
   // process. This is what makes the timer/question-index "real" instead of
   // each client silently deciding on its own when to move on.
   private questionTimers: Map<string, NodeJS.Timeout>;
+  // NEW: remembers which team each connected socket belongs to, so
+  // TEAM_CHAT_MESSAGE can be fanned out to teammates only instead of the
+  // whole room. Populated on JOIN_TEAM_BATTLE and kept in sync by
+  // TEAM_ASSIGNMENT_UPDATE.
+  private clientTeamMap: Map<WebSocket, string>;
 
   constructor() {
     this.activeRooms = new Map<string, Set<WebSocket>>();
     this.clientRoomMap = new Map<WebSocket, string>();
     this.questionTimers = new Map<string, NodeJS.Timeout>();
+    this.clientTeamMap = new Map<WebSocket, string>();
   }
 
   public initSubscriber(redisSubscriber: Redis): void {
@@ -74,13 +83,26 @@ class TeamBattleHandler {
       const clientsInRoom = this.activeRooms.get(battleId);
       console.log('[TEAM][server] redis message on', channel, '-> forwarding to', clientsInRoom?.size ?? 0, 'clients');
 
-      if (clientsInRoom) {
-        clientsInRoom.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(message);
-          }
-        });
+      if (!clientsInRoom) return;
+
+      // NEW: TEAM_CHAT_MESSAGE only reaches sockets on the same team as the
+      // sender — every other broadcast type still goes to the whole room,
+      // exactly as before.
+      let restrictToTeamId: string | null = null;
+      try {
+        const parsed = JSON.parse(message);
+        if (parsed.type === 'TEAM_CHAT_MESSAGE') {
+          restrictToTeamId = parsed.teamId ?? null;
+        }
+      } catch {
+        // not JSON we need to inspect — fall through and broadcast as-is
       }
+
+      clientsInRoom.forEach((client) => {
+        if (client.readyState !== WebSocket.OPEN) return;
+        if (restrictToTeamId !== null && this.clientTeamMap.get(client) !== restrictToTeamId) return;
+        client.send(message);
+      });
     });
   }
 
@@ -256,7 +278,7 @@ class TeamBattleHandler {
     redisPublisher: Redis,
     redisSubscriber: Redis
   ): Promise<void> {
-    const { type, battleId, roomCode, answer, userId, teamId } = payload;
+    const { type, battleId, roomCode, answer, userId, teamId, message } = payload;
     console.log(`[TEAM][server] handleMessage type=${type} battleId=${battleId}`);
 
     if (!battleId) {
@@ -314,8 +336,12 @@ class TeamBattleHandler {
 
       if (teamId === null || teamId === undefined) {
         await redisPublisher.hdel(tKey, userId);
+        // NEW: keep this socket's remembered team (used for chat scoping) in sync
+        this.clientTeamMap.delete(ws);
       } else {
         await redisPublisher.hset(tKey, userId, String(teamId));
+        // NEW: keep this socket's remembered team (used for chat scoping) in sync
+        this.clientTeamMap.set(ws, String(teamId));
       }
       await redisPublisher.expire(tKey, COMPLETED_ROOM_TTL_SECONDS);
 
@@ -338,6 +364,18 @@ class TeamBattleHandler {
     // of truth for where in the question set this room currently is.
     if (type === 'JOIN_TEAM_BATTLE') {
       this.registerClient(ws, battleId, channel, redisSubscriber);
+
+      // NEW: remember this socket's team for TEAM_CHAT_MESSAGE scoping.
+      // The battle socket is a fresh connection from the lobby socket that
+      // originally recorded the pick, so fall back to the Redis record
+      // (set by TEAM_ASSIGNMENT_UPDATE in the lobby) when the join payload
+      // itself doesn't carry a teamId.
+      if (teamId !== null && teamId !== undefined) {
+        this.clientTeamMap.set(ws, String(teamId));
+      } else if (userId) {
+        const storedTeamId = await redisPublisher.hget(tKey, userId);
+        if (storedTeamId) this.clientTeamMap.set(ws, storedTeamId);
+      }
 
       const roomState = await redisPublisher.hgetall(sKey);
       const serverQuestionIndex = parseInt(roomState.questionIndex || '0', 10);
@@ -562,6 +600,34 @@ class TeamBattleHandler {
       );
       return;
     }
+    // ── TEAM CHAT (free text, only visible to this player's own team) ──
+    if (type === 'TEAM_CHAT_MESSAGE') {
+      if (!message) return;
+
+      // Prefer the remembered team for this socket; fall back to whatever
+      // teamId came with the message itself.
+      const senderTeamId = this.clientTeamMap.get(ws) || (teamId != null ? String(teamId) : null);
+      if (!senderTeamId) {
+        console.warn('[TEAM][CHAT] dropped message — sender has no known teamId', { battleId, userId });
+        return;
+      }
+
+      console.log(`[TEAM][CHAT] ${battleId} team=${senderTeamId} ${payload.sender || 'Anonymous'}: ${message}`);
+
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({
+          type: 'TEAM_CHAT_MESSAGE',
+          battleId,
+          teamId: senderTeamId,
+          sender: payload.sender || 'Anonymous',
+          userId: userId || null,
+          message,
+          timestamp: new Date().toISOString(),
+        })
+      );
+      return;
+    }
   }
 
   public handleLeave(ws: WebSocket, redisSubscriber: Redis): void {
@@ -578,6 +644,8 @@ class TeamBattleHandler {
       }
     }
     this.clientRoomMap.delete(ws);
+    // NEW: drop the chat-team bookkeeping for this socket along with everything else.
+    this.clientTeamMap.delete(ws);
   }
 }
 

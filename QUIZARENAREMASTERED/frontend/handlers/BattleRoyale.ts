@@ -48,6 +48,10 @@ export interface RoyalePayload {
   isLastQuestion?: boolean;
   questions?: unknown[];
   forceReset?: boolean;
+  // NEW: global, preset-only chat (see CHAT_MESSAGE below).
+  sender?: string;
+  message?: string;
+  userId?: string;
 }
 
 class BattleRoyaleHandler {
@@ -276,7 +280,7 @@ class BattleRoyaleHandler {
     redisPublisher: Redis,
     redisSubscriber: Redis
   ): Promise<void> {
-    const { type, battleId, roomCode, startingHp = 3, playerData, optionKey, correctAnswer } = payload;
+    const { type, battleId, roomCode, startingHp = 3, playerData, optionKey, correctAnswer, sender, message, userId } = payload;
     console.log(`[ROYALE][server] handleMessage type=${type} battleId=${battleId}`);
 
     if (!battleId) {
@@ -349,13 +353,17 @@ class BattleRoyaleHandler {
       );
 
       await redisPublisher.publish(
-        channel,
+        `battle:${battleId}`,
         JSON.stringify({
           type: 'ROYALE_STATE_SYNC',
           battleId,
-          startingHp: Number(roomState.startingHp),
-          status: roomState.status,
+          startingHp: Number(startingHp),
+          status: 'active',
+          questionIndex: 0,
+          startedAt,
+          timeLimit,
           players,
+          questions,
         })
       );
 
@@ -409,12 +417,18 @@ class BattleRoyaleHandler {
         })
       );
 
-      await redisPublisher.publish(
+            await redisPublisher.publish(
         `battle:${battleId}`,
         JSON.stringify({
           type: 'ROYALE_STATE_SYNC',
           battleId,
+          startingHp: Number(startingHp),
           status: 'active',
+          questionIndex: 0,
+          startedAt,
+          timeLimit,
+          players,
+          questions,
         })
       );
 
@@ -505,6 +519,25 @@ class BattleRoyaleHandler {
       } else if (stillWaitingOn.length === 0) {
         await this.advanceOrEnd(battleId, redisPublisher, roomCode);
       }
+      return;
+    }
+
+    // ── GLOBAL CHAT (preset messages only, seen by the whole match) ──
+    if (type === 'CHAT_MESSAGE') {
+      if (!message) return;
+      console.log(`[ROYALE][CHAT] ${battleId} ${sender || 'Anonymous'}: ${message}`);
+
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({
+          type: 'CHAT_MESSAGE',
+          battleId,
+          sender: sender || 'Anonymous',
+          userId: userId || null,
+          message,
+          timestamp: new Date().toISOString(),
+        })
+      );
       return;
     }
   }

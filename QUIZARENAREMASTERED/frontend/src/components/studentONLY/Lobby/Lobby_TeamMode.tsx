@@ -1,4 +1,3 @@
-
 'use client';
 
 import { useEffect, useMemo, useState } from "react";
@@ -16,7 +15,7 @@ import {
 
 import { toast } from "sonner";
 
-import { useLobbySocket } from "@/lib/student/battle/useLobbySockets";
+import { useBattleSocketContext } from "@/lib/student/battle/useBattleSocketProvider";
 
 import {
   C,
@@ -44,72 +43,44 @@ function getTeamColor(index: number) {
 /* LOCAL TEAM STATE                                                           */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Temporary frontend-only team assignment.
- *
- * Later, this can be replaced with the server-synchronized team state
- * coming from useLobbySockets.ts.
- */
 type LocalTeamAssignments = Record<string, string | null>;
+
 /* -------------------------------------------------------------------------- */
 /* COMPONENT                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * No longer owns a WebSocket (useLobbySocket) — connection now lives in
+ * BattleSocketProvider, mounted with mode="TEAM" above this component (see
+ * StudentDashboard.tsx), so JOIN_TEAM_LOBBY / JOIN_TEAM_BATTLE go out on the
+ * same socket that stays open through the whole lobby -> battle transition.
+ *
+ * Message handling that used to live in useLobbySocket's onMessage callback
+ * is now a useEffect watching `lastMessage` from context — same pattern
+ * Battle_TeamMode.tsx already uses for its own state.
+ */
 export function Lobby_TeamMode({
   sessionId,
   roomCode,
 }: LobbyModeProps) {
   const { user } = useApp();
-  
-  const studentName =
-    user?.username ||
-    user?.user_metadata?.full_name ||
-    user?.email?.split("@")[0] ||
-    "Unknown Student";
+
+  const currentPlayerId = user?.id || "";
 
   /* ------------------------------------------------------------------------ */
-  /* SOCKET                                                                    */
+  /* SOCKET (shared context)                                                   */
   /* ------------------------------------------------------------------------ */
 
-const [groups, setGroups] = useState<string[]>([]);
-const [teamSize, setTeamSize] = useState(4);
+  const [groups, setGroups] = useState<string[]>([]);
+  const [teamSize, setTeamSize] = useState(4);
 
-const {
-  players,
-  countdown,
-  battleStarted,
-  socketRef,
-} = useLobbySocket({
-  sessionId,
-  userId: user?.id,
-  userName: studentName,
-  enabled: true,
-  autoCountdown: true,
-  onOpen: (socket) => {
-    socket.send(JSON.stringify({
-      type: "JOIN_TEAM_LOBBY",
-      mode: "TEAM",
-      battleId: sessionId,
-    }));
-  },
-  onMessage: (data) => {
-  if (data.type === "TEAM_LOBBY_STATE_SYNC" || data.type === "TEAM_GROUPS_UPDATED") {
-    if (Array.isArray(data.groups)) setGroups(data.groups);
-    if (typeof data.teamSize === "number") setTeamSize(data.teamSize);
-  }
-  if (data.type === "TEAM_LOBBY_STATE_SYNC" && data.teams) {
-    // teams is { [userId]: "teamName" } — restores picks already made
-    // by others (or by this student, on reconnect) before this socket joined.
-    setTeamAssignments((previous) => ({ ...previous, ...data.teams }));
-  }
-  if (data.type === "TEAM_ASSIGNMENT_UPDATE" && data.userId) {
-    setTeamAssignments((previous) => ({
-      ...previous,
-      [data.userId]: data.teamId ?? null,
-    }));
-  }
-},
-});
+  const {
+    players,
+    countdown,
+    battleStarted,
+    lastMessage,
+    send,
+  } = useBattleSocketContext();
 
   /* ------------------------------------------------------------------------ */
   /* LOCAL TEAM ASSIGNMENTS                                                    */
@@ -117,6 +88,31 @@ const {
 
   const [teamAssignments, setTeamAssignments] =
     useState<LocalTeamAssignments>({});
+
+  // Message routing — same logic as the old onMessage callback, now
+  // reacting to the shared socket's lastMessage instead of owning the
+  // connection itself.
+  useEffect(() => {
+    const data = lastMessage;
+    if (!data) return;
+
+    if (data.type === "TEAM_LOBBY_STATE_SYNC" || data.type === "TEAM_GROUPS_UPDATED") {
+      if (Array.isArray(data.groups)) setGroups(data.groups);
+      if (typeof data.teamSize === "number") setTeamSize(data.teamSize);
+    }
+    if (data.type === "TEAM_LOBBY_STATE_SYNC" && data.teams) {
+      // teams is { [userId]: "teamName" } — restores picks already made
+      // by others (or by this student, on reconnect) before this socket joined.
+      setTeamAssignments((previous) => ({ ...previous, ...data.teams }));
+    }
+    if (data.type === "TEAM_ASSIGNMENT_UPDATE" && data.userId) {
+      setTeamAssignments((previous) => ({
+        ...previous,
+        [data.userId]: data.teamId ?? null,
+      }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastMessage]);
 
   /**
    * Whenever the WebSocket roster changes:
@@ -146,61 +142,55 @@ const {
   /* TEAM HELPERS                                                              */
   /* ------------------------------------------------------------------------ */
 
- const getPlayerTeam = (playerId: string): string | null => {
-  return teamAssignments[playerId] ?? null;
-};
+  const getPlayerTeam = (playerId: string): string | null => {
+    return teamAssignments[playerId] ?? null;
+  };
 
-const getTeamPlayers = (teamName: string): LobbyPlayerT[] => {
-  return players.filter((player) => getPlayerTeam(player.id) === teamName);
-};
+  const getTeamPlayers = (teamName: string): LobbyPlayerT[] => {
+    return players.filter((player) => getPlayerTeam(player.id) === teamName);
+  };
 
-const waitingPlayers = useMemo(() => {
-  return players.filter((player) => !getPlayerTeam(player.id));
-}, [players, teamAssignments]);
+  const waitingPlayers = useMemo(() => {
+    return players.filter((player) => !getPlayerTeam(player.id));
+  }, [players, teamAssignments]);
 
-const currentPlayerId = user?.id || "";
+  const currentPlayerTeam = currentPlayerId
+    ? getPlayerTeam(currentPlayerId)
+    : null;
 
-const currentPlayerTeam = currentPlayerId
-  ? getPlayerTeam(currentPlayerId)
-  : null;
+  const handleJoinTeam = (teamName: string) => {
+    if (battleStarted) {
+      toast.error("You cannot change teams after the battle starts.");
+      return;
+    }
 
-const handleJoinTeam = (teamName: string) => {
-  if (battleStarted) {
-    toast.error("You cannot change teams after the battle starts.");
-    return;
-  }
+    const teamPlayers = getTeamPlayers(teamName);
 
-  const teamPlayers = getTeamPlayers(teamName);
+    if (teamPlayers.length >= teamSize) {
+      toast.error(`${teamName} is already full.`);
+      return;
+    }
 
-if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already full.`);
-    return;
-  }
+    if (currentPlayerTeam === teamName) {
+      toast.info(`You are already in ${teamName}.`);
+      return;
+    }
 
-  if (currentPlayerTeam === teamName) {
-    toast.info(`You are already in ${teamName}.`);
-    return;
-  }
+    setTeamAssignments((previous) => ({
+      ...previous,
+      [currentPlayerId]: teamName,
+    }));
 
-  setTeamAssignments((previous) => ({
-    ...previous,
-    [currentPlayerId]: teamName,
-  }));
-
-  if (socketRef.current?.readyState === WebSocket.OPEN) {
-        console.log("[TEAM][client] sending TEAM_ASSIGNMENT_UPDATE", { userId: currentPlayerId, teamId: teamName, battleId: sessionId });
-    socketRef.current.send(JSON.stringify({
+    send({
       type: "TEAM_ASSIGNMENT_UPDATE",
       mode: "TEAM",
       battleId: sessionId,
       userId: currentPlayerId,
       teamId: teamName,
-    }));
-  } else {
-    console.warn("[TEAM][client] socket not OPEN, join never sent!", socketRef.current?.readyState);
-  }
-  console.log("You joined ${teamName}!");
-  toast.success(`You joined ${teamName}!`);
-};
+    });
+
+    toast.success(`You joined ${teamName}!`);
+  };
 
   /* ------------------------------------------------------------------------ */
   /* LEAVE TEAM / RETURN TO WAITING                                           */
@@ -216,15 +206,13 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
       [currentPlayerId]: null,
     }));
 
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({
-        type: "TEAM_ASSIGNMENT_UPDATE",
-        mode: "TEAM",
-        battleId: sessionId,
-        userId: currentPlayerId,
-        teamId: null,
-      }));
-    }
+    send({
+      type: "TEAM_ASSIGNMENT_UPDATE",
+      mode: "TEAM",
+      battleId: sessionId,
+      userId: currentPlayerId,
+      teamId: null,
+    });
 
     toast.info("You are now waiting for a team.");
   };
@@ -237,6 +225,9 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
     return (
       <TeamBattle
         battleId={sessionId}
+        // Lets the battle socket tell the server which team's chat
+        // (TEAM_CHAT_MESSAGE) this player belongs to.
+        teamId={currentPlayerTeam}
       />
     );
   }
@@ -271,8 +262,7 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
             isCurrentTeam
               ? `0 0 0 1px ${color}20, 0 12px 30px rgba(0,0,0,0.18)`
               : "0 10px 28px rgba(0,0,0,0.15)",
-          transition:
-            "all 0.2s ease",
+          transition: "all 0.2s ease",
         }}
       >
         {/* TEAM COLOR STRIP */}
@@ -305,19 +295,11 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
               minWidth: 0,
             }}
           >
-            <span
-              style={{
-                fontSize: 18,
-                lineHeight: 1,
-              }}
-            >
-              🛡️
-            </span>
+            <span style={{ fontSize: 18, lineHeight: 1 }}>🛡️</span>
 
             <span
               style={{
-                fontFamily:
-                  "Fredoka, sans-serif",
+                fontFamily: "Fredoka, sans-serif",
                 fontSize: 21,
                 fontWeight: 700,
                 color: "#fff",
@@ -331,102 +313,73 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
           <div
             style={{
               flexShrink: 0,
-              background:
-                isFull
-                  ? "rgba(255,71,87,0.10)"
-                  : "rgba(0,0,0,0.25)",
+              background: isFull ? "rgba(255,71,87,0.10)" : "rgba(0,0,0,0.25)",
               borderRadius: 14,
               padding: "5px 10px",
-              fontFamily:
-                "Manrope, sans-serif",
+              fontFamily: "Manrope, sans-serif",
               fontSize: 11,
               fontWeight: 800,
-              color: isFull
-                ? "#FF8A95"
-                : "rgba(255,255,255,0.75)",
+              color: isFull ? "#FF8A95" : "rgba(255,255,255,0.75)",
             }}
           >
-      {members.length}/{teamSize}          </div>
+            {members.length}/{teamSize}
+          </div>
         </div>
 
         {/* MEMBERS */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns:
-              "repeat(4, minmax(52px, 1fr))",
+            gridTemplateColumns: "repeat(4, minmax(52px, 1fr))",
             gap: 10,
             alignItems: "start",
             minHeight: 92,
           }}
         >
           {members.map((player) => (
-            <PlayerChip
-              key={player.id}
-              player={player}
-              animate
-            />
+            <PlayerChip key={player.id} player={player} animate />
           ))}
 
-          {Array.from({
-            length: emptySlots,
-          }).map((_, index) => (
-            <EmptySlot
-              key={`empty-${teamName}-${index}`}
-            />
+          {Array.from({ length: emptySlots }).map((_, index) => (
+            <EmptySlot key={`empty-${teamName}-${index}`} />
           ))}
         </div>
 
         {/* JOIN BUTTON */}
         <button
           type="button"
-          disabled={
-            battleStarted ||
-            isFull ||
-            isCurrentTeam
-          }
-          onClick={() =>
-            handleJoinTeam(teamName)
-          }
+          disabled={battleStarted || isFull || isCurrentTeam}
+          onClick={() => handleJoinTeam(teamName)}
           style={{
             width: "100%",
             marginTop: 18,
             borderRadius: 11,
-            border:
-              isCurrentTeam
-                ? `1px solid ${color}50`
-                : isFull
-                  ? "1px solid rgba(255,255,255,0.06)"
-                  : `1px solid ${color}80`,
+            border: isCurrentTeam
+              ? `1px solid ${color}50`
+              : isFull
+                ? "1px solid rgba(255,255,255,0.06)"
+                : `1px solid ${color}80`,
             padding: "10px 14px",
-            background:
-              isCurrentTeam
-                ? `${color}18`
-                : isFull
-                  ? "rgba(255,255,255,0.035)"
-                  : `${color}14`,
-            color:
-              isCurrentTeam
-                ? color
-                : isFull
-                  ? "rgba(255,255,255,0.25)"
-                  : "#fff",
-            fontFamily:
-              "Manrope, sans-serif",
+            background: isCurrentTeam
+              ? `${color}18`
+              : isFull
+                ? "rgba(255,255,255,0.035)"
+                : `${color}14`,
+            color: isCurrentTeam
+              ? color
+              : isFull
+                ? "rgba(255,255,255,0.25)"
+                : "#fff",
+            fontFamily: "Manrope, sans-serif",
             fontSize: 12,
             fontWeight: 800,
             letterSpacing: "0.02em",
-            cursor:
-              isFull ||
-              isCurrentTeam
-                ? "default"
-                : "pointer",
+            cursor: isFull || isCurrentTeam ? "default" : "pointer",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             gap: 7,
-            transition:
-              "all 0.18s ease",
+            transition: "all 0.18s ease",
           }}
         >
           {isCurrentTeam ? (
@@ -468,41 +421,25 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
           paddingBottom: 40,
         }}
       >
-        {/* ---------------------------------------------------------------- */}
-        {/* HEADER                                                            */}
-        {/* ---------------------------------------------------------------- */}
-
-        <div
-          style={{
-            textAlign: "center",
-            marginBottom: 26,
-            padding: "0 24px",
-          }}
-        >
+        {/* HEADER */}
+        <div style={{ textAlign: "center", marginBottom: 26, padding: "0 24px" }}>
           {/* MODE BADGE */}
           <div
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: 8,
-              background:
-                "rgba(46,212,122,0.15)",
-              border:
-                "1.5px solid rgba(46,212,122,0.3)",
+              background: "rgba(46,212,122,0.15)",
+              border: "1.5px solid rgba(46,212,122,0.3)",
               borderRadius: 20,
               padding: "5px 16px",
               marginBottom: 12,
             }}
           >
-            <Shield
-              size={13}
-              color={C.green}
-            />
-
+            <Shield size={13} color={C.green} />
             <span
               style={{
-                fontFamily:
-                  "Manrope, sans-serif",
+                fontFamily: "Manrope, sans-serif",
                 fontSize: 12,
                 fontWeight: 800,
                 color: C.green,
@@ -517,29 +454,18 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
           {/* TITLE */}
           <h1
             style={{
-              fontFamily:
-                "Fredoka, sans-serif",
+              fontFamily: "Fredoka, sans-serif",
               fontSize: 48,
               fontWeight: 700,
               color: "#fff",
               margin: 0,
             }}
           >
-            Ready to{" "}
-            <span
-              style={{
-                color: C.green,
-              }}
-            >
-              Battle Together?
-            </span>
+            Ready to <span style={{ color: C.green }}>Battle Together?</span>
           </h1>
         </div>
 
-        {/* ---------------------------------------------------------------- */}
-        {/* CONTENT                                                           */}
-        {/* ---------------------------------------------------------------- */}
-
+        {/* CONTENT */}
         <div
           style={{
             width: "100%",
@@ -551,23 +477,12 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
             gap: 24,
           }}
         >
-          {/* ---------------------------------------------------------------- */}
-          {/* ROOM CODE                                                        */}
-          {/* ---------------------------------------------------------------- */}
-
-          <div
-            style={{
-              width: "100%",
-              maxWidth: 600,
-              margin: "0 auto",
-            }}
-          >
+          {/* ROOM CODE */}
+          <div style={{ width: "100%", maxWidth: 600, margin: "0 auto" }}>
             <div
               style={{
-                background:
-                  "rgba(255,255,255,0.05)",
-                border:
-                  "1.5px solid rgba(255,255,255,0.1)",
+                background: "rgba(255,255,255,0.05)",
+                border: "1.5px solid rgba(255,255,255,0.1)",
                 borderRadius: 24,
                 padding: "22px 24px",
                 display: "flex",
@@ -578,16 +493,13 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
             >
               <p
                 style={{
-                  fontFamily:
-                    "Manrope, sans-serif",
+                  fontFamily: "Manrope, sans-serif",
                   fontSize: 12,
                   fontWeight: 700,
                   color: C.green,
                   margin: 0,
-                  textTransform:
-                    "uppercase",
-                  letterSpacing:
-                    "0.1em",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
                 }}
               >
                 Successfully Joined Room
@@ -595,13 +507,11 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
 
               <span
                 style={{
-                  fontFamily:
-                    "Fredoka, sans-serif",
+                  fontFamily: "Fredoka, sans-serif",
                   fontSize: 42,
                   fontWeight: 700,
                   color: C.yellow,
-                  letterSpacing:
-                    "0.16em",
+                  letterSpacing: "0.16em",
                 }}
               >
                 {roomCode}
@@ -609,10 +519,7 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
             </div>
           </div>
 
-          {/* ---------------------------------------------------------------- */}
-          {/* PLAYER HEADER                                                    */}
-          {/* ---------------------------------------------------------------- */}
-
+          {/* PLAYER HEADER */}
           <div
             style={{
               display: "flex",
@@ -621,34 +528,19 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
               gap: 12,
             }}
           >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 9,
-              }}
-            >
-              <Users
-                size={17}
-                color="rgba(255,255,255,0.48)"
-              />
-
+            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+              <Users size={17} color="rgba(255,255,255,0.48)" />
               <span
                 style={{
-                  fontFamily:
-                    "Manrope, sans-serif",
+                  fontFamily: "Manrope, sans-serif",
                   fontSize: 13,
                   fontWeight: 800,
-                  color:
-                    "rgba(255,255,255,0.52)",
-                  letterSpacing:
-                    "0.08em",
-                  textTransform:
-                    "uppercase",
+                  color: "rgba(255,255,255,0.52)",
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
                 }}
               >
-                Players ({players.length}/
-                {CAPACITY})
+                Players ({players.length}/{CAPACITY})
               </span>
             </div>
 
@@ -657,10 +549,8 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
                 display: "flex",
                 alignItems: "center",
                 gap: 7,
-                background:
-                  "rgba(46,212,122,0.08)",
-                border:
-                  "1px solid rgba(46,212,122,0.18)",
+                background: "rgba(46,212,122,0.08)",
+                border: "1px solid rgba(46,212,122,0.18)",
                 borderRadius: 20,
                 padding: "6px 11px",
               }}
@@ -673,11 +563,9 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
                   background: C.green,
                 }}
               />
-
               <span
                 style={{
-                  fontFamily:
-                    "Manrope, sans-serif",
+                  fontFamily: "Manrope, sans-serif",
                   fontSize: 11,
                   fontWeight: 800,
                   color: C.green,
@@ -688,34 +576,23 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
             </div>
           </div>
 
-          {/* ---------------------------------------------------------------- */}
-          {/* FOUR TEAMS                                                       */}
-          {/* ---------------------------------------------------------------- */}
-
+          {/* TEAMS */}
           <div
             style={{
               display: "grid",
-              gridTemplateColumns:
-                "repeat(2, minmax(0, 1fr))",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
               gap: 16,
             }}
           >
-            {groups.map(
-              (teamName, index) =>
-                renderTeamCard(teamName, index)
-            )}
+            {groups.map((teamName, index) => renderTeamCard(teamName, index))}
           </div>
 
-          {/* ---------------------------------------------------------------- */}
-          {/* WAITING FOR A TEAM                                               */}
-          {/* ---------------------------------------------------------------- */}
-
+          {/* WAITING FOR A TEAM */}
           <div
             style={{
               background:
                 "linear-gradient(145deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))",
-              border:
-                "1.5px solid rgba(255,255,255,0.10)",
+              border: "1.5px solid rgba(255,255,255,0.10)",
               borderRadius: 22,
               padding: 22,
             }}
@@ -727,28 +604,14 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
                 alignItems: "center",
                 justifyContent: "space-between",
                 gap: 12,
-                marginBottom:
-                  waitingPlayers.length > 0
-                    ? 20
-                    : 0,
+                marginBottom: waitingPlayers.length > 0 ? 20 : 0,
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 9,
-                }}
-              >
-                <Users
-                  size={19}
-                  color={C.yellow}
-                />
-
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <Users size={19} color={C.yellow} />
                 <span
                   style={{
-                    fontFamily:
-                      "Manrope, sans-serif",
+                    fontFamily: "Manrope, sans-serif",
                     fontSize: 15,
                     fontWeight: 800,
                     color: "#fff",
@@ -760,24 +623,17 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
 
               <span
                 style={{
-                  background:
-                    "rgba(255,201,60,0.10)",
-                  border:
-                    "1px solid rgba(255,201,60,0.20)",
+                  background: "rgba(255,201,60,0.10)",
+                  border: "1px solid rgba(255,201,60,0.20)",
                   borderRadius: 14,
-                  padding:
-                    "5px 10px",
-                  fontFamily:
-                    "Manrope, sans-serif",
+                  padding: "5px 10px",
+                  fontFamily: "Manrope, sans-serif",
                   fontSize: 11,
                   fontWeight: 800,
                   color: C.yellow,
                 }}
               >
-                {waitingPlayers.length}{" "}
-                {waitingPlayers.length === 1
-                  ? "WAITING"
-                  : "WAITING"}
+                {waitingPlayers.length} WAITING
               </span>
             </div>
 
@@ -787,30 +643,21 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns:
-                      "repeat(auto-fill, minmax(90px, 1fr))",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))",
                     gap: 18,
-                    padding:
-                      "4px 4px 8px",
+                    padding: "4px 4px 8px",
                   }}
                 >
-                  {waitingPlayers.map(
-                    (player) => (
-                      <PlayerChip
-                        key={player.id}
-                        player={player}
-                        animate
-                      />
-                    )
-                  )}
+                  {waitingPlayers.map((player) => (
+                    <PlayerChip key={player.id} player={player} animate />
+                  ))}
                 </div>
 
                 <div
                   style={{
                     marginTop: 12,
                     paddingTop: 14,
-                    borderTop:
-                      "1px solid rgba(255,255,255,0.07)",
+                    borderTop: "1px solid rgba(255,255,255,0.07)",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -822,25 +669,19 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
                       width: 7,
                       height: 7,
                       borderRadius: "50%",
-                      background:
-                        C.yellow,
-                      boxShadow:
-                        `0 0 8px ${C.yellow}`,
+                      background: C.yellow,
+                      boxShadow: `0 0 8px ${C.yellow}`,
                     }}
                   />
-
                   <span
                     style={{
-                      fontFamily:
-                        "Manrope, sans-serif",
+                      fontFamily: "Manrope, sans-serif",
                       fontSize: 12,
                       fontWeight: 600,
-                      color:
-                        "rgba(255,255,255,0.42)",
+                      color: "rgba(255,255,255,0.42)",
                     }}
                   >
-                    Choose any available
-                    team above to join.
+                    Choose any available team above to join.
                   </span>
                 </div>
               </>
@@ -851,66 +692,42 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  flexDirection:
-                    "column",
+                  flexDirection: "column",
                   gap: 7,
-                  border:
-                    "1px dashed rgba(255,255,255,0.08)",
+                  border: "1px dashed rgba(255,255,255,0.08)",
                   borderRadius: 15,
                 }}
               >
-                <Shield
-                  size={22}
-                  color="rgba(255,255,255,0.16)"
-                />
-
+                <Shield size={22} color="rgba(255,255,255,0.16)" />
                 <span
                   style={{
-                    fontFamily:
-                      "Manrope, sans-serif",
+                    fontFamily: "Manrope, sans-serif",
                     fontSize: 12,
                     fontWeight: 600,
-                    color:
-                      "rgba(255,255,255,0.28)",
+                    color: "rgba(255,255,255,0.28)",
                   }}
                 >
-                  Everyone has joined a
-                  team.
+                  Everyone has joined a team.
                 </span>
               </div>
             )}
 
             {/* CURRENT USER LEAVE TEAM */}
             {currentPlayerTeam && (
-              <div
-                style={{
-                  marginTop: 16,
-                  display: "flex",
-                  justifyContent:
-                    "center",
-                }}
-              >
+              <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
                 <button
                   type="button"
-                  onClick={
-                    handleLeaveTeam
-                  }
+                  onClick={handleLeaveTeam}
                   style={{
-                    border:
-                      "1px solid rgba(255,255,255,0.10)",
-                    background:
-                      "rgba(255,255,255,0.045)",
-                    color:
-                      "rgba(255,255,255,0.55)",
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "rgba(255,255,255,0.045)",
+                    color: "rgba(255,255,255,0.55)",
                     borderRadius: 10,
-                    padding:
-                      "8px 14px",
-                    fontFamily:
-                      "Manrope, sans-serif",
+                    padding: "8px 14px",
+                    fontFamily: "Manrope, sans-serif",
                     fontSize: 11,
                     fontWeight: 700,
-                    cursor:
-                      "pointer",
+                    cursor: "pointer",
                   }}
                 >
                   Leave Team
@@ -919,28 +736,16 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
             )}
           </div>
 
-          {/* ---------------------------------------------------------------- */}
-          {/* WAITING FOR PROFESSOR                                            */}
-          {/* ---------------------------------------------------------------- */}
-
-          <div
-            style={{
-              display: "flex",
-              justifyContent:
-                "center",
-            }}
-          >
+          {/* WAITING FOR PROFESSOR */}
+          <div style={{ display: "flex", justifyContent: "center" }}>
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
-                padding:
-                  "15px 22px",
-                background:
-                  "rgba(255,255,255,0.045)",
-                border:
-                  "1px solid rgba(255,255,255,0.09)",
+                padding: "15px 22px",
+                background: "rgba(255,255,255,0.045)",
+                border: "1px solid rgba(255,255,255,0.09)",
                 borderRadius: 17,
               }}
             >
@@ -949,41 +754,30 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
                   width: 8,
                   height: 8,
                   borderRadius: "50%",
-                  background:
-                    C.yellow,
-                  boxShadow:
-                    `0 0 10px ${C.yellow}`,
-                  animation:
-                    "dotPulse 1s ease-in-out infinite",
+                  background: C.yellow,
+                  boxShadow: `0 0 10px ${C.yellow}`,
+                  animation: "dotPulse 1s ease-in-out infinite",
                 }}
               />
-
               <span
                 style={{
-                  fontFamily:
-                    "Manrope, sans-serif",
+                  fontFamily: "Manrope, sans-serif",
                   fontSize: 13,
                   fontWeight: 700,
-                  color:
-                    "rgba(255,255,255,0.55)",
+                  color: "rgba(255,255,255,0.55)",
                 }}
               >
-                Waiting for the professor
-                to start the battle…
+                Waiting for the professor to start the battle…
               </span>
             </div>
           </div>
 
-          {/* ---------------------------------------------------------------- */}
-          {/* LOBBY INFO                                                       */}
-          {/* ---------------------------------------------------------------- */}
-
+          {/* LOBBY INFO */}
           <div
             style={{
               background:
                 "linear-gradient(145deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))",
-              border:
-                "1.5px solid rgba(255,255,255,0.10)",
+              border: "1.5px solid rgba(255,255,255,0.10)",
               borderRadius: 22,
               padding: 24,
             }}
@@ -993,28 +787,16 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
               style={{
                 display: "flex",
                 alignItems: "center",
-                justifyContent:
-                  "space-between",
+                justifyContent: "space-between",
                 gap: 12,
                 marginBottom: 20,
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 9,
-                }}
-              >
-                <Info
-                  size={18}
-                  color="rgba(255,255,255,0.6)"
-                />
-
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <Info size={18} color="rgba(255,255,255,0.6)" />
                 <span
                   style={{
-                    fontFamily:
-                      "Manrope, sans-serif",
+                    fontFamily: "Manrope, sans-serif",
                     fontSize: 15,
                     fontWeight: 800,
                     color: "#fff",
@@ -1030,8 +812,7 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
                   alignItems: "center",
                   gap: 7,
                   color: C.green,
-                  fontFamily:
-                    "Manrope, sans-serif",
+                  fontFamily: "Manrope, sans-serif",
                   fontSize: 13,
                   fontWeight: 800,
                 }}
@@ -1041,141 +822,82 @@ if (teamPlayers.length >= teamSize) {    toast.error(`${teamName} is already ful
               </div>
             </div>
 
-            <div
-              style={{
-                height: 1,
-                background:
-                  "rgba(255,255,255,0.08)",
-                marginBottom: 4,
-              }}
-            />
+            <div style={{ height: 1, background: "rgba(255,255,255,0.08)", marginBottom: 4 }} />
 
             {/* INFO ROWS */}
             {[
-              {
-                label: "Room Code",
-                value: roomCode,
-              },
-              {
-                label: "Teams",
-                value: `${groups.length}`,
-              },
-              {
-                label: "Total Players",
-                value: `${players.length} / ${CAPACITY}`,
-              },
-              {
-                label: "Unassigned",
-                value: `${waitingPlayers.length}`,
-              },
-              {
-                label: "Status",
-                value: "Waiting to start…",
-              },
-            ].map(
-              (item, index) => (
-                <div
-                  key={item.label}
+              { label: "Room Code", value: roomCode },
+              { label: "Teams", value: `${groups.length}` },
+              { label: "Total Players", value: `${players.length} / ${CAPACITY}` },
+              { label: "Unassigned", value: `${waitingPlayers.length}` },
+              { label: "Status", value: "Waiting to start…" },
+            ].map((item, index) => (
+              <div
+                key={item.label}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "15px 0",
+                  borderBottom: index < 4 ? "1px solid rgba(255,255,255,0.06)" : "none",
+                }}
+              >
+                <span
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent:
-                      "space-between",
-                    padding:
-                      "15px 0",
-                    borderBottom:
-                      index <
-                      4
-                        ? "1px solid rgba(255,255,255,0.06)"
-                        : "none",
+                    fontFamily: "Manrope, sans-serif",
+                    fontSize: 13,
+                    color: "rgba(255,255,255,0.58)",
                   }}
                 >
-                  <span
-                    style={{
-                      fontFamily:
-                        "Manrope, sans-serif",
-                      fontSize: 13,
-                      color:
-                        "rgba(255,255,255,0.58)",
-                    }}
-                  >
-                    {item.label}
-                  </span>
-
-                  <span
-                    style={{
-                      fontFamily:
-                        "Manrope, sans-serif",
-                      fontSize: 13,
-                      fontWeight: 800,
-                      color:
-                        item.label ===
-                        "Status"
-                          ? C.yellow
-                          : "#fff",
-                    }}
-                  >
-                    {item.value}
-                  </span>
-                </div>
-              )
-            )}
+                  {item.label}
+                </span>
+                <span
+                  style={{
+                    fontFamily: "Manrope, sans-serif",
+                    fontSize: 13,
+                    fontWeight: 800,
+                    color: item.label === "Status" ? C.yellow : "#fff",
+                  }}
+                >
+                  {item.value}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* -------------------------------------------------------------------- */}
-      {/* COUNTDOWN                                                            */}
-      {/* -------------------------------------------------------------------- */}
+      {/* COUNTDOWN */}
+      {countdown !== null && <CountdownDisplay count={countdown} />}
 
-      {countdown !== null && (
-        <CountdownDisplay
-          count={countdown}
-        />
-      )}
-
-      {/* -------------------------------------------------------------------- */}
-      {/* START TRANSITION                                                     */}
-      {/* -------------------------------------------------------------------- */}
-
-      {countdown === 0 &&
-        !battleStarted && (
-          <div
+      {/* START TRANSITION */}
+      {countdown === 0 && !battleStarted && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 500,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "linear-gradient(135deg, #0E2E1A, #10442A)",
+            gap: 20,
+          }}
+        >
+          <Trophy fill={C.green} color="transparent" size={64} />
+          <span
             style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 500,
-              display: "flex",
-              flexDirection:
-                "column",
-              alignItems: "center",
-              justifyContent:
-                "center",
-              background:
-                "linear-gradient(135deg, #0E2E1A, #10442A)",
-              gap: 20,
+              fontFamily: "Fredoka, sans-serif",
+              fontSize: 56,
+              fontWeight: 700,
+              color: "#fff",
             }}
           >
-            <Trophy
-              fill={C.green}
-              color="transparent"
-              size={64}
-            />
-
-            <span
-              style={{
-                fontFamily:
-                  "Fredoka, sans-serif",
-                fontSize: 56,
-                fontWeight: 700,
-                color: "#fff",
-              }}
-            >
-              Teams Assembling!
-            </span>
-          </div>
-        )}
+            Teams Assembling!
+          </span>
+        </div>
+      )}
     </>
   );
 }
-

@@ -271,6 +271,7 @@ const handleRemoveGroup = (groupName: string) => {
   const { spawnBots, cleanupBots } = useBotSimulator(sessionId, roomCode, randomizedQuestions, 'LIVE', teamSize);
 
   // 1. Fetch active session scoped exclusively to THIS professor
+    // 1. Fetch active session scoped exclusively to THIS professor
   useEffect(() => {
     const checkActiveSession = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -292,7 +293,6 @@ const handleRemoveGroup = (groupName: string) => {
         setLobbyType(data[0].mode as LobbyType || "individual");
         setActiveSessionExists(true);
         setInLobby(true);
-        setBattleStarted(false); 
       }
     };
     checkActiveSession();
@@ -400,6 +400,7 @@ const handleRemoveGroup = (groupName: string) => {
   }, [selectedBank]);
 
   // WebSocket Connection Handler
+   // WebSocket Connection Handler
   useEffect(() => {
     if (!inLobby || !sessionId) return;
     
@@ -440,6 +441,16 @@ const handleRemoveGroup = (groupName: string) => {
             teamSize,
           }));
         }
+        else if (lobbyType === 'royale') {
+          console.log("[ROYALE][prof] sending JOIN_ROYALE", { battleId: sessionId });
+
+          ws?.send(JSON.stringify({
+            type: 'JOIN_ROYALE',
+            mode: 'ROYALE',
+            battleId: sessionId,
+            playerData: { id: 'professor', name: 'Professor', initials: 'PR', color: '#5B3DF6' },
+          }));
+        }
       };
 
       ws.onmessage = (event) => {
@@ -449,6 +460,8 @@ const handleRemoveGroup = (groupName: string) => {
           if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'SCORE_UPDATED') {
             if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
             if (data.history) setLiveFeed(data.history);
+              if (data.status === 'active') setBattleStarted(true);   // <-- add this
+
             
             // Handle Live Points Update to populate and sort the Ranking Leaderboard dynamically
             if (data.leaderboard && Array.isArray(data.leaderboard)) {
@@ -513,7 +526,7 @@ const handleRemoveGroup = (groupName: string) => {
                 }];
               });
             } 
-          }else if (data.type === 'TEAM_LOBBY_STATE_SYNC') {
+          }else if (data.type === 'TEAM_LOBBY_STATE_SYNC')   {
             if (Array.isArray(data.groups)) setGroups(data.groups);
             if (typeof data.teamSize === 'number') setTeamSize(data.teamSize); // NEW
 
@@ -536,6 +549,16 @@ const handleRemoveGroup = (groupName: string) => {
       if (!matched) console.warn("[TEAM][prof] no joinedStudents entry matches userId", data.userId, prev.map(s=>s.id));
       return prev.map(s => s.id === data.userId ? { ...s, team: data.teamId || 'Unassigned' } : s);
     });
+          }
+          // NEW — lets the professor's screen recover "battle already
+          // running" state after a reload, for Royale and Team.
+          else if (data.type === 'ROYALE_STATE_SYNC' && data.status === 'active') {
+            setBattleStarted(true);
+            if (typeof data.questionIndex === 'number') setCurrentIndex(data.questionIndex);
+          }
+          else if (data.type === 'TEAM_STATE_SYNC' && Array.isArray(data.questions) && data.questions.length > 0) {
+            setBattleStarted(true);
+            if (typeof data.questionIndex === 'number') setCurrentIndex(data.questionIndex);
           }
         } catch (err) {
           console.error("WS message parse error:", err);
@@ -729,6 +752,12 @@ async function handleConfirmAndDeploy() {
 
  const handleEndSession = async () => {
     if (window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
+       if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'PROF_END_BATTLE',
+        battleId: sessionId,
+      }));
+    }
       if (wsRef.current) wsRef.current.close();
       cleanupBots(); 
       
