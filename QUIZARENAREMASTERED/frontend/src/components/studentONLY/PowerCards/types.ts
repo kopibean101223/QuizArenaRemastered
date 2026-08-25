@@ -60,7 +60,7 @@ export interface CardCategoryMeta {
   color: string;
 }
 
-export const CARD_CATEGORY_META: Rewcord<CardCategory, CardCategoryMeta> = {
+export const CARD_CATEGORY_META: Record<CardCategory, CardCategoryMeta> = {
   damage: { label: 'Damage', icon: Swords, color: '#FF5C5C' },
   shield: { label: 'Shield', icon: ShieldCheck, color: '#4DA3FF' },
   hp: { label: 'HP Recovery', icon: HeartPulse, color: '#2ED47A' },

@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { PowerCard } from './PowerCard';
-import { CARD_CATALOG_BY_CATEGORY, CARD_CATALOG, getCardById } from './cardCatalog';
+import { CARD_CATALOG_BY_CATEGORY, CARD_CATALOG, getCardById } from './CardCatalog';
 import { CARD_CATEGORY_META, RARITY_LABEL, type CardCategory, type PowerCardData } from './types';
 import { processCardUsage, type StudentCardState } from '@/lib/student/cards/cardProcessor';
 
