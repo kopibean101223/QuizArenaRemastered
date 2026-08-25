@@ -11,6 +11,8 @@ import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
 import { LiveBattle } from "./Battle_LiveQuiz";
 import { SelfPacedBattle } from "./Battle_OwnPace";
+import { StudentBossRaid } from "../gamemodes/StudentBossRaid";
+import { StudentEndlessMode } from "../gamemodes/StudentEndlessMode";
 import { PENDING_JOIN_CODE_KEY } from "@/lib/student/studentData";
 
 // ─── Palette ────────────────────────────────────────────────────────────────────
@@ -106,7 +108,7 @@ export function BattleLobby() {
   const [battleStarted, setBattleStarted] = useState(false);
 
   // DYNAMIC BATTLE MODE: Tracks "LIVE" vs "SELF_PACED" from Professor/Server
-  const [battleMode, setBattleMode] = useState<"LIVE" | "SELF_PACED">("LIVE");
+  const [battleMode, setBattleMode] = useState<"LIVE" | "SELF_PACED" | "BOSSRAID" | "ENDLESS">("LIVE");
 
   // Picks up a room code that was already validated on the Dashboard's
   // "Join a Battle" widget, so the student doesn't have to re-type it here.
@@ -118,7 +120,7 @@ export function BattleLobby() {
       const pending = JSON.parse(raw) as { code?: string; sectionId?: string };
       if (pending?.code && pending?.sectionId) {
         setRoomCode(pending.code);
-        setActualSectionId(pending.sectionId);
+        setActualSessionId(pending.sectionId);
         setHasJoined(true);
         toast.success("Successfully joined the live lobby!");
       }
@@ -223,14 +225,18 @@ export function BattleLobby() {
           data.type === "START_BATTLE"
         ) {
           const mode = (data.mode || data.battleMode || "LIVE").toUpperCase();
-          setBattleMode(mode === "SELF_PACED" || mode === "SELFPACED" ? "SELF_PACED" : "LIVE");
+          if (mode === "BOSSRAID") setBattleMode("BOSSRAID");
+          else if (mode === "ENDLESS") setBattleMode("ENDLESS");
+          else setBattleMode(mode === "SELF_PACED" || mode === "SELFPACED" ? "SELF_PACED" : "LIVE");
           setCountdown((prev) => (prev === null ? 3 : prev));
         }
 
         // Late-joining student mid-game bypasses lobby countdown
         if (data.type === "ROOM_STATE_SYNC" && data.status === "active") {
           const mode = (data.mode || data.battleMode || "LIVE").toUpperCase();
-          setBattleMode(mode === "SELF_PACED" || mode === "SELFPACED" ? "SELF_PACED" : "LIVE");
+          if (mode === "BOSSRAID") setBattleMode("BOSSRAID");
+          else if (mode === "ENDLESS") setBattleMode("ENDLESS");
+          else setBattleMode(mode === "SELF_PACED" || mode === "SELFPACED" ? "SELF_PACED" : "LIVE");
           setBattleStarted(true);
         }
 
@@ -272,6 +278,25 @@ export function BattleLobby() {
 
   // ROUTE DYNAMICALLY BASED ON PROFESSOR'S CHOSEN MODE
   if (battleStarted) {
+    if (battleMode === "BOSSRAID") {
+      return (
+        <StudentBossRaid 
+          currentQuestion={null}
+          bossHealth={640}
+          bossMaxHealth={1000}
+        />
+      );
+    }
+    if (battleMode === "ENDLESS") {
+      return (
+        <StudentEndlessMode 
+          currentStage={1}
+          lives={3}
+          score={0}
+          currentQuestion={{ text: 'What is the chemical symbol for gold?', choices: ['Au', 'Ag', 'Fe', 'Cu'], answer: 'Au' }}
+        />
+      );
+    }
     if (battleMode === "SELF_PACED") {
       return <SelfPacedBattle battleId={actualSessionId} />;
     }

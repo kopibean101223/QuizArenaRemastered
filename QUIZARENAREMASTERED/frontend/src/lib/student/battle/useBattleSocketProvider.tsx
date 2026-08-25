@@ -310,6 +310,14 @@ export function BattleSocketProvider({
       }
 
       if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'PROF_START_BATTLE') {
+        if (data.customQuestion) {
+          setQuestions(prev => {
+            const formatted = formatBattleQuestions([data.customQuestion])[0];
+            const newArr = [...prev];
+            newArr[data.currentIndex] = formatted;
+            return newArr;
+          });
+        }
         if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
         if (data.startedAt) setStartedAt(data.startedAt);
       }

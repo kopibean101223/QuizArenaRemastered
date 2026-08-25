@@ -10,6 +10,7 @@ import { PlayerChip } from "../ComponentsLobby/PlayerChip";
 import { EmptySlot } from "../ComponentsLobby/EmptySlot";
 import { CountdownDisplay } from "../ComponentsLobby/CountdownDisplay";
 import { LiveBattle } from "../Battle_LiveQuiz";
+import { StudentBossRaid } from "../../gamemodes/StudentBossRaid";
 
 export interface LobbyModeProps {
   sessionId: string;
@@ -30,7 +31,7 @@ export interface LobbyModeProps {
  */
 export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
   const { user, navigate } = useApp();
-  const { players, countdown, battleStarted, lastMessage } = useBattleSocketContext();
+  const { players, countdown, battleStarted, lastMessage, battleMode, questions, currentIndex } = useBattleSocketContext();
 
   useEffect(() => {
     if (lastMessage?.type === 'ROOM_COMPLETED' || lastMessage?.type === 'QUIZ_COMPLETED' || lastMessage?.status === 'completed') {
@@ -39,6 +40,16 @@ export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
   }, [lastMessage, navigate]);
 
   if (battleStarted) {
+    if (battleMode === 'BOSSRAID') {
+      return (
+        <StudentBossRaid 
+          currentQuestion={questions[currentIndex] || null}
+          bossHealth={640}
+          bossMaxHealth={1000}
+        />
+      );
+    }
+    // (Optional: add ENDLESS here if needed later)
     return <LiveBattle battleId={sessionId} />;
   }
 

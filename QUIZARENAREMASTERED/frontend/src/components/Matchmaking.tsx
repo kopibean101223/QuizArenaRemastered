@@ -12,6 +12,8 @@ import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
 import { useBotSimulator } from "@/hooks/useBotSimulator";
 import { CountdownDisplay } from "./studentONLY/ComponentsLobby/CountdownDisplay";
+import { ProfBossRaid } from "./gamemodes/ProfBossRaid";
+import { ProfEndlessMode } from "./gamemodes/ProfEndlessMode";
 
 // ─── Tokens ────────────────────────────────────────────────────────────────────
 const C = {
@@ -33,12 +35,14 @@ interface Student {
 }
 
 // ─── Lobby Type ────────────────────────────────────────────────────────────────
-type LobbyType = "individual" | "team" | "royale";
+type LobbyType = "individual" | "team" | "royale" | "bossraid" | "endless";
 
 const LOBBY_TYPES: { id: LobbyType; label: string; emoji: string; desc: string }[] = [
   { id: "individual", label: "Individual", emoji: "⚡", desc: "Solo play — go live now or schedule for later." },
   { id: "team", label: "Team", emoji: "🛡️", desc: "Students are grouped into teams of a fixed size." },
   { id: "royale", label: "Battle Royale", emoji: "👑", desc: "Elimination mode. Always live — no scheduling." },
+  { id: "bossraid", label: "Boss Raid", emoji: "🐉", desc: "Class vs Teacher. Drag and drop questions." },
+  { id: "endless", label: "Endless", emoji: "♾️", desc: "Survival mode. Keep answering to stay alive." },
 ];
 
 interface QuestionItem {
@@ -820,6 +824,7 @@ async function handleConfirmAndDeploy() {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
        wsRef.current.send(JSON.stringify({
         type: 'PROF_START_BATTLE',
+           mode: lobbyType.toUpperCase(),
          battleId: sessionId,
          bankId: selectedBank.id,
          forceReset: true,
@@ -829,14 +834,14 @@ async function handleConfirmAndDeploy() {
     }
  };
 
-  const handleNextQuestion = () => {
+  const handleNextQuestion = (customQ?: any) => {
     if (isAdvancingRef.current) return;
     setIsAdvancing(true);
 
     const totalQCount = randomizedQuestions.length || 1;
     const nextIdx = currentIndex + 1;
 
-    if (nextIdx < totalQCount) {
+    if (lobbyType === 'bossraid' || nextIdx < totalQCount) {
       setCurrentIndex(nextIdx);
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
@@ -844,7 +849,8 @@ async function handleConfirmAndDeploy() {
           battleId: sessionId,
           currentIndex: nextIdx,
           nextTimeLimit: 60,
-          isLastQuestion: false
+          isLastQuestion: false,
+          customQuestion: customQ
         }));
       }
       setTimeRemaining(60);
@@ -1158,6 +1164,24 @@ async function handleConfirmAndDeploy() {
               </button>
               {countdown !== null && countdown > 0 && <CountdownDisplay count={countdown} />}
             </div>
+          ) : lobbyType === 'bossraid' ? (
+            <ProfBossRaid
+              students={joinedStudents.map(s => ({ ...s, isActive: true, score: s.score || 0, avatarColor: s.avatarColor || '#FFC93C' }))}
+              bossHealth={300}
+              bossMaxHealth={1000}
+              timeLeft={timeRemaining}
+              currentQuestion={randomizedQuestions[currentIndex] || null}
+              questions={randomizedQuestions}
+              onLaunchQuestion={(q) => {
+                 handleNextQuestion(q);
+              }}
+            />
+          ) : lobbyType === 'endless' ? (
+            <ProfEndlessMode
+              students={joinedStudents.map(s => ({ ...s, currentStage: Math.floor((s.score || 0)/100) + 1, isEliminated: false, initials: s.initials || "ST", avatarColor: s.avatarColor || '#FFC93C' }))}
+              currentStage={Math.max(1, ...joinedStudents.map(s => Math.floor((s.score || 0)/100) + 1))}
+              currentQuestion={randomizedQuestions[currentIndex] || null}
+            />
           ) : (
             <div style={{ maxWidth: 1000, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.05)", padding: "20px 24px", borderRadius: 20, border: "1px solid rgba(255,255,255,0.1)" }}>
@@ -1336,7 +1360,7 @@ async function handleConfirmAndDeploy() {
               {/* Lobby Type Selector */}
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Lobby Type</span>
-                <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                   {LOBBY_TYPES.map(t => (
                     <LobbyTypeCard key={t.id} type={t} selected={lobbyType === t.id} onClick={() => setLobbyType(t.id)} disabled={activeSessionExists} />
                   ))}
@@ -1442,3 +1466,8 @@ async function handleConfirmAndDeploy() {
 }
 
 export default Matchmaking;
+
+
+
+
+

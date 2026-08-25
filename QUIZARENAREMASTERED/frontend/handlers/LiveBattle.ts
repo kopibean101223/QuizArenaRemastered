@@ -178,9 +178,11 @@ class LiveBattleHandler {
 
     if (type === 'PROF_START_BATTLE') {
       const startedAt = Date.now();
+      const mode = payload.mode || 'LIVE';
+      const initialIndex = mode === 'BOSSRAID' ? -1 : 0;
 
       await redisPublisher.hset(sKey, {
-        currentIndex: '0',
+        currentIndex: String(initialIndex),
         status: 'active',
         startedAt: String(startedAt),
         roomCode: roomCode || '',
@@ -204,7 +206,8 @@ class LiveBattleHandler {
         JSON.stringify({
           type: 'PROF_START_BATTLE',
           battleId,
-          currentIndex: 0,
+          mode,
+          currentIndex: initialIndex,
           startedAt,
           questions: parsedQuestions,
         })
@@ -247,6 +250,7 @@ class LiveBattleHandler {
             currentIndex: Number(nextIndex),
             startedAt,
             timeLimit: Number(newLimit),
+            customQuestion: payload.customQuestion,
           })
         );
       }
