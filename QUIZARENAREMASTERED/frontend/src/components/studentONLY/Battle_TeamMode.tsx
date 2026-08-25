@@ -57,7 +57,7 @@ const DEFAULT_TIME_LIMIT = 30;
  * a useEffect watching `lastMessage` from context.
  */
 export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: TeamBattleProps) {
-  const { user, navigate, setLastBattleMode } = useApp();
+  const { user, navigate } = useApp();  
   const { send, lastMessage } = useBattleSocketContext();
 
   const [questions, setQuestions] = useState<TeamQuestion[]>([]);
@@ -138,7 +138,6 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
     }
 
     if (data.type === 'TEAM_BATTLE_COMPLETED') {
-      setLastBattleMode('TEAM');
       navigate('results');
     }
 

@@ -814,30 +814,20 @@ async function handleConfirmAndDeploy() {
     }
   }
 
-    const handleStartBattle = () => {
+     const handleStartBattle = () => {
     setBattleStarted(true);
     setCurrentIndex(0);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      const startType =
-        lobbyType === 'royale' ? 'PROF_START_ROYALE' :
-        lobbyType === 'team' ? 'PROF_START_TEAM' :
-        'PROF_START_BATTLE';
-      const startMode =
-        lobbyType === 'royale' ? 'ROYALE' :
-        lobbyType === 'team' ? 'TEAM' :
-        undefined;
-
-      wsRef.current.send(JSON.stringify({
-        type: startType,
-        mode: startMode,
-        battleId: sessionId,
-        bankId: selectedBank.id,
-        forceReset: true,
-        questions: randomizedQuestions,
-        startingHp: 3,
-      }));
+       wsRef.current.send(JSON.stringify({
+        type: 'PROF_START_BATTLE',
+         battleId: sessionId,
+         bankId: selectedBank.id,
+         forceReset: true,
+         questions: randomizedQuestions,
+         startingHp: 3,
+       }));
     }
-  };
+ };
 
   const handleNextQuestion = () => {
     if (isAdvancingRef.current) return;
@@ -878,7 +868,7 @@ async function handleConfirmAndDeploy() {
     if (window.confirm("Are you sure you want to end this live quiz session? This will close the lobby and unlock configuration.")) {
        if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
-        type: 'PROF_END_BATTLE',
+        type: 'PROF_END_BATTLE', // server resolves TEAM/ROYALE from the room's registered mode
         battleId: sessionId,
       }));
     }

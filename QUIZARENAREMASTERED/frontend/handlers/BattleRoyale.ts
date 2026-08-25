@@ -1,6 +1,8 @@
 import { WebSocket } from 'ws';
 import Redis from 'ioredis';
 import { finalizeAndSaveBattle, PlayerResult } from '../src/lib/student/battle/battleSync';
+import roomPresenceHandler from './RoomPresence';
+
 
 const COMPLETED_ROOM_TTL_SECONDS = 3600;
 const ACTIVE_ROOM_TTL_SECONDS = 4 * 60 * 60;
@@ -295,6 +297,7 @@ class BattleRoyaleHandler {
 
     // ── JOIN ROYALE BATTLE ──
     if (type === 'JOIN_ROYALE') {
+      
       if (!this.activeRooms.has(battleId)) {
         this.activeRooms.set(battleId, new Set<WebSocket>());
         redisSubscriber.subscribe(channel, (err) => {
@@ -357,9 +360,9 @@ class BattleRoyaleHandler {
         JSON.stringify({
           type: 'ROYALE_STATE_SYNC',
           battleId,
-          startingHp: Number(startingHp),
-          status: 'active',
-          questionIndex: 0,
+          startingHp: Number(roomState.startingHp),
+          status: roomState.status,
+         questionIndex,
           startedAt,
           timeLimit,
           players,

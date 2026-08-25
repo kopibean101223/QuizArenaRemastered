@@ -1,6 +1,7 @@
 import { WebSocket } from 'ws';
 import Redis from 'ioredis';
 import { finalizeAndSaveBattle, PlayerResult } from '../src/lib/student/battle/battleSync';
+import roomPresenceHandler from './RoomPresence';
 
 const COMPLETED_ROOM_TTL_SECONDS = 3600;
 const ACTIVE_ROOM_TTL_SECONDS = 4 * 60 * 60;
@@ -296,6 +297,7 @@ class TeamBattleHandler {
 
     // ── JOIN TEAM LOBBY ──
     if (type === 'JOIN_TEAM_LOBBY') {
+      roomPresenceHandler.setBattleMode(battleId, 'TEAM');
       this.registerClient(ws, battleId, channel, redisSubscriber);
 
       const rawTeams = await redisPublisher.hgetall(tKey);

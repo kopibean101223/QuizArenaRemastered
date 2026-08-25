@@ -76,7 +76,7 @@ const DEFAULT_TIME_LIMIT = 20;
  * provider sees a new message instead of via a callback.
  */
 export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBattle }: BattleRoyaleProps) {
-  const { user, navigate, setLastBattleMode } = useApp();
+  const { user, navigate } = useApp();
 const { send, lastMessage, questions: contextQuestions } = useBattleSocketContext();
 
   const [questions, setQuestions] = useState<RoyaleQuestion[]>([]);
@@ -160,7 +160,6 @@ useEffect(() => {
 
     if (data.type === 'ROYALE_MATCH_ENDED') {
       if (Array.isArray(data.players)) applyPlayers(data.players);
-      setLastBattleMode('ROYALE');
       navigate('results');
     }
 

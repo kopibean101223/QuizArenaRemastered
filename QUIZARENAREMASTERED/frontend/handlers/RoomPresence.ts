@@ -46,13 +46,19 @@ class RoomPresenceHandler {
   private clientRoomMap = new Map<WebSocket, string>();
   private hostSockets = new Map<string, Set<WebSocket>>();
   private hostDisconnectTimers = new Map<string, NodeJS.Timeout>();
+  private battleModes = new Map<string, 'LIVE' | 'TEAM' | 'ROYALE'>(); 
   private onHostAbandoned?: (battleId: string) => Promise<void>;
 
   /** LiveBattleHandler (or whoever cares) plugs in what "abandoned room" means for it. */
   public setAbandonHook(fn: (battleId: string) => Promise<void>): void {
     this.onHostAbandoned = fn;
   }
-
+  public setBattleMode(battleId: string, mode: 'LIVE' | 'TEAM' | 'ROYALE'): void {
+    this.battleModes.set(battleId, mode);
+  }
+  public getBattleMode(battleId: string): 'LIVE' | 'TEAM' | 'ROYALE' {
+    return this.battleModes.get(battleId) || 'LIVE';
+  }
   public initSubscriber(redisSubscriber: Redis): void {
     redisSubscriber.on('message', (channel: string, message: string) => {
       // Only the base battle:{battleId} channel — battle:team:{...} and
@@ -158,6 +164,7 @@ class RoomPresenceHandler {
       roomClients.delete(ws);
       if (roomClients.size === 0) {
         this.activeRooms.delete(battleId);
+        this.battleModes.delete(battleId);
         const channel = roomChannel(battleId);
         redisSubscriber.unsubscribe(channel, (err) => {
           if (err) console.error(`[Presence] Failed to unsubscribe from ${channel}`, err);

@@ -2,7 +2,7 @@
 
 import { useApp } from "../../../context/AppContext";
 import { Check } from "lucide-react";
-import { useLobbySocket } from "@/lib/student/battle/useLobbySockets";
+//import { useLobbySocket } from "@/lib/student/battle/useLobbySockets";
 import { C, PlayerStatus } from "../ComponentsLobby/LobbyConstants";
 import { SelfPacedBattle } from "../Battle_OwnPace";
 import type { LobbyModeProps } from "./Lobby_LiveQuiz";
