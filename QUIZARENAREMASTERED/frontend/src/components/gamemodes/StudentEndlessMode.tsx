@@ -1,72 +1,120 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CheckpointCard } from './CheckpointCard';
 import { Zap, Heart, Flag } from 'lucide-react';
-
-/* ── Design tokens ────────────────────────────────────────────────────── */
-const C = {
-  indigo: '#5B3DF6', coral: '#FF6B4A', yellow: '#FFC93C',
-  green: '#2ED47A', red: '#FF4757', navy: '#1B1E2B',
-  muted: '#717182', white: '#FFFFFF',
-};
+import { cn } from '@/components/ui/utils';
+import { StreakRewardCard } from './StreakRewardCard';
 
 const OPTION_COLORS = [
-  { base: '#5B3DF6', light: 'rgba(91,61,246,0.18)', glow: 'rgba(91,61,246,0.5)' },
-  { base: '#FF6B4A', light: 'rgba(255,107,74,0.18)', glow: 'rgba(255,107,74,0.5)' },
-  { base: '#2ED47A', light: 'rgba(46,212,122,0.18)', glow: 'rgba(46,212,122,0.5)' },
-  { base: '#FFC93C', light: 'rgba(255,201,60,0.18)', glow: 'rgba(255,201,60,0.5)' },
-];
-
-/* ── Mock questions pool ──────────────────────────────────────────────── */
-const QUESTION_POOL = [
-  { text: 'What is the chemical symbol for gold?',     choices: ['Au', 'Ag', 'Fe', 'Cu'],         answer: 'Au' },
-  { text: 'Which planet is closest to the sun?',       choices: ['Venus', 'Mercury', 'Mars', 'Earth'], answer: 'Mercury' },
-  { text: 'What is 7 × 8?',                            choices: ['54', '56', '58', '64'],          answer: '56' },
-  { text: 'Who wrote "Romeo and Juliet"?',              choices: ['Dickens', 'Shakespeare', 'Twain', 'Austen'], answer: 'Shakespeare' },
-  { text: 'What gas do plants absorb from the air?',    choices: ['Oxygen', 'Nitrogen', 'CO₂', 'Hydrogen'], answer: 'CO₂' },
-  { text: 'What is the square root of 144?',            choices: ['10', '11', '12', '14'],          answer: '12' },
+  { base: 'bg-[var(--gm-indigo)]', border: 'border-[var(--gm-indigo)]', light: 'bg-[var(--gm-indigo)]/20', text: 'text-[var(--gm-indigo)]', glow: 'shadow-[0_8px_24px_rgba(91,61,246,0.5)]' },
+  { base: 'bg-[var(--gm-coral)]', border: 'border-[var(--gm-coral)]', light: 'bg-[var(--gm-coral)]/20', text: 'text-[var(--gm-coral)]', glow: 'shadow-[0_8px_24px_rgba(255,107,74,0.5)]' },
+  { base: 'bg-[var(--gm-green)]', border: 'border-[var(--gm-green)]', light: 'bg-[var(--gm-green)]/20', text: 'text-[var(--gm-green)]', glow: 'shadow-[0_8px_24px_rgba(46,212,122,0.5)]' },
+  { base: 'bg-[var(--gm-yellow)]', border: 'border-[var(--gm-yellow)]', light: 'bg-[var(--gm-yellow)]/20', text: 'text-[var(--gm-yellow)]', glow: 'shadow-[0_8px_24px_rgba(255,201,60,0.5)]' },
 ];
 
 const POWER_UP_SLOTS = [
-  { name: 'Shield',        icon: '🛡️' },
-  { name: 'Double Points',  icon: '⚡' },
-  { name: 'Time Freeze',   icon: '❄️' },
+  { id: 'shield', name: 'Shield', icon: '🛡️' },
+  { id: 'double', name: 'Double Points', icon: '⚡' },
+  { id: 'freeze', name: 'Time Freeze', icon: '❄️' },
 ];
 
 const CHECKPOINT_INTERVAL = 5;
 
 interface StudentEndlessModeProps {
-  currentStage: number;
-  lives: number;
-  score: number;
-  currentQuestion: { text?: string; question?: string; choices?: string[]; options?: string[]; answer?: string; } | any | null;
+  currentStage?: number;
+  lives?: number;
+  score?: number;
+  currentQuestion?: { text?: string; question?: string; choices?: string[]; options?: string[]; answer?: string; } | any | null;
   onAnswer?: (choice: string) => void;
   showCheckpoint?: boolean;
   onContinueCheckpoint?: (selectedPowerup?: string) => void;
 }
 
-export function StudentEndlessMode({ currentStage, lives, score, currentQuestion, onAnswer, showCheckpoint, onContinueCheckpoint }: StudentEndlessModeProps) {
+const DEFAULT_QUESTION = {
+  text: 'What is the chemical symbol for gold?',
+  choices: ['Au', 'Ag', 'Fe', 'Cu'],
+  answer: 'Au',
+};
+
+export function StudentEndlessMode({
+  currentStage = 1,
+  lives: initialLives = 3,
+  score: initialScore = 0,
+  currentQuestion = DEFAULT_QUESTION,
+  onAnswer,
+  showCheckpoint: initialShowCheckpoint = false,
+  onContinueCheckpoint
+}: StudentEndlessModeProps) {
+  // Local state for demonstration of mechanics, normally passed down or hoisted
   const [selected, setSelected] = useState<number | null>(null);
   const [answered, setAnswered] = useState(false);
+  const [internalLives, setInternalLives] = useState(initialLives);
+  const [internalScore, setInternalScore] = useState(initialScore);
+  const [internalStage, setInternalStage] = useState(currentStage);
+  const [showCheckpoint, setShowCheckpoint] = useState(initialShowCheckpoint);
 
-  const stagesUntilCheckpoint = CHECKPOINT_INTERVAL - (currentStage % CHECKPOINT_INTERVAL);
+  // Gameplay Mechanics State
+  const [combo, setCombo] = useState(0);
+  const [comboPop, setComboPop] = useState(false);
+  const [questionStartTime, setQuestionStartTime] = useState(Date.now());
+  const [timerPercent, setTimerPercent] = useState(75);
+  const [streak, setStreak] = useState(0);
+  const [showStreakCard, setShowStreakCard] = useState(false);
 
-  const handleSelect = (i: number) => {
+  const [powerUpStates, setPowerUpStates] = useState(
+    POWER_UP_SLOTS.map(() => ({ ready: true, cooldown: 0 }))
+  );
+
+  useEffect(() => {
+    setQuestionStartTime(Date.now());
+  }, [internalStage, currentQuestion]);
+
+  const stagesUntilCheckpoint = CHECKPOINT_INTERVAL - (internalStage % CHECKPOINT_INTERVAL);
+  const isSuddenDeath = internalStage % 5 === 0 && internalStage > 0;
+  const timerPenalty = Math.max(0, (internalStage - 1) * 5); // 5% per completed stage
+
+  // Calculate combo multiplier
+  const comboMultiplier = combo >= 6 ? 8 : combo >= 4 ? 4 : combo >= 2 ? 2 : 1;
+  const multiplierColor = comboMultiplier === 8 ? 'text-[var(--gm-red)]' : comboMultiplier === 4 ? 'text-[var(--gm-coral)]' : comboMultiplier === 2 ? 'text-[var(--gm-yellow)]' : 'text-white/50';
+
+  const handleSelect = (i: number, choice: string) => {
     if (answered) return;
     setSelected(i);
     setAnswered(true);
 
-    const isCorrect = (question.options || question.choices)[i] === question.answer;
+    const isCorrect = choice === (currentQuestion?.answer || '');
+    const answerTime = Date.now() - questionStartTime;
+
     if (isCorrect) {
-      setScore(prev => prev + 100);
+      // Fast answer combo check (< 2s)
+      if (answerTime < 2000) {
+        setCombo(prev => prev + 1);
+        setComboPop(true);
+        setTimeout(() => setComboPop(false), 300);
+      } else {
+        setCombo(0);
+      }
+
+      setInternalScore(prev => prev + (100 * comboMultiplier));
+      
+      const newStreak = streak + 1;
+      setStreak(newStreak);
+      if (newStreak === 5) {
+        setShowStreakCard(true);
+      }
     } else {
-      setLives(prev => Math.max(0, prev - 1));
+      setCombo(0);
+      setStreak(0);
+      setInternalLives(prev => Math.max(0, prev - 1));
     }
 
-    // After a short delay, advance or show checkpoint
+    if (onAnswer) {
+      onAnswer(choice);
+    }
+
     setTimeout(() => {
-      const nextStage = currentStage + 1;
+      const nextStage = internalStage + 1;
       if (nextStage > 1 && (nextStage - 1) % CHECKPOINT_INTERVAL === 0) {
         setShowCheckpoint(true);
       } else {
@@ -76,171 +124,216 @@ export function StudentEndlessMode({ currentStage, lives, score, currentQuestion
   };
 
   const advanceStage = (next: number) => {
-    setCurrentStage(next);
+    setInternalStage(next);
     setSelected(null);
     setAnswered(false);
     setShowCheckpoint(false);
   };
 
-  const handleCheckpointContinue = () => {
-    advanceStage(currentStage + 1);
+  const handleCheckpointContinue = (selectedPowerup?: string) => {
+    if (onContinueCheckpoint) onContinueCheckpoint(selectedPowerup);
+    advanceStage(internalStage + 1);
   };
 
+  const handlePowerUpClick = (index: number) => {
+    if (!powerUpStates[index].ready) return;
+
+    // Set to cooldown
+    setPowerUpStates(prev => {
+      const next = [...prev];
+      next[index] = { ready: false, cooldown: Date.now() + 3000 };
+      return next;
+    });
+
+    // Auto-reset after 3 seconds
+    setTimeout(() => {
+      setPowerUpStates(prev => {
+        const next = [...prev];
+        next[index] = { ready: true, cooldown: 0 };
+        return next;
+      });
+    }, 3000);
+  };
+
+  if (showStreakCard) {
+    return (
+      <div className="min-h-screen bg-[var(--gm-navy)] flex flex-col font-[Manrope] text-white p-4">
+        <StreakRewardCard 
+          onCollect={() => {
+            setStreak(0);
+            setShowStreakCard(false);
+          }} 
+        />
+      </div>
+    );
+  }
+
+  const choices = currentQuestion?.options || currentQuestion?.choices || [];
+
   return (
-    <div style={{
-      minHeight: '100vh', background: C.navy, display: 'flex', flexDirection: 'column',
-      fontFamily: 'Manrope, sans-serif', color: C.white,
-    }}>
-      {/* Checkpoint overlay */}
+    <div className="min-h-screen bg-[var(--gm-navy)] flex flex-col font-[Manrope] text-white">
       {showCheckpoint && (
-        <CheckpointCard stage={currentStage} onContinue={handleCheckpointContinue} />
+        <div className="absolute inset-0 z-50">
+          <CheckpointCard stage={internalStage} onContinue={handleCheckpointContinue} />
+        </div>
       )}
 
-      {/* ── Top Bar ─────────────────────────────────────────────────── */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '16px 20px 12px',
-      }}>
-        {/* Stage counter */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Flag size={16} color={C.yellow} />
-          <span style={{
-            fontFamily: 'Fredoka, sans-serif', fontSize: 18, fontWeight: 700,
-          }}>
-            Stage <span style={{ color: C.yellow }}>{currentStage}</span>
+      {/* SUDDEN DEATH BANNER */}
+      {isSuddenDeath && (
+        <div className="bg-[var(--gm-red)]/20 border-b border-[var(--gm-red)] py-2 text-center animate-[gm-pulse_1s_infinite]">
+          <span className="font-[Fredoka] text-[var(--gm-red)] font-bold text-sm tracking-widest uppercase">
+            ⚠ Sudden Death ⚠
+          </span>
+        </div>
+      )}
+
+      {/* Top Bar */}
+      <div className="flex items-center justify-between p-4 pb-3">
+        <div className="flex items-center gap-2">
+          <Flag className="w-4 h-4 text-[var(--gm-yellow)]" />
+          <span className="font-[Fredoka] text-lg font-bold">
+            Stage <span className="text-[var(--gm-yellow)]">{internalStage}</span>
           </span>
         </div>
 
-        {/* Score + Lives */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <span style={{
-            fontFamily: 'Fredoka, sans-serif', fontSize: 14, fontWeight: 700,
-            color: C.yellow,
-          }}>
-            {score} pts
+        <div className="flex items-center gap-3">
+          {/* Combo Multiplier */}
+          <span className={cn(
+            "font-[Fredoka] text-sm font-bold transition-all",
+            multiplierColor,
+            comboPop && "animate-[gm-combo-pop_0.3s_ease-out]"
+          )}>
+            {comboMultiplier}×
           </span>
-          <div style={{ display: 'flex', gap: 3 }}>
+          <span className="font-[Fredoka] text-sm font-bold text-[var(--gm-yellow)]">
+            {internalScore} pts
+          </span>
+          <div className="flex gap-[3px]">
             {Array.from({ length: 3 }, (_, i) => (
-              <Heart key={i} size={18} fill={i < lives ? C.red : 'transparent'}
-                     color={i < lives ? C.red : 'rgba(255,255,255,0.15)'}
-                     strokeWidth={2} />
+              <Heart 
+                key={i} 
+                className={cn(
+                  "w-[18px] h-[18px] stroke-2 transition-all",
+                  i < internalLives ? "fill-[var(--gm-red)] text-[var(--gm-red)]" : "fill-transparent text-white/15"
+                )} 
+              />
             ))}
           </div>
         </div>
       </div>
 
-      {/* ── Progress to next checkpoint ─────────────────────────────── */}
-      <div style={{ padding: '0 20px 12px' }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6,
-        }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: 'uppercase' }}>
+      {/* Progress to next checkpoint */}
+      <div className="px-5 pb-3">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[10px] font-bold text-[var(--gm-muted)] uppercase">
             Next checkpoint
           </span>
-          <span style={{ fontSize: 10, fontWeight: 700, color: C.yellow }}>
+          <span className="text-[10px] font-bold text-[var(--gm-yellow)]">
             {stagesUntilCheckpoint === CHECKPOINT_INTERVAL ? 'Now!' : `${stagesUntilCheckpoint} stages`}
           </span>
         </div>
-        <div style={{
-          width: '100%', height: 6, background: 'rgba(255,255,255,0.06)',
-          borderRadius: 3, overflow: 'hidden',
-        }}>
-          <div style={{
-            width: `${((currentStage % CHECKPOINT_INTERVAL) / CHECKPOINT_INTERVAL) * 100}%`,
-            height: '100%', borderRadius: 3,
-            background: `linear-gradient(90deg, ${C.indigo}, ${C.yellow})`,
-            transition: 'width 0.4s ease-out',
-          }} />
+        <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+          <div 
+            className="h-full rounded-full bg-gradient-to-r from-[var(--gm-indigo)] to-[var(--gm-yellow)] transition-[width] duration-400 ease-out"
+            style={{ width: `${((internalStage % CHECKPOINT_INTERVAL) / CHECKPOINT_INTERVAL) * 100}%` }}
+          />
         </div>
-
-        {/* Mini checkpoint dots */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+        <div className="flex justify-between mt-1.5">
           {Array.from({ length: CHECKPOINT_INTERVAL }, (_, i) => {
             const stageDot = i + 1;
-            const filled = (currentStage % CHECKPOINT_INTERVAL) >= stageDot || currentStage % CHECKPOINT_INTERVAL === 0;
+            const filled = (internalStage % CHECKPOINT_INTERVAL) >= stageDot || internalStage % CHECKPOINT_INTERVAL === 0;
             return (
-              <div key={i} style={{
-                width: 6, height: 6, borderRadius: '50%',
-                background: filled ? C.yellow : 'rgba(255,255,255,0.1)',
-                transition: 'background 0.3s',
-              }} />
+              <div 
+                key={i} 
+                className={cn(
+                  "w-1.5 h-1.5 rounded-full transition-colors duration-300",
+                  filled ? "bg-[var(--gm-yellow)]" : "bg-white/10"
+                )} 
+              />
             );
           })}
         </div>
       </div>
 
-      {/* ── Timer bar ───────────────────────────────────────────────── */}
-      <div style={{ padding: '0 20px', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={{
-          flex: 1, height: 5, background: 'rgba(255,255,255,0.06)',
-          borderRadius: 3, overflow: 'hidden',
-        }}>
-          <div style={{
-            width: '75%', height: '100%', borderRadius: 3,
-            background: 'linear-gradient(90deg, #FFC93C, #FF6B4A)',
-            transition: 'width 1s linear',
-          }} />
+      {/* Timer bar */}
+      <div className="px-5 flex items-center gap-2">
+        {timerPenalty > 0 && !isSuddenDeath && (
+          <span className="text-[10px] font-bold text-[var(--gm-coral)] bg-[var(--gm-coral)]/10 px-1.5 py-0.5 rounded">
+            -{timerPenalty}%
+          </span>
+        )}
+        <div className="flex-1 h-[5px] bg-white/5 rounded-full overflow-hidden">
+          <div 
+            className="h-full rounded-full bg-gradient-to-r from-[var(--gm-yellow)] to-[var(--gm-coral)] transition-[width] duration-1000 linear"
+            style={{ width: isSuddenDeath ? '100%' : `${timerPercent}%` }}
+          />
         </div>
-        <span style={{
-          fontFamily: 'Fredoka, sans-serif', fontSize: 13, fontWeight: 700, color: C.yellow,
-          minWidth: 30, textAlign: 'right',
-        }}>22s</span>
+        <span className="font-[Fredoka] text-[13px] font-bold text-[var(--gm-yellow)] min-w-[30px] text-right">
+          {isSuddenDeath ? '3s' : '22s'}
+        </span>
       </div>
 
-      {/* ── Question ────────────────────────────────────────────────── */}
-      <div style={{ padding: '16px 20px', flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{
-          background: 'rgba(255,255,255,0.04)', border: '1.5px solid rgba(255,255,255,0.08)',
-          borderRadius: 16, padding: '18px 20px',
-        }}>
-          <p style={{
-            fontSize: 17, fontWeight: 700, lineHeight: 1.5, margin: 0,
-          }}>
+      {/* Question Area */}
+      <div className="p-4 px-5 flex-1 flex flex-col gap-3.5">
+        <div className="relative bg-white/[0.04] border border-white/[0.08] rounded-2xl p-[18px] px-5">
+          {isSuddenDeath && (
+            <div className="absolute -top-3 left-4 bg-[var(--gm-navy)] px-2">
+              <span className="text-[10px] font-bold text-[var(--gm-muted)] border border-white/10 rounded px-1.5 py-0.5">
+                RECYCLED
+              </span>
+            </div>
+          )}
+          <p className={cn(
+            "text-[17px] font-bold leading-relaxed m-0 transition-opacity duration-700",
+            timerPercent < 30 ? "opacity-30" : "opacity-100"
+          )}>
             {currentQuestion?.text}
           </p>
         </div>
 
         {/* Answer choices */}
-        <div style={{
-          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, flex: 1,
-        }}>
-          {(currentQuestion?.options || currentQuestion?.choices || []).map((choice, i) => {
+        <div className="grid grid-cols-2 gap-2.5 flex-1 content-start">
+          {choices.map((choice: string, i: number) => {
             const isCorrect = choice === (currentQuestion?.answer || '');
             const isSelected = selected === i;
-            const color = OPTION_COLORS[i % OPTION_COLORS.length];
+            const theme = OPTION_COLORS[i % OPTION_COLORS.length];
             
+            // Answer Feedback styling
+            let overrideStyle = "";
+            let animStyle = "";
+            
+            if (answered) {
+              if (isCorrect) {
+                overrideStyle = "bg-[var(--gm-green)]/15 border-[var(--gm-green)]";
+              } else if (isSelected && !isCorrect) {
+                overrideStyle = "bg-[var(--gm-red)]/15 border-[var(--gm-red)]";
+                animStyle = "animate-[gm-shake_0.4s]";
+              }
+            }
+
             return (
               <button
                 key={i}
                 onClick={() => handleSelect(i, choice)}
                 disabled={answered}
-                style={{
-                  background: isSelected ? color.base : 'rgba(255,255,255,0.03)',
-                  border: `2px solid ${isSelected ? color.base : 'rgba(255,255,255,0.08)'}`,
-                  borderRadius: 16, padding: '16px 20px',
-                  color: isSelected ? '#fff' : 'rgba(255,255,255,0.85)',
-                  fontSize: 16, fontWeight: 700, fontFamily: 'Manrope, sans-serif',
-                  textAlign: 'left', cursor: answered ? 'default' : 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 16,
-                  transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                  transform: isSelected ? 'scale(1.02)' : 'scale(1)',
-                  boxShadow: isSelected ? `0 8px 24px ${color.glow}` : 'none',
-                }}
+                className={cn(
+                  "bg-white/[0.03] border-2 border-white/[0.08] rounded-2xl p-4 px-5 text-left flex items-center gap-4 transition-all duration-200",
+                  isSelected ? `${theme.base} ${theme.border} scale-[1.02] ${theme.glow}` : "hover:bg-white/5",
+                  overrideStyle,
+                  animStyle,
+                  answered && "cursor-default"
+                )}
               >
-                <div style={{
-                  width: 32, height: 32, borderRadius: 10,
-                  background: isSelected ? 'rgba(0,0,0,0.2)' : color.light,
-                  color: isSelected ? '#fff' : color.base,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontFamily: 'Fredoka, sans-serif', fontSize: 13, fontWeight: 700,
-                  color: '#fff', flexShrink: 0,
-                }}>
+                <div className={cn(
+                  "w-8 h-8 rounded-lg flex items-center justify-center font-[Fredoka] text-[13px] font-bold shrink-0 transition-colors",
+                  isSelected ? "bg-black/20 text-white" : `${theme.light} ${theme.text}`
+                )}>
                   {['A', 'B', 'C', 'D'][i]}
                 </div>
-                <span style={{
-                  fontSize: 14, fontWeight: 600,
-                  color: answered && isCorrect ? C.green : 'rgba(255,255,255,0.9)',
-                }}>
+                <span className={cn(
+                  "text-sm font-semibold transition-colors",
+                  answered && isCorrect ? "text-[var(--gm-green)]" : (isSelected ? "text-white" : "text-white/90")
+                )}>
                   {choice}
                 </span>
               </button>
@@ -248,33 +341,34 @@ export function StudentEndlessMode({ currentStage, lives, score, currentQuestion
           })}
         </div>
 
-        {/* ── Power-up slots (placeholder) ──────────────────────────── */}
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12,
-          padding: '8px 0 4px',
-        }}>
-          <span style={{
-            fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.3)',
-            textTransform: 'uppercase', letterSpacing: 1, marginRight: 4,
-          }}>
-            <Zap size={10} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 3 }} />
+        {/* Power-up slots */}
+        <div className="flex items-center justify-center gap-3 py-2 mt-auto">
+          <span className="text-[10px] font-bold text-white/30 uppercase tracking-[1px] mr-1 flex items-center">
+            <Zap className="w-2.5 h-2.5 mr-1" />
             Power-ups
           </span>
-          {POWER_UP_SLOTS.map((slot, i) => (
-            <div key={i} title={`${slot.name} (Coming Soon)`} style={{
-              width: 44, height: 44, borderRadius: 12,
-              background: 'rgba(255,255,255,0.04)',
-              border: '1.5px dashed rgba(255,255,255,0.12)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 18, cursor: 'not-allowed', opacity: 0.55,
-              transition: 'opacity 0.2s',
-            }}>
-              {slot.icon}
-            </div>
-          ))}
+          {POWER_UP_SLOTS.map((slot, i) => {
+            const state = powerUpStates[i];
+            return (
+              <button
+                key={i}
+                title={slot.name}
+                onClick={() => handlePowerUpClick(i)}
+                disabled={!state.ready}
+                className={cn(
+                  "w-11 h-11 rounded-xl bg-white/[0.04] border-[1.5px] border-dashed border-white/[0.12] flex items-center justify-center text-lg transition-all duration-200",
+                  state.ready 
+                    ? "opacity-100 hover:scale-110 active:scale-95 cursor-pointer hover:border-white/30" 
+                    : "opacity-40 grayscale cursor-not-allowed",
+                  state.ready && "hover:animate-[gm-glow-pulse_1s_infinite]"
+                )}
+              >
+                {slot.icon}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
   );
 }
-

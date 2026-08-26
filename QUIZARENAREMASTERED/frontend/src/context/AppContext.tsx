@@ -20,6 +20,8 @@ export interface AppUser {
   email: string;
   name: string;
   role: Role | null;
+  username?: string;
+  user_metadata?: any;
 }
 
 interface AppContextValue {

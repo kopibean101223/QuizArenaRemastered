@@ -45,6 +45,15 @@ export interface BattlePayload {
   questions?: unknown[];
   playerData?: PlayerData;
   role?: 'host' | 'student';
+  mode?: string;
+  customQuestion?: unknown;
+  currentIndex?: number;
+  // Boss Raid Sync Fields
+  bossHp?: number;
+  classHp?: number;
+  bossEnergy?: number;
+  addBossEnergy?: number;
+  bossCardEffect?: string;
 }
 
 /**
@@ -150,10 +159,14 @@ class LiveBattleHandler {
           history: history.map((item) => JSON.parse(item)),
           leaderboard,
           questions: JSON.parse((await redisPublisher.get(`battle:${battleId}:questions`)) || '[]'),
+          bossHp: roomState.bossHp ? parseInt(roomState.bossHp, 10) : undefined,
+          classHp: roomState.classHp ? parseInt(roomState.classHp, 10) : undefined,
+          bossEnergy: roomState.bossEnergy ? parseInt(roomState.bossEnergy, 10) : undefined,
+          mode: roomState.mode || 'LIVE',
         })
       );
 
-      console.log(`[LiveBattle] Sent ROOM_STATE_SYNC for ${battleId} at question index ${roomState.currentIndex}`);
+      console.log(`[LiveBattle] Sent ROOM_STATE_SYNC for ${battleId} at question index ${roomState.currentIndex}, mode: ${roomState.mode}`);
       return;
     }
 
@@ -186,6 +199,7 @@ class LiveBattleHandler {
         status: 'active',
         startedAt: String(startedAt),
         roomCode: roomCode || '',
+        mode,
       });
       await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
 
@@ -293,6 +307,23 @@ class LiveBattleHandler {
       await redisPublisher.publish(
         channel,
         JSON.stringify({ type: 'ROOM_RESET', battleId, currentIndex: 0, startedAt })
+      );
+      return;
+    }
+
+    if (type === 'BOSS_ACTION') {
+      const updates: Record<string, string> = {};
+      if (payload.bossHp !== undefined) updates.bossHp = String(payload.bossHp);
+      if (payload.classHp !== undefined) updates.classHp = String(payload.classHp);
+      if (payload.bossEnergy !== undefined) updates.bossEnergy = String(payload.bossEnergy);
+      
+      if (Object.keys(updates).length > 0) {
+        await redisPublisher.hset(sKey, updates);
+      }
+
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify(payload)
       );
       return;
     }

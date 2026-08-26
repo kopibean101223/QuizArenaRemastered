@@ -474,7 +474,7 @@ function QuestionModal({editing, defaultTopic, onClose, onSaveSuccess}:{editing?
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:5}}>
               <label style={{fontFamily:"Manrope,sans-serif",fontSize:12,fontWeight:700,color:C.navy}}>Difficulty</label>
-              <Dropdown value={difficulty} options={DIFFICULTIES.slice(1)} onChange={setDifficulty}/>
+              <Dropdown value={difficulty} options={DIFFICULTIES.slice(1)} onChange={(v) => setDifficulty(v as any)}/>
             </div>
           </div>
 

@@ -37,13 +37,14 @@ const C = {
   muted: "rgba(255,255,255,0.5)",
 };
 
-type ResolvedMode = "LIVE" | "TEAM" | "ROYALE" | "SELF_PACED";
+type ResolvedMode = "LIVE" | "TEAM" | "ROYALE" | "SELF_PACED" | "BOSSRAID";
 
 function normalizeMode(mode: string | null | undefined): ResolvedMode {
   const m = (mode || "").toUpperCase();
   if (m === "TEAM") return "TEAM";
   if (m === "ROYALE") return "ROYALE";
   if (m === "SELF_PACED" || m === "SELFPACED") return "SELF_PACED";
+  if (m === "BOSSRAID") return "BOSSRAID";
   return "LIVE";
 }
 
@@ -244,6 +245,7 @@ if (hasJoined && sessionId) {
       );
     case "SELF_PACED":
       return <Lobby_OwnPaced sessionId={sessionId} roomCode={roomCode} />;
+    case "BOSSRAID":
     case "LIVE":
     default:
       return (
@@ -251,7 +253,7 @@ if (hasJoined && sessionId) {
           sessionId={sessionId}
           userId={user?.id}
           userName={resolvedUserName}
-          mode="LIVE"
+          mode={mode === "BOSSRAID" ? "BOSSRAID" : "LIVE"}
         >
           <Lobby_LiveQuiz sessionId={sessionId} roomCode={roomCode} />
         </BattleSocketProvider>

@@ -331,7 +331,7 @@ export function LiveBattle({ battleId }: { battleId: string }) {
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "10px", display: "flex", flexDirection: "column", gap: 5 }}>
               {[...players].sort((a, b) => b.score - a.score).map((p, idx) => (
-                <LeaderRow key={p.id} player={{ ...p, rank: idx + 1 }} />
+                <LeaderRow key={p.id} player={{ ...p, rank: idx + 1 } as any} />
               ))}
             </div>
             {/* NEW: global match chat — everyone in the room sees this, preset messages only. */}

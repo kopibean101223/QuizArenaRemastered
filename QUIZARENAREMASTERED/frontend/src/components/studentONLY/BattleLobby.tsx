@@ -281,9 +281,11 @@ export function BattleLobby() {
     if (battleMode === "BOSSRAID") {
       return (
         <StudentBossRaid 
+          battleId={actualSessionId}
           currentQuestion={null}
-          bossHealth={640}
+          bossHealth={1000}
           bossMaxHealth={1000}
+          activeStudentsCount={players.length || 1}
         />
       );
     }

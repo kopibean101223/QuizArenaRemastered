@@ -24,6 +24,7 @@ export const supabaseAdmin: SupabaseClient = createClient(supabaseUrl, supabaseS
     autoRefreshToken: false,
   },
   realtime: {
+    // @ts-ignore
     transport: WebSocket,
   },
 });

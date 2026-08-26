@@ -35,6 +35,7 @@ export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
 
   useEffect(() => {
     if (lastMessage?.type === 'ROOM_COMPLETED' || lastMessage?.type === 'QUIZ_COMPLETED' || lastMessage?.status === 'completed') {
+      localStorage.removeItem('active_battle_session');
       navigate('results');
     }
   }, [lastMessage, navigate]);
@@ -43,9 +44,13 @@ export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
     if (battleMode === 'BOSSRAID') {
       return (
         <StudentBossRaid 
+          battleId={sessionId}
           currentQuestion={questions[currentIndex] || null}
-          bossHealth={640}
+          bossHealth={lastMessage?.type === 'ROOM_STATE_SYNC' && lastMessage.bossHp !== undefined ? lastMessage.bossHp : 1000}
           bossMaxHealth={1000}
+          activeStudentsCount={players.length || 1}
+          bossCardEffect={lastMessage?.type === 'BOSS_ACTION' ? lastMessage.bossCardEffect : null}
+          lastMessage={lastMessage}
         />
       );
     }
@@ -64,11 +69,12 @@ export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,201,60,0.15)", border: "1.5px solid rgba(255,201,60,0.3)", borderRadius: 20, padding: "5px 16px", marginBottom: 12 }}>
             <Zap size={13} fill={C.yellow} color="transparent" />
             <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: C.yellow, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-              Live Quiz Lobby
+              {battleMode === 'BOSSRAID' ? "Boss Raid Lobby" : "Live Quiz Lobby"}
             </span>
           </div>
           <h1 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 48, fontWeight: 700, color: "#fff", margin: 0 }}>
-            Ready to <span style={{ color: C.yellow }}>Battle?</span>
+            {battleMode === 'BOSSRAID' ? "Ready to " : "Ready to "}
+            <span style={{ color: C.yellow }}>{battleMode === 'BOSSRAID' ? "Raid?" : "Battle?"}</span>
           </h1>
         </div>
 

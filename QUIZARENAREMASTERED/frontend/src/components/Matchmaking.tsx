@@ -314,6 +314,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [groups, setGroups] = useState<string[]>(['Team 1', 'Team 2']);
 
   const [quizCompleted, setQuizCompleted] = useState(false);
+  const [lastMessage, setLastMessage] = useState<any>(null);
   const [isAdvancing, setIsAdvancing] = useState(false);
   const isAdvancingRef = useRef(false);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -559,6 +560,7 @@ const handleRemoveGroup = (groupName: string) => {
         try {
           const data = JSON.parse(event.data);
             console.log("[TEAM][prof] received message type:", data.type, data);   // <-- add this line first thing
+          setLastMessage(data);
           if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'SCORE_UPDATED') {
             setIsSyncing(false);
             if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
@@ -568,6 +570,9 @@ const handleRemoveGroup = (groupName: string) => {
               setTimeRemaining(Math.max(0, limit - elapsed));
             }
             if (data.history) setLiveFeed(data.history);
+            if (data.type === 'ROOM_STATE_SYNC' && Array.isArray(data.questions) && data.questions.length > 0) {
+              setRandomizedQuestions(data.questions);
+            }
             if (data.status === 'completed') {
               setQuizCompleted(true);
             } else if (data.status === 'active') {
@@ -706,8 +711,7 @@ const handleRemoveGroup = (groupName: string) => {
         if (prev <= 1) {
           clearInterval(timer);
           if (isAdvancingRef.current) return 0;
-          handleNextQuestion();
-          return 0; 
+          
         }
         return prev - 1;
       });
@@ -1167,20 +1171,21 @@ async function handleConfirmAndDeploy() {
           ) : lobbyType === 'bossraid' ? (
             <ProfBossRaid
               students={joinedStudents.map(s => ({ ...s, isActive: true, score: s.score || 0, avatarColor: s.avatarColor || '#FFC93C' }))}
-              bossHealth={300}
-              bossMaxHealth={1000}
+              bossHealth={1000}
               timeLeft={timeRemaining}
               currentQuestion={randomizedQuestions[currentIndex] || null}
               questions={randomizedQuestions}
               onLaunchQuestion={(q) => {
                  handleNextQuestion(q);
               }}
+              lastMessage={lastMessage}
+              socketSend={(msg) => wsRef.current?.send(JSON.stringify({ ...msg, battleId: sessionId }))}
             />
           ) : lobbyType === 'endless' ? (
             <ProfEndlessMode
               students={joinedStudents.map(s => ({ ...s, currentStage: Math.floor((s.score || 0)/100) + 1, isEliminated: false, initials: s.initials || "ST", avatarColor: s.avatarColor || '#FFC93C' }))}
               currentStage={Math.max(1, ...joinedStudents.map(s => Math.floor((s.score || 0)/100) + 1))}
-              currentQuestion={randomizedQuestions[currentIndex] || null}
+              currentQuestion={(randomizedQuestions[currentIndex] || null) as any}
             />
           ) : (
             <div style={{ maxWidth: 1000, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 20 }}>

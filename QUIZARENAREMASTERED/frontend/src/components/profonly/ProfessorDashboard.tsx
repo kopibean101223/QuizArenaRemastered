@@ -19,7 +19,7 @@ const C = {
   coral:        "#FF6B4A", coralDeep: "#D44A2A",
   coralLight:   "rgba(255,107,74,0.08)", coralBorder: "rgba(255,107,74,0.2)",
   yellow:       "#FFC93C", yellowLight: "rgba(255,201,60,0.09)",
-  green:        "#2ED47A", greenLight:  "rgba(46,212,122,0.09)",
+  green:        "#2ED47A", greenLight:  "rgba(46,212,122,0.09)", greenBorder: "rgba(46,212,122,0.28)",
   red:          "#FF4757",
   navy:         "#1B1E2B",
   bg:           "#F5F6FA",

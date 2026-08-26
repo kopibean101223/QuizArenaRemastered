@@ -1,4 +1,5 @@
 import React from 'react';
+import { cn } from '@/components/ui/utils';
 
 interface ChibiAvatarProps {
   name: string;
@@ -22,11 +23,10 @@ export function ChibiAvatar({ name, color, size = 80, isActive = true, score }: 
   const lighter = adjustColor(color, 40);
 
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-      opacity: isActive ? 1 : 0.4,
-      transition: 'opacity 0.3s, transform 0.3s',
-    }}>
+    <div className={cn(
+      "flex flex-col items-center gap-1 transition-all duration-300",
+      !isActive && "opacity-40"
+    )}>
       <svg width={size} height={size * 1.35} viewBox="0 0 100 135" fill="none">
         {/* ── Hair / Cap ── */}
         <ellipse cx="50" cy="26" rx="33" ry="20" fill={darker} />
@@ -67,31 +67,15 @@ export function ChibiAvatar({ name, color, size = 80, isActive = true, score }: 
       </svg>
 
       {/* Name tag */}
-      <span style={{
-        fontFamily: 'Manrope, sans-serif',
-        fontSize: Math.max(9, size * 0.13),
-        fontWeight: 700,
-        color: 'rgba(255,255,255,0.85)',
-        textAlign: 'center',
-        maxWidth: size * 1.1,
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        background: 'rgba(0,0,0,0.35)',
-        padding: '2px 8px', borderRadius: 6,
-      }}>
+      <span className="font-[Manrope] text-[10px] font-bold text-white/85 text-center max-w-[88px] overflow-hidden text-ellipsis whitespace-nowrap bg-black/35 px-2 py-0.5 rounded-md">
         {name}
       </span>
 
       {score !== undefined && (
-        <span style={{
-          fontFamily: 'Fredoka, sans-serif',
-          fontSize: Math.max(8, size * 0.12),
-          fontWeight: 600,
-          color: '#FFC93C',
-        }}>
+        <span className="font-[Fredoka] text-[10px] font-semibold text-[var(--gm-yellow)]">
           {score} pts
         </span>
       )}
     </div>
   );
 }
-
