@@ -32,6 +32,12 @@ const bingoRefreshStyles = `
   .bingo-standing-panel, .bingo-chat { background: linear-gradient(145deg, #151238, #101025); }
   @media (max-width: 1050px) { .bingo-layout { grid-template-columns: minmax(260px, .9fr) minmax(340px, 1.1fr); } .bingo-side-column { grid-column: 1 / -1; grid-row: auto; display: grid; grid-template-columns: 1fr 1fr; } }
   @media (max-width: 720px) { .bingo-topbar { padding: 12px 16px; flex-wrap: wrap; } .bingo-layout { display: flex; flex-direction: column; padding: 14px; } .bingo-side-column { display: flex; } .bingo-number-panel { min-height: 0; } }
+  .bingo-phase-countdown { min-width: 76px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 5px 10px; border: 2px solid #2ed47a; border-radius: 11px; background: rgba(46,212,122,.12); color: #55e99a; line-height: 1; }
+  .bingo-phase-countdown strong { font-size: 20px; }
+  .bingo-phase-countdown span { color: rgba(255,255,255,.52); font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  .bingo-phase-countdown.ending { border-color: #ff4757; background: rgba(255,71,87,.14); color: #ff6b78; animation: bingoCountdownPulse .7s infinite; }
+  @keyframes bingoCountdownPulse { 50% { transform: scale(1.05); box-shadow: 0 0 18px rgba(255,71,87,.35); } }
+  @media (max-width: 520px) { .bingo-phase-countdown { order: 3; flex: 1; } }
 `;
 
 type CellStatus = 'unanswered' | 'correct' | 'wrong';
@@ -57,7 +63,7 @@ function normalizeCells(raw: unknown): BingoCell[] {
 
 export function BattleBingo({ battleId }: { battleId: string }) {
   const { user, navigate } = useApp();
-  const { send, lastMessage } = useBattleSocketContext();
+  const { send, lastMessage, lastBingoState } = useBattleSocketContext();
   const { studentName, currentUserId } = getStudentIdentity(user);
   const [cells, setCells] = useState<BingoCell[]>([]);
   const [players, setPlayers] = useState<BingoPlayer[]>([]);
@@ -82,6 +88,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
   const currentCell = cells.find((cell) => cell.value === rolledNumber);
   const currentQuestionText = question?.text || question?.question || '';
   const questionChoices = (question?.choices || question?.options || []).map((choice: any) => typeof choice === 'string' ? choice : choice?.text || choice?.label || choice?.value || String(choice));
+  const phaseEnding = phaseSeconds > 0 && phaseSeconds <= 5;
   const greenCount = cells.filter((cell) => cell.status === 'correct').length;
   const bingoProgress = useMemo(() => {
     const green = new Set(cells.filter((cell) => cell.status === 'correct').map((cell) => cell.value));
@@ -97,19 +104,20 @@ export function BattleBingo({ battleId }: { battleId: string }) {
     const data = lastMessage;
     if (!data || data.battleId !== battleId) return;
 
-    if (data.type === 'BINGO_STATE_SYNC') {
-      if (data.playerId === currentUserId || data.playerId === undefined) {
-        const own = data.self || data.player;
+    if (data.type === 'BINGO_STATE_SYNC' || (lastBingoState?.battleId === battleId && phaseSeconds === 0)) {
+      const state = data.type === 'BINGO_STATE_SYNC' ? data : lastBingoState;
+      if (state.playerId === currentUserId || state.playerId === undefined) {
+        const own = state.self || state.player;
         if (own?.card) setCells(normalizeCells(own.card));
       }
-      if (Array.isArray(data.players)) setPlayers(data.players);
-      if (Array.isArray(data.calledNumbers)) setCalledNumbers(data.calledNumbers);
-      if (typeof data.round === 'number') setRound(data.round);
-      if (data.phase) setPhase(data.phase);
-      if (typeof data.phaseSeconds === 'number') setPhaseSeconds(data.phaseSeconds);
-      if (typeof data.rolledNumber === 'number') setRolledNumber(data.rolledNumber);
-      if (Array.isArray(data.eligiblePlayerIds)) setEligiblePlayerIds(data.eligiblePlayerIds);
-      if (data.question) setQuestion(data.question);
+      if (Array.isArray(state.players)) setPlayers(state.players);
+      if (Array.isArray(state.calledNumbers)) setCalledNumbers(state.calledNumbers);
+      if (typeof state.round === 'number') setRound(state.round);
+      if (state.phase) setPhase(state.phase);
+      if (typeof state.phaseSeconds === 'number') setPhaseSeconds(state.phaseSeconds);
+      if (typeof state.rolledNumber === 'number') setRolledNumber(state.rolledNumber);
+      if (Array.isArray(state.eligiblePlayerIds)) setEligiblePlayerIds(state.eligiblePlayerIds);
+      if (state.question) setQuestion(state.question);
     }
     if (data.type === 'BINGO_ANSWER_RESULT' && data.playerId === currentUserId) {
       setAnswerFeedback(Boolean(data.isCorrect));
@@ -124,7 +132,13 @@ export function BattleBingo({ battleId }: { battleId: string }) {
     if (data.type === 'BINGO_CHAT') {
       setChat((previous) => [...previous, { id: `${data.sender}-${data.timestamp}`, sender: data.sender || 'Player', message: data.message }]);
     }
-  }, [lastMessage, battleId, currentUserId]);
+  }, [lastMessage, lastBingoState, battleId, currentUserId]);
+
+  useEffect(() => {
+    if (phaseSeconds <= 0) return;
+    const timer = window.setInterval(() => setPhaseSeconds((seconds) => Math.max(0, seconds - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [phaseSeconds]);
 
   useEffect(() => {
     if (phase !== 'finished' || !winner) return;
@@ -166,7 +180,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
 
   return (
     <><style>{bingoStyles}</style><style>{bingoRefreshStyles}</style><main className="bingo-battle">
-      <header className="bingo-topbar"><div className="bingo-brand"><span>Q</span> QuizArena</div><div className="bingo-round"><Grid3X3 size={17} /> Round {round || 1}</div><div className="bingo-phase"><span className="bingo-live-dot" /> {phase.toUpperCase()} {phaseSeconds > 0 && `Â· ${phaseSeconds}s`}</div></header>
+      <header className="bingo-topbar"><div className="bingo-brand"><span>Q</span> QuizArena</div><div className="bingo-round"><Grid3X3 size={17} /> Round {round || 1}</div><div className={`bingo-phase-countdown ${phaseEnding ? "ending" : ""}`}><strong>{phaseSeconds > 0 ? `${phaseSeconds}s` : "--"}</strong><span>remaining</span></div><div className="bingo-phase"><span className="bingo-live-dot" /> {phase.toUpperCase()} {phaseSeconds > 0 && `Â· ${phaseSeconds}s`}</div></header>
       <div className="bingo-layout">
         <section className="bingo-main-column">
           <div className="bingo-number-panel">
@@ -190,6 +204,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
 }
 
 export default BattleBingo;
+
 
 
 

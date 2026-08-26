@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, CircleHelp, Clock3, Grid3X3, MessageCircle, Shield, Trophy, Users, XCircle, Zap } from 'lucide-react';
 
 type MonitorPlayer = { id: string; name: string; wins?: number; stealBuffs?: number; retakeBuffs?: number; bingo?: boolean };
@@ -27,16 +27,28 @@ const phaseColors: Record<string, string> = { rolling: '#5BC8F6', stealing: '#FF
 
 export function ProfBingoMonitor({ roomCode, players, phase, phaseSeconds, round, rolledNumber, eligiblePlayerIds, answeredPlayerIds, question, answerEvents, questionEvents, chatEvents }: Props) {
   const phaseColor = phaseColors[phase] || '#FFC93C';
+  const [displayPhaseSeconds, setDisplayPhaseSeconds] = useState(phaseSeconds);
   const answered = new Set(answeredPlayerIds);
   const answerByPlayer = useMemo(() => new Map(answerEvents.map((event) => [event.playerId, event])), [answerEvents]);
   const questionText = question?.text || question?.question || 'Waiting for the next question.';
+  const phaseEnding = displayPhaseSeconds > 0 && displayPhaseSeconds <= 5;
+
+  useEffect(() => {
+    setDisplayPhaseSeconds(phaseSeconds);
+  }, [phaseSeconds, phase]);
+
+  useEffect(() => {
+    if (displayPhaseSeconds <= 0) return;
+    const timer = window.setInterval(() => setDisplayPhaseSeconds((seconds) => Math.max(0, seconds - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [displayPhaseSeconds]);
 
   return (
     <div style={{ minHeight: '100%', background: '#111522', color: '#F8FAFC', padding: '28px', fontFamily: 'Manrope, sans-serif' }}>
       <style>{`@keyframes profBingoPulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }`}</style>
       <header style={{ maxWidth: 1280, margin: '0 auto 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div><p style={{ margin: 0, color: '#FFC93C', fontSize: 11, fontWeight: 900, letterSpacing: '.14em', textTransform: 'uppercase' }}>Professor monitor</p><h1 style={{ margin: '5px 0 0', fontSize: 30, fontWeight: 900 }}>Bingo Arena</h1><p style={{ margin: '5px 0 0', color: 'rgba(255,255,255,.5)', fontSize: 12 }}>Room {roomCode || 'connecting'} · Round {round || 0}</p></div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}><div style={{ display: 'flex', alignItems: 'center', gap: 8, color: phaseColor, fontWeight: 900, fontSize: 13, textTransform: 'uppercase' }}><span style={{ width: 9, height: 9, borderRadius: '50%', background: phaseColor, animation: 'profBingoPulse 1.2s infinite' }} />{phase} {phaseSeconds > 0 ? `· ${phaseSeconds}s` : ''}</div><div style={{ display: 'flex', alignItems: 'center', gap: 7, border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, padding: '9px 12px', fontSize: 12 }}><Grid3X3 size={16} color="#FFC93C" /> {players.length} students</div></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}><div style={{ display: 'flex', alignItems: 'center', color: phaseColor, fontWeight: 900, fontSize: 13, textTransform: 'uppercase' }}><span style={{ width: 9, height: 9, marginRight: 8, borderRadius: '50%', background: phaseColor, animation: 'profBingoPulse 1.2s infinite' }} />{phase}</div><div style={{ minWidth: 92, textAlign: 'center', border: `2px solid ${phaseEnding ? '#FF4757' : phaseColor}`, borderRadius: 12, padding: '7px 12px', color: phaseEnding ? '#FF4757' : phaseColor, background: phaseEnding ? 'rgba(255,71,87,.12)' : `${phaseColor}12`, fontWeight: 900, fontSize: 18, animation: phaseEnding ? 'profBingoPulse .7s infinite' : 'none' }}>{displayPhaseSeconds > 0 ? `${displayPhaseSeconds}s` : '--'}<span style={{ display: 'block', fontSize: 9, letterSpacing: '.12em', textTransform: 'uppercase', color: 'rgba(255,255,255,.55)' }}>remaining</span></div><div style={{ display: 'flex', alignItems: 'center', gap: 7, border: '1px solid rgba(255,255,255,.12)', borderRadius: 10, padding: '9px 12px', fontSize: 12 }}><Grid3X3 size={16} color="#FFC93C" /> {players.length} students</div></div>
       </header>
 
       <main style={{ maxWidth: 1280, margin: '0 auto', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 360px', gap: 18 }}>

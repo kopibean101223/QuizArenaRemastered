@@ -97,6 +97,7 @@ interface BattleSocketValue {
   // Escape hatches for screen-specific state that the provider doesn't
   // need to know the meaning of, but callers may want to react to.
   lastMessage: any;
+  lastBingoState: any;
 }
 
 const BattleSocketContext = createContext<BattleSocketValue | null>(null);
@@ -143,6 +144,7 @@ export function BattleSocketProvider({
   const [leaderboard, setLeaderboard] = useState<LeaderboardPlayer[]>([]);
   const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
   const [lastMessage, setLastMessage] = useState<any>(null);
+  const [lastBingoState, setLastBingoState] = useState<any>(null);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -281,6 +283,7 @@ export function BattleSocketProvider({
       }
 
       if (data.type === 'BINGO_STATE_SYNC') {
+        setLastBingoState(data);
         if (Array.isArray(data.players)) {
           setPlayers(data.players
             .filter((player: any) => player.id !== 'professor' && !player.isHost)
@@ -444,6 +447,7 @@ export function BattleSocketProvider({
         leaderboard,
         chatMessages,
         lastMessage,
+        lastBingoState,
       }}
     >
       {children}

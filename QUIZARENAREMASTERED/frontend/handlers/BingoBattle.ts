@@ -126,6 +126,8 @@ class BingoBattleHandler {
       battleId,
       status: state.status || 'waiting',
       phase: state.phase || 'rolling',
+      phaseEndsAt: Number(state.phaseEndsAt || 0),
+      serverTime: Date.now(),
       phaseSeconds: Math.max(0, Math.ceil((Number(state.phaseEndsAt || 0) - Date.now()) / 1000)),
       round: Number(state.round || 0),
       rolledNumber: state.rolledNumber ? Number(state.rolledNumber) : null,
@@ -186,6 +188,23 @@ class BingoBattleHandler {
   private async endQuestion(redis: Redis, battleId: string) {
     const state = await redis.hgetall(stateKey(battleId));
     if (state.phase !== 'question') return;
+    const rolledNumber = Number(state.rolledNumber);
+    const eligiblePlayerIds: string[] = JSON.parse(state.eligiblePlayerIds || '[]');
+    const answeredPlayerIds: string[] = JSON.parse(state.answeredPlayerIds || '[]');
+    const unansweredPlayerIds = eligiblePlayerIds.filter((id) => !answeredPlayerIds.includes(id));
+    if (unansweredPlayerIds.length > 0) {
+      const rawPlayers = await redis.hgetall(playersKey(battleId));
+      await Promise.all(unansweredPlayerIds.map(async (playerId) => {
+        const rawPlayer = rawPlayers[playerId];
+        if (!rawPlayer) return;
+        const player = JSON.parse(rawPlayer) as BingoPlayerData;
+        const cell = player.card?.find((item) => item.value === rolledNumber);
+        if (cell && cell.status === 'unanswered') {
+          cell.status = 'wrong';
+          await redis.hset(playersKey(battleId), playerId, JSON.stringify(player));
+        }
+      }));
+    }
     if (Number(state.round || 0) % 3 === 0) {
       await redis.hset(stateKey(battleId), { phase: 'retake', phaseEndsAt: String(Date.now() + RETAKE_SECONDS * 1000) });
       await this.publishState(redis, battleId);
@@ -228,6 +247,8 @@ class BingoBattleHandler {
           battleId,
           status: state.status || 'waiting',
           phase: state.phase || 'rolling',
+          phaseEndsAt: Number(state.phaseEndsAt || 0),
+          serverTime: Date.now(),
           phaseSeconds: Math.max(0, Math.ceil((Number(state.phaseEndsAt || 0) - Date.now()) / 1000)),
           round: Number(state.round || 0),
           rolledNumber: state.rolledNumber ? Number(state.rolledNumber) : null,

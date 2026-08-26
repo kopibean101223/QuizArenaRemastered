@@ -651,6 +651,10 @@ const handleRemoveGroup = (groupName: string) => {
               });
             } 
           } else if (data.type === 'BINGO_STATE_SYNC' && Array.isArray(data.players)) {
+            if (data.status === 'active') {
+              setBattleStarted(true);
+              setProfessorView("bingo-monitor");
+            }
             setBingoState({
               phase: data.phase || 'rolling',
               phaseSeconds: Number(data.phaseSeconds || 0),
