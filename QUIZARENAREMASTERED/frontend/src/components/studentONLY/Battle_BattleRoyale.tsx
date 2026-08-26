@@ -59,6 +59,7 @@ export interface BattleRoyaleProps {
   battleId?: string;
   initialStartingHp?: number;
   onLeaveBattle?: () => void;
+  battleName?: string;
 }
 
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
@@ -75,7 +76,7 @@ const DEFAULT_TIME_LIMIT = 20;
  * context — same logic, same message types, just re-triggered whenever the
  * provider sees a new message instead of via a callback.
  */
-export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBattle }: BattleRoyaleProps) {
+export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBattle, battleName = 'Battle Royale' }: BattleRoyaleProps) {
   const { user, navigate } = useApp();
 const { send, lastMessage, questions: contextQuestions } = useBattleSocketContext();
 
@@ -89,6 +90,7 @@ const { send, lastMessage, questions: contextQuestions } = useBattleSocketContex
 
   const [startingHp, setStartingHp] = useState<number>(initialStartingHp);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [answerFeedback, setAnswerFeedback] = useState<boolean | null>(null);
   const [locked, setLocked] = useState(false);
   const [survivors, setSurvivors] = useState<Survivor[]>([]);
   const [eliminated, setEliminated] = useState(false);
@@ -148,6 +150,7 @@ useEffect(() => {
       setTimeLimit(data.timeLimit);
       if (Array.isArray(data.players)) applyPlayers(data.players);
       setSelectedOption(null);
+      setAnswerFeedback(null);
       setLocked(false);
     }
 
@@ -155,6 +158,9 @@ useEffect(() => {
       if (Array.isArray(data.players)) applyPlayers(data.players);
       if (data.playerId === myId && data.isAlive === false) {
         setEliminated(true);
+      }
+      if (data.playerId === myId && typeof data.isCorrect === 'boolean') {
+        setAnswerFeedback(data.isCorrect);
       }
     }
 
@@ -274,7 +280,7 @@ useEffect(() => {
           <div className="flex items-center gap-2 text-xs text-[#8F93A8]">
             <span>Battle Lobby</span>
             <ChevronRight size={12} />
-            <span className="text-white font-semibold">Battle Royale</span>
+            <span className="text-white font-semibold">{battleName}</span>
           </div>
         </div>
 
@@ -283,7 +289,7 @@ useEffect(() => {
             <CountdownBar timeLeft={timeLeft} timeLimit={timeLimit} />
           </div>
           <div className="bg-[#FF4757]/15 border border-[#FF4757] px-3 py-1 rounded-full text-xs font-extrabold text-[#FF4757] flex items-center gap-1.5">
-            <Skull size={14} /> ROYALE
+            <Skull size={14} /> {battleName.toUpperCase()}
           </div>
           <button
             onClick={onLeaveBattle}
@@ -346,7 +352,13 @@ useEffect(() => {
                   key={opt.key}
                   onClick={() => handleSelectOption(opt.key)}
                   className={`p-4 rounded-xl flex items-center gap-4 cursor-pointer transition-all border ${
-                    selectedOption === opt.key ? 'bg-white/10 border-indigo-500' : 'bg-white/[0.03] border-white/10'
+                    selectedOption === opt.key
+                      ? answerFeedback === true
+                        ? 'bg-[#2ED47A]/20 border-[#2ED47A]'
+                        : answerFeedback === false
+                          ? 'bg-[#FF4757]/20 border-[#FF4757]'
+                          : 'bg-white/10 border-indigo-500'
+                      : 'bg-white/[0.03] border-white/10'
                   } ${locked ? 'pointer-events-none opacity-70' : ''}`}
                 >
                   <div
@@ -368,6 +380,11 @@ useEffect(() => {
               />
             )}
           </div>
+          {answerFeedback !== null && (
+            <div className={`rounded-xl border px-4 py-3 text-center text-sm font-extrabold ${answerFeedback ? 'border-[#2ED47A]/40 bg-[#2ED47A]/10 text-[#2ED47A]' : 'border-[#FF4757]/40 bg-[#FF4757]/10 text-[#FF4757]'}`}>
+              {answerFeedback ? 'Correct answer!' : 'Incorrect answer. You lost a life.'}
+            </div>
+          )}
         </div>
 
         {/* Right Sidebar - Survivors List */}

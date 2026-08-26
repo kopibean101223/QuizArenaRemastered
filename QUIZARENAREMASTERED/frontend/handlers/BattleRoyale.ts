@@ -282,7 +282,7 @@ class BattleRoyaleHandler {
     redisPublisher: Redis,
     redisSubscriber: Redis
   ): Promise<void> {
-    const { type, battleId, roomCode, startingHp = 3, playerData, optionKey, correctAnswer, sender, message, userId } = payload;
+    const { type, battleId, roomCode, startingHp = 3, playerData, optionKey, correctAnswer, isLastQuestion, sender, message, userId } = payload;
     console.log(`[ROYALE][server] handleMessage type=${type} battleId=${battleId}`);
 
     if (!battleId) {
@@ -297,6 +297,7 @@ class BattleRoyaleHandler {
 
     // ── JOIN ROYALE BATTLE ──
     if (type === 'JOIN_ROYALE') {
+      roomPresenceHandler.setBattleMode(battleId, 'ROYALE');
       
       if (!this.activeRooms.has(battleId)) {
         this.activeRooms.set(battleId, new Set<WebSocket>());
@@ -379,10 +380,6 @@ class BattleRoyaleHandler {
     // first auto-advance timer, so the whole room moves together instead of
     // each browser timing itself out independently.
     if (type === 'PROF_START_ROYALE') {
-      if (payload.forceReset) {
-        await redisPublisher.del(pKey);
-      }
-
       if (payload.questions && Array.isArray(payload.questions)) {
         await redisPublisher.set(qKey, JSON.stringify(payload.questions));
       }
@@ -441,6 +438,46 @@ class BattleRoyaleHandler {
       return;
     }
 
+    if (type === 'ADVANCE_QUESTION') {
+      if (isLastQuestion) {
+        const rawPlayers = await redisPublisher.hgetall(pKey);
+        const players = Object.values(rawPlayers || {}).map((item) => JSON.parse(item));
+        await redisPublisher.hset(sKey, { status: 'completed' });
+        await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
+        await redisPublisher.expire(pKey, COMPLETED_ROOM_TTL_SECONDS);
+        this.clearQuestionTimer(battleId);
+        await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
+        await redisPublisher.publish(channel, JSON.stringify({
+          type: 'ROYALE_MATCH_ENDED',
+          battleId,
+          winner: players.find((player: RoyalePlayerData) => player.isAlive) || null,
+          players,
+        }));
+      } else {
+        await this.advanceOrEnd(battleId, redisPublisher, roomCode);
+      }
+      return;
+    }
+
+    if (type === 'PROF_END_ROYALE' || type === 'PROF_END_BATTLE') {
+      const rawPlayers = await redisPublisher.hgetall(pKey);
+      const players = Object.values(rawPlayers || {}).map((item) => JSON.parse(item));
+      const winner = players.find((player: RoyalePlayerData) => player.isAlive) || null;
+
+      await redisPublisher.hset(sKey, { status: 'completed' });
+      await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
+      await redisPublisher.expire(pKey, COMPLETED_ROOM_TTL_SECONDS);
+      this.clearQuestionTimer(battleId);
+      await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
+      await redisPublisher.publish(channel, JSON.stringify({
+        type: 'ROYALE_MATCH_ENDED',
+        battleId,
+        winner,
+        players,
+      }));
+      return;
+    }
+
     // ── SUBMIT ANSWER & PROCESS DAMAGE ──
     // NOTE: no longer decides locally whether to move to the next question.
     // It just records the answer/damage; the server's shared timer (started
@@ -486,6 +523,7 @@ class BattleRoyaleHandler {
           type: 'ROYALE_HP_UPDATED',
           battleId,
           playerId: player.id,
+          isCorrect,
           lives: player.lives,
           isAlive: player.isAlive,
           players,

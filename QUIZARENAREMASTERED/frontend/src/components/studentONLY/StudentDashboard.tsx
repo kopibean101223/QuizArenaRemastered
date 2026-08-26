@@ -22,7 +22,9 @@ import {
 import { Lobby_LiveQuiz } from "./Lobby/Lobby_LiveQuiz";
 import { Lobby_TeamMode } from "./Lobby/Lobby_TeamMode";
 import { Lobby_BattleRoyale } from "./Lobby/Lobby_BattleRoyale";
+import { Lobby_ChaosClash } from "./Lobby/Lobby_ChaosClash";
 import { Lobby_OwnPaced } from "./Lobby/Lobby_OwnPaced";
+import { StudentBingoMode } from "./Lobby/Lobby_BingoMode";
 
 import { BattleSocketProvider } from "@/lib/student/battle/useBattleSocketProvider";
 
@@ -37,13 +39,15 @@ const C = {
   muted: "rgba(255,255,255,0.5)",
 };
 
-type ResolvedMode = "LIVE" | "TEAM" | "ROYALE" | "SELF_PACED";
+type ResolvedMode = "LIVE" | "TEAM" | "ROYALE" | "CHAOS_CLASH" | "SELF_PACED" | "BINGO";
 
 function normalizeMode(mode: string | null | undefined): ResolvedMode {
   const m = (mode || "").toUpperCase();
   if (m === "TEAM") return "TEAM";
   if (m === "ROYALE") return "ROYALE";
+  if (m === "CHAOSCLASH" || m === "CHAOS_CLASH") return "CHAOS_CLASH";
   if (m === "SELF_PACED" || m === "SELFPACED") return "SELF_PACED";
+  if (m === "BINGO") return "BINGO";
   return "LIVE";
 }
 
@@ -90,12 +94,12 @@ useEffect(() => {
         if (parsed.sid && parsed.code) {
           const { data } = await supabase
             .from('quiz_sessions')
-            .select('status')
+            .select('status, mode, room_code')
             .eq('id', parsed.sid)
             .maybeSingle();
           
           if (data?.status === 'ACTIVE') {
-            enterBattle(parsed.code, parsed.sid, parsed.mode);
+            enterBattle(data.room_code || parsed.code, parsed.sid, data.mode || parsed.mode);
           } else {
             localStorage.removeItem(STORAGE_KEY);
           }
@@ -242,8 +246,30 @@ if (hasJoined && sessionId) {
           <Lobby_BattleRoyale sessionId={sessionId} roomCode={roomCode} />
         </BattleSocketProvider>
       );
+    case "CHAOS_CLASH":
+      return (
+        <BattleSocketProvider
+          sessionId={sessionId}
+          userId={user?.id}
+          userName={resolvedUserName}
+          mode="CHAOS_CLASH"
+        >
+          <Lobby_ChaosClash sessionId={sessionId} roomCode={roomCode} />
+        </BattleSocketProvider>
+      );
     case "SELF_PACED":
       return <Lobby_OwnPaced sessionId={sessionId} roomCode={roomCode} />;
+    case "BINGO":
+      return (
+        <BattleSocketProvider
+          sessionId={sessionId}
+          userId={user?.id}
+          userName={resolvedUserName}
+          mode="BINGO"
+        >
+          <StudentBingoMode battleId={sessionId} userId={user?.id || ""} userName={resolvedUserName || "Student"} />
+        </BattleSocketProvider>
+      );
     case "LIVE":
     default:
       return (

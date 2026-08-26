@@ -66,6 +66,8 @@ export function modeLabel(mode: string | null | undefined): string {
   switch ((mode || "").toUpperCase()) {
     case "TEAM": return "Team";
     case "ROYALE": return "Battle Royale";
+    case "CHAOSCLASH":
+    case "CHAOS_CLASH": return "ChaosClash";
     case "SELF_PACED": return "Individual";
     case "LIVE":
     default: return "Individual";

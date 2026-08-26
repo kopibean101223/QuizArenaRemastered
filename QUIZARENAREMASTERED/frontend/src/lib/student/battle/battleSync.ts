@@ -40,7 +40,7 @@ export interface PlayerResult {
 export interface FinalBattleData {
   battleId: string;
   roomCode?: string;
-  battleMode?: 'LIVE' | 'SELF_PACED' | 'TEAM' | 'ROYALE';
+  battleMode?: 'LIVE' | 'SELF_PACED' | 'TEAM' | 'ROYALE' | 'BINGO';
   players?: PlayerResult[];
 }
 

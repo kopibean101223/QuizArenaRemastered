@@ -109,7 +109,7 @@ export interface BattleSocketProviderProps {
    * Which mode-specific join message to send alongside the base
    * JOIN_BATTLE handshake. Defaults to 'LIVE' (no extra message).
    */
-  mode?: 'LIVE' | 'TEAM' | 'ROYALE';
+  mode?: 'LIVE' | 'TEAM' | 'ROYALE' | 'CHAOS_CLASH' | 'BINGO';
   /**
    * Extra fields merged into the mode-specific join payload — e.g. Team's
    * { teamId } on reconnect. Optional: the server already falls back to
@@ -192,10 +192,23 @@ export function BattleSocketProvider({
           userId: resolvedUserId,
           ...extraJoinPayload,
         }));
-      } else if (mode === 'ROYALE') {
+      } else if (mode === 'ROYALE' || mode === 'CHAOS_CLASH') {
         socket.send(JSON.stringify({
           type: 'JOIN_ROYALE',
           mode: 'ROYALE',
+          battleId: sessionId,
+          playerData: {
+            id: resolvedUserId,
+            name: resolvedName,
+            initials: resolvedName.substring(0, 2).toUpperCase(),
+            color: AVATAR_COLORS[0],
+          },
+          ...extraJoinPayload,
+        }));
+      } else if (mode === 'BINGO') {
+        socket.send(JSON.stringify({
+          type: 'JOIN_BINGO',
+          mode: 'BINGO',
           battleId: sessionId,
           playerData: {
             id: resolvedUserId,
@@ -265,6 +278,25 @@ export function BattleSocketProvider({
         const m = data.type === 'ROYALE_STATE_SYNC' ? 'ROYALE' : 'TEAM';
         setBattleMode(m);
         setCountdown((prev) => (prev === null ? 3 : prev));
+      }
+
+      if (data.type === 'BINGO_STATE_SYNC') {
+        if (Array.isArray(data.players)) {
+          setPlayers(data.players
+            .filter((player: any) => player.id !== 'professor' && !player.isHost)
+            .map((player: any, index: number) => ({
+              id: player.id,
+              name: player.name || player.id,
+              initials: player.initials || String(player.name || player.id).substring(0, 2).toUpperCase(),
+              color: player.color || AVATAR_COLORS[index % AVATAR_COLORS.length],
+              isHost: false,
+              isReady: true,
+            })));
+        }
+        if (data.status === 'active') {
+          setBattleMode('BINGO');
+          setCountdown((prev) => (prev === null ? 3 : prev));
+        }
       }
 
       if (data.type === 'ROOM_STATE_SYNC' && Array.isArray(data.players)) {
