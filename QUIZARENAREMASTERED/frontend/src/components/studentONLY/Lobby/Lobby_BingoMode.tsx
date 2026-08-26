@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { BookOpen, Grid3X3, Trophy, Users, Zap } from 'lucide-react';
 import { useApp } from '../../../context/AppContext';
 import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProvider';
+import { BattleBingo } from '../Battle_Bingo';
 
 interface BingoLobbyProps {
   battleId: string;
@@ -11,7 +12,7 @@ interface BingoLobbyProps {
   userName: string;
 }
 
-export function StudentBingoMode({ userName }: BingoLobbyProps) {
+export function StudentBingoMode({ battleId, userName }: BingoLobbyProps) {
   const { navigate } = useApp();
   const { players, countdown, battleStarted, lastMessage } = useBattleSocketContext();
 
@@ -20,16 +21,7 @@ export function StudentBingoMode({ userName }: BingoLobbyProps) {
   }, [lastMessage, navigate]);
 
   if (battleStarted) {
-    return (
-      <main className="min-h-screen bg-[#1B1E2B] px-6 py-12 text-white">
-        <div className="mx-auto flex min-h-[70vh] max-w-2xl flex-col items-center justify-center text-center">
-          <Grid3X3 size={52} className="mb-5 text-[#FFC93C]" />
-          <p className="mb-2 text-xs font-extrabold uppercase tracking-[0.18em] text-[#FFC93C]">Chaos grid ready</p>
-          <h1 className="text-4xl font-bold">Bingo Arena is starting</h1>
-          <p className="mt-3 text-sm text-white/55">Good luck, {userName}.</p>
-        </div>
-      </main>
-    );
+    return <BattleBingo battleId={battleId} />;
   }
 
   return (

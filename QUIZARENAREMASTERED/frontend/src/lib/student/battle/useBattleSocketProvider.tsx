@@ -295,7 +295,8 @@ export function BattleSocketProvider({
         }
         if (data.status === 'active') {
           setBattleMode('BINGO');
-          setCountdown((prev) => (prev === null ? 3 : prev));
+          setBattleStarted(true);
+          setCountdown(null);
         }
       }
 

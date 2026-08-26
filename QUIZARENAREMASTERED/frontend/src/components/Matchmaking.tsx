@@ -12,6 +12,7 @@ import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
 import { useBotSimulator } from "@/hooks/useBotSimulator";
 import { CountdownDisplay } from "./studentONLY/ComponentsLobby/CountdownDisplay";
+import { ProfBingoMonitor } from "./profonly/ProfBingoMonitor";
 
 // ─── Tokens ────────────────────────────────────────────────────────────────────
 const C = {
@@ -303,9 +304,14 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [joinedStudents, setJoinedStudents] = useState<Student[]>([]);
   const [copied, setCopied] = useState(false);
   const [battleStarted, setBattleStarted] = useState(false);
+  const [professorView, setProfessorView] = useState<"lobby" | "bingo-monitor">("lobby");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [timeRemaining, setTimeRemaining] = useState(60);
   const [liveFeed, setLiveFeed] = useState<any[]>([]);
+  const [bingoState, setBingoState] = useState({ phase: 'rolling', phaseSeconds: 0, round: 0, rolledNumber: null as number | null, eligiblePlayerIds: [] as string[], answeredPlayerIds: [] as string[], question: null as any });
+  const [bingoAnswers, setBingoAnswers] = useState<any[]>([]);
+  const [bingoQuestions, setBingoQuestions] = useState<any[]>([]);
+  const [bingoChat, setBingoChat] = useState<any[]>([]);
   const [finalLeaderboard, setFinalLeaderboard] = useState<any[]>([]);
 
   // ─── PROFESSOR GROUP MANAGEMENT STATE (ONLY FOR TEAM MODE) ───
@@ -645,6 +651,18 @@ const handleRemoveGroup = (groupName: string) => {
               });
             } 
           } else if (data.type === 'BINGO_STATE_SYNC' && Array.isArray(data.players)) {
+            setBingoState({
+              phase: data.phase || 'rolling',
+              phaseSeconds: Number(data.phaseSeconds || 0),
+              round: Number(data.round || 0),
+              rolledNumber: typeof data.rolledNumber === 'number' ? data.rolledNumber : null,
+              eligiblePlayerIds: Array.isArray(data.eligiblePlayerIds) ? data.eligiblePlayerIds : [],
+              answeredPlayerIds: Array.isArray(data.answeredPlayerIds) ? data.answeredPlayerIds : [],
+              question: data.question || null,
+            });
+            if (data.question && data.round) {
+              setBingoQuestions(prev => prev.some(item => item.round === data.round) ? prev : [...prev, { round: data.round, number: data.rolledNumber, question: data.question, timestamp: Date.now() }]);
+            }
             setJoinedStudents(data.players
               .filter((player: any) => player.id && player.id !== 'professor')
               .map((player: any, index: number) => ({
@@ -657,6 +675,10 @@ const handleRemoveGroup = (groupName: string) => {
                 avatarColor: player.color || AVATAR_COLORS[index % AVATAR_COLORS.length],
                 isReady: true,
               })));
+          } else if (data.type === 'BINGO_ANSWER_RESULT') {
+            setBingoAnswers(prev => [...prev.slice(-99), { playerId: data.playerId, isCorrect: Boolean(data.isCorrect), timestamp: Date.now() }]);
+          } else if (data.type === 'BINGO_CHAT') {
+            setBingoChat(prev => [...prev.slice(-99), { sender: data.sender || 'Student', message: data.message, timestamp: Date.now() }]);
           }else if (data.type === 'TEAM_LOBBY_STATE_SYNC')   {
             if (Array.isArray(data.groups)) setGroups(data.groups);
             if (typeof data.teamSize === 'number') setTeamSize(data.teamSize); // NEW
@@ -838,6 +860,7 @@ async function handleConfirmAndDeploy() {
 
      const handleStartBattle = () => {
     setBattleStarted(true);
+      if (lobbyType === 'bingo') setProfessorView("bingo-monitor");
     setCurrentIndex(0);
     const startType = lobbyType === 'bingo' ? 'PROF_START_BINGO' : lobbyType === 'royale' || lobbyType === 'chaosclash' ? 'PROF_START_ROYALE' : lobbyType === 'team' ? 'PROF_START_TEAM' : 'PROF_START_BATTLE';
     
@@ -908,6 +931,7 @@ async function handleConfirmAndDeploy() {
       setInLobby(false);
       setActiveSessionExists(false);
       setBattleStarted(false);
+      setProfessorView("lobby");
       setQuizCompleted(false);
       setFinalLeaderboard([]);
       setCountdown(null);
@@ -1039,7 +1063,7 @@ async function handleConfirmAndDeploy() {
               <h2 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 24, color: "#fff" }}>Syncing Live Session...</h2>
               <p style={{ color: "rgba(255,255,255,0.6)", marginTop: 8 }}>Reconnecting to the active arena.</p>
             </div>
-          ) : !battleStarted ? (
+          ) : !battleStarted || (lobbyType === 'bingo' && professorView === "lobby") ? (
             <div style={{ maxWidth: 900, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 24 }}>
               <style>{`
                 @keyframes popIn { 0%{opacity:0;transform:scale(0.4)} 100%{opacity:1;transform:scale(1)} }
@@ -1183,6 +1207,21 @@ async function handleConfirmAndDeploy() {
               </button>
               {countdown !== null && countdown > 0 && <CountdownDisplay count={countdown} />}
             </div>
+          ) : lobbyType === 'bingo' ? (
+            <ProfBingoMonitor
+              roomCode={roomCode}
+              players={joinedStudents}
+              phase={bingoState.phase}
+              phaseSeconds={bingoState.phaseSeconds}
+              round={bingoState.round}
+              rolledNumber={bingoState.rolledNumber}
+              eligiblePlayerIds={bingoState.eligiblePlayerIds}
+              answeredPlayerIds={bingoState.answeredPlayerIds}
+              question={bingoState.question}
+              answerEvents={bingoAnswers}
+              questionEvents={bingoQuestions}
+              chatEvents={bingoChat}
+            />
           ) : (
             <div style={{ maxWidth: 1000, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(255,255,255,0.05)", padding: "20px 24px", borderRadius: 20, border: "1px solid rgba(255,255,255,0.1)" }}>
