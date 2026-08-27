@@ -66,7 +66,7 @@ export async function GET(request: Request) {
       if (role === 'professor') {
         targetUrl = `${origin}/?page=dashboard`
       } else if (role === 'student') {
-        targetUrl = `${origin}/?page=lobby`
+        targetUrl = `${origin}/?page=student_dashboard`
       }
 
     

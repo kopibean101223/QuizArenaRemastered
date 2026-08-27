@@ -295,7 +295,11 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     if (lobbyType === "royale") {
       setIsLive(true);
       setDeadline('');
-    } else if (lobbyType === "endless") {
+    } else if (lobbyType==="bossraid"){
+      setIsLive(true);
+        setDeadline('');
+    }
+      else if (lobbyType === "endless") {
       setIsLive(false);
     }
   }, [lobbyType]);
@@ -313,7 +317,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [copied, setCopied] = useState(false);
   const [battleStarted, setBattleStarted] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [timeRemaining, setTimeRemaining] = useState(60);
+  const [activeCustomQuestion, setActiveCustomQuestion] = useState<any>(null);
+  const [timeRemaining, setTimeRemaining] = useState(30);
   const [liveFeed, setLiveFeed] = useState<any[]>([]);
   const [finalLeaderboard, setFinalLeaderboard] = useState<any[]>([]);
 
@@ -546,7 +551,7 @@ const handleRemoveGroup = (groupName: string) => {
           type: 'JOIN_BATTLE',
           battleId: sessionId,
           totalQuestions: randomizedQuestions.length || 37,
-          timeLimit: 60,
+          timeLimit: 30,
           sender: 'Professor'
         }));
           console.log("[TEAM][prof] onopen, lobbyType =", lobbyType);
@@ -589,14 +594,49 @@ const handleRemoveGroup = (groupName: string) => {
           if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'SCORE_UPDATED') {
             setIsSyncing(false);
             if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
+            if (data.customQuestion) {
+              setActiveCustomQuestion(data.customQuestion);
+            } else if (data.type === 'QUESTION_ADVANCED' || data.type === 'ROOM_STATE_SYNC') {
+              setActiveCustomQuestion(null);
+            }
             if (data.startedAt) {
-              const limit = data.timeLimit || 60;
+              const limit = data.timeLimit || 30;
               const elapsed = Math.floor((Date.now() - data.startedAt) / 1000);
               setTimeRemaining(Math.max(0, limit - elapsed));
             }
-            if (data.history) setLiveFeed(data.history);
-            if (data.type === 'ROOM_STATE_SYNC' && Array.isArray(data.questions) && data.questions.length > 0) {
-              setRandomizedQuestions(data.questions);
+            if (data.history) {
+              setLiveFeed(data.history);
+              // Recover students from history if they haven't scored yet
+              const historicalStudents = data.history
+                .filter((item: any) => item.isJoinEvent && item.sender !== 'Professor')
+                .map((item: any) => ({
+                  id: item.userId || `peer_${Math.random()}`,
+                  name: item.sender || 'Anonymous',
+                  initials: String(item.sender || 'AN').substring(0, 2).toUpperCase(),
+                  perfLevel: 'Medium',
+                  score: 0,
+                  team: 'Unassigned',
+                  isActive: true,
+                  isReady: true,
+                }));
+              
+              if (historicalStudents.length > 0) {
+                setJoinedStudents(prev => {
+                  const updated = [...prev];
+                  historicalStudents.forEach((hs: any) => {
+                    if (!updated.some(p => p.id === hs.id || p.name === hs.name)) {
+                      hs.avatarColor = AVATAR_COLORS[updated.length % AVATAR_COLORS.length];
+                      updated.push(hs);
+                    }
+                  });
+                  return updated;
+                });
+              }
+            }
+            if (data.type === 'ROOM_STATE_SYNC' && Array.isArray(data.questions)) {
+              if (data.questions.length > 0 || data.status !== 'waiting') {
+                setRandomizedQuestions(data.questions);
+              }
             }
             if (data.status === 'completed') {
               setQuizCompleted(true);
@@ -838,7 +878,7 @@ async function handleConfirmAndDeploy() {
         setActiveSessionExists(true);
         setInLobby(true);
         setJoinedStudents([]); 
-        const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "team" ? "Team" : "Individual";
+        const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "team" ? "Team" : "Live";
         toast.success(`${modeLabel} Live Session initialized using bank: ${selectedBank.name}! Session Locked.`);
       } else if (sessionData) {
         // For Async/Endless modes, seed the questions into Redis so students can fetch them
@@ -888,17 +928,22 @@ async function handleConfirmAndDeploy() {
 
     if (lobbyType === 'bossraid' || nextIdx < totalQCount) {
       setCurrentIndex(nextIdx);
+      if (customQ) {
+        setActiveCustomQuestion(customQ);
+      } else {
+        setActiveCustomQuestion(null);
+      }
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: 'ADVANCE_QUESTION',
           battleId: sessionId,
           currentIndex: nextIdx,
-          nextTimeLimit: 60,
+          nextTimeLimit: 30,
           isLastQuestion: false,
           customQuestion: customQ
         }));
       }
-      setTimeRemaining(60);
+      setTimeRemaining(30);
       setTimeout(() => setIsAdvancing(false), 500);
     } else {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -941,6 +986,9 @@ async function handleConfirmAndDeploy() {
       setCurrentIndex(0);
       setSessionId(''); 
       setRoomCode(generateSecureRoomCode());
+      setRandomizedQuestions([]);
+      setSelectedBank(prev => ({ ...prev }));
+      setActiveCustomQuestion(null);
       
       toast.success("Live session ended successfully. Configuration unlocked.");
     }
@@ -1239,7 +1287,7 @@ async function handleConfirmAndDeploy() {
               students={joinedStudents.map(s => ({ ...s, isActive: true, score: s.score || 0, avatarColor: s.avatarColor || '#FFC93C' }))}
               bossHealth={1000}
               timeLeft={timeRemaining}
-              currentQuestion={randomizedQuestions[currentIndex] || null}
+              currentQuestion={activeCustomQuestion || randomizedQuestions[currentIndex] || null}
               questions={randomizedQuestions}
               onLaunchQuestion={(q) => {
                  handleNextQuestion(q);

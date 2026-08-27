@@ -111,26 +111,21 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
   // Damage Log (Start Empty)
   const [damageLog, setDamageLog] = useState<DamageLogEntry[]>([]);
 
-  // Timer Tick
   useEffect(() => {
-    if (isQuestionActive && localTimeLeft > 0) {
-      const timer = setTimeout(() => setLocalTimeLeft(prev => prev - 1), 1000);
-      return () => clearTimeout(timer);
-    } else if (isQuestionActive && localTimeLeft === 0) {
+    setLocalTimeLeft(timeLeft);
+    if (timeLeft === 0 && isQuestionActive) {
       setIsQuestionActive(false);
       toast.error("Time's up for this question! Prepare to launch the next one.", {
         position: 'top-right',
         style: { background: 'var(--gm-red)', color: 'white' }
       });
     }
-  }, [localTimeLeft, isQuestionActive]);
+  }, [timeLeft, isQuestionActive]);
 
   // Sync state if prop changes entirely (e.g. initial load)
   useEffect(() => {
-    if (availableQuestions.length === 0 && questions.length > 0) {
-      setAvailableQuestions(questions);
-    }
-  }, [questions, availableQuestions.length]);
+    setAvailableQuestions(questions);
+  }, [questions]);
 
   // Energy Auto-increment (0.5% per second)
   useEffect(() => {
@@ -242,7 +237,6 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
       // Launching an attack deals damage to the class!
       setDamageLog(prev => [{ player: "BOSS", action: "LAUNCHED QUESTION", value: 0, timestamp: Date.now() }, ...prev]);
       setIsQuestionActive(true);
-      setLocalTimeLeft(30);
       triggerSlash();
       
       // Remove from available list
@@ -287,7 +281,6 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
     // Also trigger slash/damage/broadcast for custom question just like handleDrop
     setDamageLog(prev => [{ player: "BOSS", action: "LAUNCHED CUSTOM QUESTION", value: 0, timestamp: Date.now() }, ...prev]);
     setIsQuestionActive(true);
-    setLocalTimeLeft(30);
     triggerSlash();
     setGlobalCooldown(3);
     

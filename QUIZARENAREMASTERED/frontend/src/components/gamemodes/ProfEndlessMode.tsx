@@ -28,86 +28,120 @@ function EndlessDashboard({ session }: { session: any }) {
     // Ignored, not wrapped
   }
 
+ // Fetch historical data (handles COMPLETED sessions AND dead players in ACTIVE sessions)
   useEffect(() => {
-    if (!isLive) {
-      // Historical State (COMPLETED)
-      const fetchHistorical = async () => {
-        // Fetch from quiz_results
-        const { data } = await supabase
-          .from('quiz_results')
-          .select(`
-            *,
-            profiles(name)
-          `)
-          .eq('session_id', session.id);
+    const fetchHistorical = async () => {
+      const { data, error } = await supabase
+        .from('quiz_results')
+        .select(`*`)
+        .eq('session_id', session.id);
 
-        if (data) {
-          const historical = data.map((d: any, idx: number) => {
-            // "Hack" applied: Correct Answers -> Max Stage Reached
-            const maxStage = d.correct_answers || 0;
-            const name = d.profiles?.name || `Student ${idx + 1}`;
-            return {
-              id: d.user_id,
-              name,
-              initials: name.substring(0, 2).toUpperCase(),
-              avatarColor: AVATAR_COLORS[idx % AVATAR_COLORS.length],
-              score: d.score || 0,
-              maxStage,
-              accuracy: d.accuracy,
-              correctAnswers: d.correct_answers,
-              isActive: false
-            };
+      if (error) {
+        console.error("Failed to fetch historical data:", error);
+      }
+
+      if (data) {
+        const historical = data.map((d: any, idx: number) => {
+          const name = `Student ${d.user_id.substring(0, 4)}`;
+          return {
+            id: d.user_id,
+            name,
+            initials: name.substring(0, 2).toUpperCase(),
+            avatarColor: AVATAR_COLORS[idx % AVATAR_COLORS.length],
+            score: d.score || 0,
+            maxStage: d.correct_answers ? d.correct_answers + 1 : 1,
+            accuracy: d.accuracy,
+            correctAnswers: d.correct_answers,
+            isActive: false
+          };
+        });
+        
+        // Safely merge existing leaderboard with historical data so no one gets erased
+        setLeaderboard(prev => {
+          const map = new Map(prev.map(p => [p.id, p]));
+          historical.forEach(h => {
+            if (!map.has(h.id)) {
+              map.set(h.id, h);
+            } else {
+              const existing = map.get(h.id)!;
+              map.set(h.id, {
+                ...existing,
+                score: Math.max(existing.score || 0, h.score),
+                maxStage: Math.max(existing.maxStage || 1, h.maxStage),
+                accuracy: h.accuracy !== undefined ? h.accuracy : existing.accuracy,
+                correctAnswers: h.correctAnswers !== undefined ? h.correctAnswers : existing.correctAnswers,
+              });
+            }
           });
-          setLeaderboard(historical);
-        }
-      };
-      fetchHistorical();
+          return Array.from(map.values());
+        });
+      }
+    };
+    
+    fetchHistorical();
+    
+    // If live, poll DB occasionally to immediately catch students who died/finished
+    let interval: NodeJS.Timeout;
+    if (isLive) {
+      interval = setInterval(fetchHistorical, 10000); // 10s poll
     }
-  }, [isLive, session.id, supabase]);
+    return () => { if (interval) clearInterval(interval); };
+  }, [session.id, supabase, isLive]);
+
 
   useEffect(() => {
-    // Live State
     if (isLive && socketCtx) {
-      // Merge players (who just joined) with leaderboard (who have scores)
-      const mergedMap = new Map();
-      
-      // Add everyone who is currently connected
-      if (Array.isArray(socketCtx.players)) {
-        socketCtx.players.forEach((p: any) => {
-          if (p.name?.includes('Professor') || p.id === 'professor' || p.isHost) return;
-          mergedMap.set(p.id, {
-            id: p.id,
-            name: p.name || 'Student',
-            initials: p.initials || 'ST',
-            avatarColor: p.color || AVATAR_COLORS[0],
-            score: 0,
-            maxStage: 1,
-            isActive: true
+      setLeaderboard((prevLeaderboard) => {
+        // First, mark everyone as inactive
+        const mergedMap = new Map(prevLeaderboard.map(p => [p.id, { ...p, isActive: false }]));
+        
+        // Mark players currently in the socket roster as active
+        if (Array.isArray(socketCtx.players)) {
+          socketCtx.players.forEach((p: any) => {
+            if (p.name?.includes('Professor') || p.id === 'professor' || p.isHost) return;
+            if (!mergedMap.has(p.id)) {
+              mergedMap.set(p.id, {
+                id: p.id,
+                name: p.name || 'Student',
+                initials: p.initials || 'ST',
+                avatarColor: p.color || '#5B3DF6',
+                score: 0,
+                maxStage: 1,
+                isActive: true
+              });
+            } else {
+              mergedMap.get(p.id)!.isActive = true;
+            }
           });
-        });
-      }
+        }
 
-      // Overwrite with any score data we have
-      if (Array.isArray(socketCtx.leaderboard)) {
-        socketCtx.leaderboard.forEach((lp: any, idx: number) => {
-          if (lp.name?.includes('Professor') || lp.id === 'professor' || lp.isHost) return;
-          const existing = mergedMap.get(lp.id) || {};
-          mergedMap.set(lp.id, {
-            ...existing,
-            id: lp.id,
-            name: lp.name || existing.name || `Student ${idx + 1}`,
-            initials: lp.initials || existing.initials || 'ST',
-            avatarColor: lp.color || existing.avatarColor || AVATAR_COLORS[idx % AVATAR_COLORS.length],
-            score: lp.score || 0,
-            maxStage: Math.floor((lp.score || 0) / 100) + 1,
-            isActive: true
+        // Update scores from live leaderboard
+        if (Array.isArray(socketCtx.leaderboard)) {
+          socketCtx.leaderboard.forEach((lp: any) => {
+            if (lp.name?.includes('Professor') || lp.id === 'professor' || lp.isHost) return;
+            const existing = mergedMap.get(lp.id) || {};
+            // If they are in the leaderboard, use their self-reported isActive.
+            // If they are in socketCtx.players, they are definitely active.
+            const selfReportedActive = lp.isActive !== undefined ? lp.isActive : existing.isActive;
+            const definitelyActive = mergedMap.get(lp.id)?.isActive;
+            
+            mergedMap.set(lp.id, {
+              ...existing,
+              id: lp.id,
+              name: lp.name || existing.name || 'Student',
+              score: Math.max(existing.score || 0, lp.score || 0),
+              maxStage: lp.totalQuestions !== undefined ? lp.totalQuestions : (lp.correctAnswers !== undefined ? lp.correctAnswers + 1 : Math.max(existing.maxStage || 1, Math.floor((lp.score || 0) / 100) + 1)),
+              accuracy: lp.accuracy !== undefined ? lp.accuracy : existing.accuracy,
+              isActive: definitelyActive || selfReportedActive
+            });
           });
-        });
-      }
-      
-      setLeaderboard(Array.from(mergedMap.values()));
+        }
+        
+        return Array.from(mergedMap.values());
+      });
     }
   }, [isLive, socketCtx?.leaderboard, socketCtx?.players]);
+ 
 
   const startTime = new Date(session.created_at || Date.now());
   const durationHours = session.deadline 

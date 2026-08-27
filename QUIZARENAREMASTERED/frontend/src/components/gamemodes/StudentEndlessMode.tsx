@@ -6,7 +6,7 @@ import { Zap, Heart, Flag, Skull } from 'lucide-react';
 import { cn } from '@/components/ui/utils';
 import { StreakRewardCard } from './StreakRewardCard';
 import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProvider';
-import { CountdownDisplay } from '../CountdownDisplay';
+import { CountdownDisplay } from '../studentONLY/ComponentsLobby/CountdownDisplay';
 
 const OPTION_COLORS = [
   { base: 'bg-[var(--gm-indigo)]', border: 'border-[var(--gm-indigo)]', light: 'bg-[var(--gm-indigo)]/20', text: 'text-[var(--gm-indigo)]', glow: 'shadow-[0_8px_24px_rgba(91,61,246,0.5)]' },
@@ -34,22 +34,17 @@ interface StudentEndlessModeProps {
   sessionId?: string;
 }
 
-const DEFAULT_QUESTION = {
-  text: 'What is the chemical symbol for gold?',
-  choices: ['Au', 'Ag', 'Fe', 'Cu'],
-  answer: 'Au',
-};
-
 export function StudentEndlessMode({
   currentStage = 1,
   lives: initialLives = 3,
   score: initialScore = 0,
-  currentQuestion = DEFAULT_QUESTION,
+  currentQuestion = null,
   onAnswer,
   showCheckpoint: initialShowCheckpoint = false,
   onContinueCheckpoint,
   sessionId
 }: StudentEndlessModeProps) {
+  const STORAGE_KEY = `quiz_endless_secure_state_${sessionId}`;
   const socketCtx = useBattleSocketContext();
   // Local state for demonstration of mechanics, normally passed down or hoisted
   const [selected, setSelected] = useState<number | null>(null);
@@ -63,29 +58,40 @@ export function StudentEndlessMode({
   const [combo, setCombo] = useState(0);
   const [comboPop, setComboPop] = useState(false);
   const [alreadyPlayed, setAlreadyPlayed] = useState(false);
+  const [isGameOver, setIsGameOver] = useState(false);
 
   useEffect(() => {
     if (sessionId && socketCtx?.userId) {
-      import('@/lib/supabase/client').then(({ createBrowserSupabaseClient }) => {
+      import('@/lib/supabase/client').then(async ({ createBrowserSupabaseClient }) => {
         const supabase = createBrowserSupabaseClient();
-        supabase.from('quiz_results')
+        
+        const { data: sessionData } = await supabase
+          .from('quiz_sessions')
+          .select('status')
+          .eq('id', sessionId)
+          .maybeSingle();
+
+        const { data: resultData } = await supabase
+          .from('quiz_results')
           .select('id')
           .eq('session_id', sessionId)
           .eq('user_id', socketCtx.userId)
-          .maybeSingle()
-          .then(({ data }) => {
-            if (data) setAlreadyPlayed(true);
-          });
+          .maybeSingle();
+
+        if (resultData || sessionData?.status === 'COMPLETED') {
+          setAlreadyPlayed(true);
+        }
       });
     }
   }, [sessionId, socketCtx?.userId]);
 
   const [questions, setQuestions] = useState<any[]>([]);
-  const [loading, setLoading] = useState(!!sessionId);
-  const [activeQuestion, setActiveQuestion] = useState(initialQuestion);
+  const [activeQuestion, setActiveQuestion] = useState<any>(null);
 
   const [questionStartTime, setQuestionStartTime] = useState(Date.now());
-  const [timerPercent, setTimerPercent] = useState(75);
+  const [timerPercent, setTimerPercent] = useState(100);
+  const [timeLeft, setTimeLeft] = useState(20);
+  const [maxTime, setMaxTime] = useState(20);
   const [streak, setStreak] = useState(0);
   const [showStreakCard, setShowStreakCard] = useState(false);
 
@@ -93,28 +99,140 @@ export function StudentEndlessMode({
     POWER_UP_SLOTS.map(() => ({ ready: true, cooldown: 0 }))
   );
 
-  useEffect(() => {
-    setQuestionStartTime(Date.now());
-  }, [internalStage, currentQuestion]);
+  const syncToStorage = (updates: any) => {
+    if (!sessionId) return;
+    const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, ...updates }));
+  };
 
-  const stagesUntilCheckpoint = CHECKPOINT_INTERVAL - (internalStage % CHECKPOINT_INTERVAL);
+ // FETCH OR RESTORE SECURE SESSION
+  useEffect(() => {
+    if (!sessionId) return;
+    const parseChoices = (rawChoices: any) => {
+      if (!Array.isArray(rawChoices)) return [];
+      return rawChoices.map((c: any) => 
+        typeof c === 'object' && c !== null ? (c.text || c.label || String(c)) : String(c)
+      );
+    };
+
+    const savedStateStr = localStorage.getItem(STORAGE_KEY);
+    if (savedStateStr) {
+      const saved = JSON.parse(savedStateStr);
+      setQuestions(saved.questions || []);
+      setActiveQuestion(saved.activeQuestion || null);
+      setInternalStage(saved.stage || 1);
+      setInternalScore(saved.score || 0);
+      setInternalLives(saved.lives ?? initialLives);
+      setStreak(saved.streak || 0);
+      setQuestionStartTime(saved.questionStartTime || Date.now());
+      if (saved.lives !== undefined && saved.lives <= 0) {
+        setIsGameOver(true);
+      }
+      return;
+    }
+
+    if (socketCtx?.status === 'connecting' || !socketCtx?.isSynced) {
+      return; // Wait until socket connects and syncs room state
+    }
+
+    if (socketCtx?.questions && socketCtx.questions.length > 0) {
+      const normalized = socketCtx.questions.map((q: any) => ({
+        ...q, choices: parseChoices(q.choices)
+      }));
+      const firstQ = normalized[0];
+      const now = Date.now();
+      
+      setQuestions(normalized);
+      setActiveQuestion(firstQ);
+      setQuestionStartTime(now);
+      syncToStorage({ questions: normalized, activeQuestion: firstQ, stage: 1, score: 0, lives: initialLives, streak: 0, questionStartTime: now });
+      
+    } else if (sessionId) {
+      // Fallback only if socket connected AND synced, but yielded no questions (e.g. Redis expired)
+      fetch(`/api/questions?sessionId=${sessionId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.length > 0) {
+            const fullyRandomized = data.sort(() => 0.5 - Math.random()).map((q: any) => {
+              const safeChoices = parseChoices(q.choices);
+              return { ...q, choices: safeChoices.length > 0 ? safeChoices.sort(() => 0.5 - Math.random()) : [] };
+            });
+            const firstQ = fullyRandomized[0];
+            const now = Date.now();
+            
+            setQuestions(fullyRandomized);
+            setActiveQuestion(firstQ);
+            setQuestionStartTime(now);
+            syncToStorage({ questions: fullyRandomized, activeQuestion: firstQ, stage: 1, score: 0, lives: initialLives, streak: 0, questionStartTime: now });
+          }
+        })
+        .catch(err => console.error("Failed to fetch questions:", err));
+    }
+  }, [sessionId, socketCtx?.questions, socketCtx?.status, socketCtx?.isSynced]);
+
+ const stagesUntilCheckpoint = CHECKPOINT_INTERVAL - (internalStage % CHECKPOINT_INTERVAL);
   const isSuddenDeath = internalStage % 5 === 0 && internalStage > 0;
-  const timerPenalty = Math.max(0, (internalStage - 1) * 5); // 5% per completed stage
+  const timerPenalty = Math.max(0, (internalStage - 1) * 0.5); // 0.5s penalty per stage
+
+ useEffect(() => {
+    if (!activeQuestion) return;
+    const newMaxTime = isSuddenDeath ? 3 : Math.max(5, 20 - timerPenalty);
+    setMaxTime(newMaxTime);
+    
+    // Critical Anti-Cheat: Subtract time they spent before refreshing
+    const elapsedSeconds = (Date.now() - questionStartTime) / 1000;
+    const remaining = Math.max(0, newMaxTime - elapsedSeconds);
+    
+    setTimeLeft(remaining);
+    setTimerPercent(newMaxTime > 0 ? (remaining / newMaxTime) * 100 : 0);
+  }, [internalStage, activeQuestion, isSuddenDeath, timerPenalty, questionStartTime]);
+
+  
+  useEffect(() => {
+    if (answered || showCheckpoint || internalLives <= 0 || alreadyPlayed || isGameOver || questions.length === 0) return;
+
+    const timer = setInterval(() => {
+      const elapsedSeconds = (Date.now() - questionStartTime) / 1000;
+      const remaining = Math.max(0, maxTime - elapsedSeconds);
+      
+      setTimeLeft(remaining);
+      
+      if (remaining <= 0) {
+        clearInterval(timer);
+      }
+    }, 100);
+
+    return () => clearInterval(timer);
+  }, [answered, showCheckpoint, internalLives, alreadyPlayed, isGameOver, questions.length, questionStartTime, maxTime]);
+
+  // Force Incorrect Answer on Timeout
+  useEffect(() => {
+    if (timeLeft <= 0 && !answered && !showCheckpoint && internalLives > 0 && !alreadyPlayed && questions.length > 0) {
+      handleSelect(-1, "TIMEOUT"); // -1 indicates timeout choice
+    }
+    if (maxTime > 0) {
+      setTimerPercent((timeLeft / maxTime) * 100);
+    }
+  }, [timeLeft, answered, maxTime, showCheckpoint, internalLives, alreadyPlayed, questions.length]);
 
   // Calculate combo multiplier
   const comboMultiplier = combo >= 6 ? 8 : combo >= 4 ? 4 : combo >= 2 ? 2 : 1;
   const multiplierColor = comboMultiplier === 8 ? 'text-[var(--gm-red)]' : comboMultiplier === 4 ? 'text-[var(--gm-coral)]' : comboMultiplier === 2 ? 'text-[var(--gm-yellow)]' : 'text-white/50';
 
-  const handleSelect = (i: number, choice: string) => {
+const handleSelect = (i: number, choice: string) => {
     if (answered) return;
     setSelected(i);
     setAnswered(true);
 
-    const isCorrect = choice === (currentQuestion?.answer || '');
+    // If choice is "TIMEOUT", it automatically fails. Otherwise, check normally.
+    const isCorrect = choice !== "TIMEOUT" && choice === (activeQuestion?.answer || '');
     const answerTime = Date.now() - questionStartTime;
 
+ let newScore = internalScore;
+    let newLives = internalLives;
+    let newStreak = streak;
+
     if (isCorrect) {
-      // Fast answer combo check (< 2s)
       if (answerTime < 2000) {
         setCombo(prev => prev + 1);
         setComboPop(true);
@@ -122,26 +240,45 @@ export function StudentEndlessMode({
       } else {
         setCombo(0);
       }
-
-      setInternalScore(prev => prev + (100 * comboMultiplier));
+      newScore += (100 * comboMultiplier);
+      setInternalScore(newScore);
       
-      const newStreak = streak + 1;
+      newStreak += 1;
       setStreak(newStreak);
       if (newStreak === 5) {
         setShowStreakCard(true);
       }
     } else {
       setCombo(0);
-      setStreak(0);
-      setInternalLives(prev => Math.max(0, prev - 1));
+      newStreak = 0;
+      setStreak(newStreak);
+      newLives = Math.max(0, internalLives - 1);
+      setInternalLives(newLives);
     }
 
-    if (socketCtx?.send) {
+    syncToStorage({ score: newScore, lives: newLives, streak: newStreak });
+
+    if (socketCtx?.send && socketCtx.userId) {
+      const currentCorrectAnswers = internalStage - (initialLives - newLives);
+      const calculatedAccuracy = internalStage > 0 
+        ? Math.round((currentCorrectAnswers / internalStage) * 100) 
+        : 0;
+
       socketCtx.send({
         type: 'SUBMIT_SCORE',
-        score: isCorrect ? internalScore + (100 * comboMultiplier) : internalScore,
-        correct: isCorrect,
-        stage: internalStage,
+        battleId: sessionId, 
+        playerData: {
+          id: socketCtx.userId,
+          userId: socketCtx.userId,
+          name: socketCtx.userName || 'Student',
+          initials: socketCtx.userName?.substring(0, 2).toUpperCase() || 'ST',
+          score: newScore, 
+          correctAnswers: currentCorrectAnswers,
+          totalQuestions: internalStage,
+          accuracy: calculatedAccuracy,
+          color: '#5B3DF6',
+          isActive: true
+        }
       });
     }
 
@@ -159,11 +296,26 @@ export function StudentEndlessMode({
     }, 1200);
   };
 
-  const advanceStage = (next: number) => {
+const advanceStage = (next: number) => {
     setInternalStage(next);
     setSelected(null);
     setAnswered(false);
     setShowCheckpoint(false);
+    
+    const now = Date.now();
+    setQuestionStartTime(now);
+
+    if (questions.length > 0) {
+      const nextQIndex = (next - 1) % questions.length;
+      const nextQ = questions[nextQIndex];
+      setActiveQuestion(nextQ);
+      
+      syncToStorage({ 
+        stage: next, 
+        activeQuestion: nextQ, 
+        questionStartTime: now 
+      });
+    }
   };
 
   const handleCheckpointContinue = (selectedPowerup?: string) => {
@@ -198,7 +350,10 @@ export function StudentEndlessMode({
           <h2 className="font-[Fredoka] text-3xl font-bold mb-4">Quiz Completed</h2>
           <p className="text-white/70 mb-8">You have already completed this Endless Mode quiz. You cannot take it again!</p>
           <button 
-            onClick={() => window.location.href = '/'}
+            onClick={() => {
+              localStorage.removeItem('active_battle_session');
+              window.location.href = '/';
+            }}
             className="w-full bg-[var(--gm-indigo)] py-4 rounded-xl font-bold font-[Fredoka] text-lg uppercase tracking-wide hover:opacity-90 active:scale-95 transition-all"
           >
             Return to Dashboard
@@ -207,20 +362,39 @@ export function StudentEndlessMode({
       </div>
     );
   }
-
   const handleGameOver = async () => {
-    // API call logic from previous attempt
     try {
+      const currentCorrectAnswers = Math.max(0, internalStage - initialLives);
+      
+      if (socketCtx?.send && socketCtx.userId) {
+        socketCtx.send({
+          type: 'SUBMIT_SCORE',
+          battleId: sessionId, 
+          playerData: {
+            id: socketCtx.userId,
+            userId: socketCtx.userId,
+            name: socketCtx.userName || 'Student',
+            initials: socketCtx.userName?.substring(0, 2).toUpperCase() || 'ST',
+            score: internalScore, 
+            correctAnswers: currentCorrectAnswers,
+            totalQuestions: internalStage,
+            accuracy: internalStage > 0 ? Math.round((currentCorrectAnswers / internalStage) * 100) : 0,
+            color: '#5B3DF6',
+            isActive: false
+          }
+        });
+      }
+
       await fetch('/api/quiz-results', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId,
-          userId: socketCtx?.userId,
+          session_id: sessionId,
+          user_id: socketCtx?.userId,
           score: internalScore,
-          correctAnswers: Math.max(0, internalStage - 1),
-          totalQuestions: internalStage - 1 + (3 - internalLives),
-          accuracy: internalStage > 1 ? Math.round(((internalStage - 1) / ((internalStage - 1) + 3)) * 100) : 0,
+          correct_answers: currentCorrectAnswers,
+          total_questions: internalStage,
+          accuracy: internalStage > 0 ? Math.round((currentCorrectAnswers / internalStage) * 100) : 0,
         })
       });
     } catch (err) {
@@ -229,11 +403,14 @@ export function StudentEndlessMode({
   };
 
   if (internalLives <= 0) {
-    if (!alreadyPlayed) {
+    if (!isGameOver) {
       handleGameOver();
-      setAlreadyPlayed(true); // Prevent multi-calls
+      setIsGameOver(true); // Prevent multi-calls
+      syncToStorage({ lives: 0 }); // ensure storage knows game is over
     }
+  }
 
+  if (isGameOver) {
     return (
       <div className="min-h-screen bg-[var(--gm-navy)] flex flex-col items-center justify-center font-[Manrope] text-white p-4 text-center">
         <div className="bg-[var(--gm-red)]/10 border-2 border-[var(--gm-red)]/30 rounded-2xl p-8 max-w-md">
@@ -241,7 +418,10 @@ export function StudentEndlessMode({
           <p className="text-[var(--gm-yellow)] text-xl font-bold mb-2">Stage Reached: {internalStage}</p>
           <p className="text-white/70 mb-8">Score: {internalScore}</p>
           <button 
-            onClick={() => window.location.href = '/'}
+            onClick={() => {
+              localStorage.removeItem('active_battle_session');
+              window.location.href = '/';
+            }}
             className="w-full bg-[var(--gm-indigo)] py-4 rounded-xl font-bold font-[Fredoka] text-lg uppercase tracking-wide hover:opacity-90 active:scale-95 transition-all"
           >
             Return to Dashboard
@@ -264,11 +444,21 @@ export function StudentEndlessMode({
     );
   }
 
-  if (socketCtx?.countdown !== null && !socketCtx?.battleStarted) {
-    return <CountdownDisplay countdown={socketCtx?.countdown!} />;
+if (socketCtx?.countdown !== null && !socketCtx?.battleStarted) {
+    return <CountdownDisplay count={socketCtx.countdown} />;
   }
 
-  const choices = currentQuestion?.options || currentQuestion?.choices || [];
+ if (questions.length === 0 || !activeQuestion) {
+    return (
+      <div className="min-h-screen bg-[var(--gm-navy)] flex flex-col items-center justify-center font-[Manrope] text-white p-4 text-center">
+        <div className="w-12 h-12 border-4 border-white/10 border-t-[var(--gm-yellow)] rounded-full animate-spin mb-4" />
+        <h2 className="font-[Fredoka] text-2xl font-bold text-[var(--gm-yellow)] animate-pulse">Initializing Endless Protocol...</h2>
+        <p className="text-white/50 text-sm mt-2">Loading Professor's Question Bank</p>
+      </div>
+    );
+  }
+
+  const choices = activeQuestion?.options || activeQuestion?.choices || [];
 
   return (
     <div className="min-h-screen bg-[var(--gm-navy)] flex flex-col font-[Manrope] text-white">
@@ -368,8 +558,8 @@ export function StudentEndlessMode({
             style={{ width: isSuddenDeath ? '100%' : `${timerPercent}%` }}
           />
         </div>
-        <span className="font-[Fredoka] text-[13px] font-bold text-[var(--gm-yellow)] min-w-[30px] text-right">
-          {isSuddenDeath ? '3s' : '22s'}
+    <span className="font-[Fredoka] text-[13px] font-bold text-[var(--gm-yellow)] min-w-[35px] text-right">
+          {Math.ceil(timeLeft)}s
         </span>
       </div>
 
@@ -383,18 +573,23 @@ export function StudentEndlessMode({
               </span>
             </div>
           )}
-          <p className={cn(
+       <p className={cn(
             "text-[17px] font-bold leading-relaxed m-0 transition-opacity duration-700",
             timerPercent < 30 ? "opacity-30" : "opacity-100"
           )}>
-            {currentQuestion?.text}
+            {activeQuestion?.text}
           </p>
         </div>
 
         {/* Answer choices */}
-        <div className="grid grid-cols-2 gap-2.5 flex-1 content-start">
-          {choices.map((choice: string, i: number) => {
-            const isCorrect = choice === (currentQuestion?.answer || '');
+       <div className="grid grid-cols-2 gap-2.5 flex-1 content-start">
+          {choices.map((rawChoice: any, i: number) => {
+            
+            const choiceText = typeof rawChoice === 'object' && rawChoice !== null 
+              ? (rawChoice.text || rawChoice.label || String(rawChoice)) 
+              : String(rawChoice);
+              
+            const isCorrect = choiceText === (activeQuestion?.answer || '');
             const isSelected = selected === i;
             const theme = OPTION_COLORS[i % OPTION_COLORS.length];
             
@@ -412,9 +607,9 @@ export function StudentEndlessMode({
             }
 
             return (
-              <button
+             <button
                 key={i}
-                onClick={() => handleSelect(i, choice)}
+                onClick={() => handleSelect(i, choiceText)}
                 disabled={answered}
                 className={cn(
                   "bg-white/[0.03] border-2 border-white/[0.08] rounded-2xl p-4 px-5 text-left flex items-center gap-4 transition-all duration-200",
@@ -428,18 +623,37 @@ export function StudentEndlessMode({
                   "w-8 h-8 rounded-lg flex items-center justify-center font-[Fredoka] text-[13px] font-bold shrink-0 transition-colors",
                   isSelected ? "bg-black/20 text-white" : `${theme.light} ${theme.text}`
                 )}>
-                  {['A', 'B', 'C', 'D'][i]}
+                  {String.fromCharCode(65 + i)}
                 </div>
                 <span className={cn(
                   "text-sm font-semibold transition-colors",
                   answered && isCorrect ? "text-[var(--gm-green)]" : (isSelected ? "text-white" : "text-white/90")
                 )}>
-                  {choice}
+                  {choiceText}
                 </span>
               </button>
             );
           })}
         </div>
+
+        {/* Explicit Correct Answer Feedback */}
+        {answered && selected !== null && (() => {
+          const rawSelected = choices[selected];
+          const selectedText = typeof rawSelected === 'object' && rawSelected !== null ? (rawSelected.text || rawSelected.label || String(rawSelected)) : String(rawSelected);
+          const isWrong = selectedText !== activeQuestion?.answer;
+          
+          if (isWrong) {
+            return (
+              <div className="bg-[var(--gm-red)]/10 border border-[var(--gm-red)]/30 rounded-xl p-3 text-center animate-in fade-in slide-in-from-bottom-2">
+                <span className="text-[var(--gm-red)] font-bold text-sm">Incorrect!</span>
+                <span className="text-white/80 text-sm ml-2">
+                  The correct answer was: <strong className="text-white">{activeQuestion?.answer}</strong>
+                </span>
+              </div>
+            );
+          }
+          return null;
+        })()}
 
         {/* Power-up slots */}
         <div className="flex items-center justify-center gap-3 py-2 mt-auto">

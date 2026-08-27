@@ -94,8 +94,7 @@ useEffect(() => {
             .select('status')
             .eq('id', parsed.sid)
             .maybeSingle();
-          
-          if (data?.status === 'ACTIVE') {
+          if (data?.status?.toUpperCase() === 'ACTIVE') {
             enterBattle(parsed.code, parsed.sid, parsed.mode);
           } else {
             localStorage.removeItem(STORAGE_KEY);

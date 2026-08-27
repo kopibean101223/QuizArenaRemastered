@@ -152,7 +152,7 @@ class LiveBattleHandler {
         JSON.stringify({
           type: 'ROOM_STATE_SYNC',
           battleId,
-          currentIndex: parseInt(roomState.currentIndex || '0', 10),
+          currentIndex: parseInt(roomState.currentIndex || roomState.questionIndex || '0', 10),
           startedAt: parseInt(roomState.startedAt || String(Date.now()), 10),
           timeLimit: parseInt(roomState.timeLimit || '60', 10),
           status: roomState.status || 'waiting',
@@ -163,10 +163,11 @@ class LiveBattleHandler {
           classHp: roomState.classHp ? parseInt(roomState.classHp, 10) : undefined,
           bossEnergy: roomState.bossEnergy ? parseInt(roomState.bossEnergy, 10) : undefined,
           mode: roomState.mode || 'LIVE',
+          customQuestion: roomState.customQuestion ? JSON.parse(roomState.customQuestion) : undefined,
         })
       );
 
-      console.log(`[LiveBattle] Sent ROOM_STATE_SYNC for ${battleId} at question index ${roomState.currentIndex}, mode: ${roomState.mode}`);
+      console.log(`[LiveBattle] Sent ROOM_STATE_SYNC for ${battleId} at question index ${roomState.currentIndex || roomState.questionIndex}, mode: ${roomState.mode}`);
       return;
     }
 
@@ -251,10 +252,31 @@ class LiveBattleHandler {
         );
       } else {
         const nextIndex = await redisPublisher.hincrby(sKey, 'currentIndex', 1);
-        await redisPublisher.hset(sKey, {
+        const updateData: Record<string, string> = {
           startedAt: String(startedAt),
           timeLimit: String(newLimit),
-        });
+        };
+        if (payload.customQuestion) {
+          updateData.customQuestion = JSON.stringify(payload.customQuestion);
+          
+          // Remove the dragged question from the Redis bank so it doesn't reappear on refresh
+          const qKey = `battle:${battleId}:questions`;
+          const rawBank = await redisPublisher.get(qKey);
+          if (rawBank) {
+            let bank = JSON.parse(rawBank);
+            const customQ = payload.customQuestion as any;
+            bank = bank.filter((q: any) => {
+              const qText = q.text || q.question;
+              const customText = customQ.text || customQ.question;
+              return qText !== customText;
+            });
+            await redisPublisher.set(qKey, JSON.stringify(bank));
+            await redisPublisher.expire(qKey, ACTIVE_ROOM_TTL_SECONDS);
+          }
+        } else {
+          updateData.customQuestion = ""; // clear it if not provided
+        }
+        await redisPublisher.hset(sKey, updateData);
         await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
         await redisPublisher.publish(
           channel,

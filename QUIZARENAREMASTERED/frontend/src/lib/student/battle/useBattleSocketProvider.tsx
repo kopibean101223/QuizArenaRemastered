@@ -67,6 +67,10 @@ export interface LeaderboardPlayer {
   streak: number;
   isMe: boolean;
   isLeader: boolean;
+  correctAnswers?: number;
+  totalQuestions?: number;
+  accuracy?: number;
+  isActive?: boolean;
 }
 
 export interface BattleChatMessage {
@@ -98,6 +102,8 @@ interface BattleSocketValue {
   // Escape hatches for screen-specific state that the provider doesn't
   // need to know the meaning of, but callers may want to react to.
   lastMessage: any;
+  userName?: string;
+  isSynced: boolean;
 }
 
 const BattleSocketContext = createContext<BattleSocketValue | null>(null);
@@ -144,6 +150,7 @@ export function BattleSocketProvider({
   const [leaderboard, setLeaderboard] = useState<LeaderboardPlayer[]>([]);
   const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
   const [lastMessage, setLastMessage] = useState<any>(null);
+  const [isSynced, setIsSynced] = useState(false);
 
   const resolvedName = userName || 'Unknown Student';
   
@@ -292,6 +299,10 @@ export function BattleSocketProvider({
         setBattleStarted(true);
       }
 
+      if (data.type === 'ROOM_STATE_SYNC' || data.type === 'ROYALE_STATE_SYNC' || data.type === 'TEAM_STATE_SYNC') {
+        setIsSynced(true);
+      }
+
       if (data.type === 'PLAYER_JOINED' || (data.type === 'BATTLE_ACTION' && data.isJoinEvent)) {
         setPlayers((prev) => {
           if (prev.some((p) => p.id === data.userId || p.name === data.sender)) return prev;
@@ -337,6 +348,10 @@ export function BattleSocketProvider({
             streak: item.streak || 0,
             isMe: (item.id || item.userId) === resolvedUserId,
             isLeader: idx === 0,
+            correctAnswers: item.correctAnswers,
+            totalQuestions: item.totalQuestions,
+            accuracy: item.accuracy,
+            isActive: item.isActive,
           }));
           setLeaderboard(formatted);
         }
@@ -414,6 +429,7 @@ export function BattleSocketProvider({
         status,
         send,
         userId: resolvedUserId,
+        userName: resolvedName,
         players,
         countdown,
         battleStarted,
@@ -424,6 +440,7 @@ export function BattleSocketProvider({
         leaderboard,
         chatMessages,
         lastMessage,
+        isSynced,
       }}
     >
       {children}

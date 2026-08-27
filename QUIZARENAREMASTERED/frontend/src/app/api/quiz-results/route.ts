@@ -18,14 +18,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Missing session_id or user_id" }, { status: 400 });
     }
 
-    const { data, error } = await supabaseAdmin.from('quiz_results').insert([{
+    const { data, error } = await supabaseAdmin.from('quiz_results').upsert([{
       session_id: body.session_id,
       user_id: body.user_id,
       score: body.score || 0,
       correct_answers: body.correct_answers || 0,
       total_questions: body.total_questions || 0,
       accuracy: body.accuracy || 0,
-    }]);
+    }], { onConflict: 'session_id,user_id' });
 
     if (error) {
       console.error("Supabase API Insert Error:", error);

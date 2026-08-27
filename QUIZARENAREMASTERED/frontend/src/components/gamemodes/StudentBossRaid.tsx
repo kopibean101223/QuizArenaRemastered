@@ -18,7 +18,7 @@ const POWER_UP_SLOTS = [
 
 interface StudentBossRaidProps {
   battleId?: string;
-  currentQuestion?: { text?: string; question?: string; choices?: string[]; options?: string[]; answer?: string; } | any | null;
+  activeQuestion?: { text?: string; question?: string; choices?: string[]; options?: string[]; answer?: string; } | any | null;
   bossHealth?: number;
   bossMaxHealth?: number;
   activeStudentsCount?: number;
@@ -28,16 +28,15 @@ interface StudentBossRaidProps {
   lastMessage?: any;
 }
 
-const DEFAULT_BOSS_QUESTION = {
-  text: 'Which organelle is responsible for photosynthesis in plant cells?',
-  choices: ['Mitochondria', 'Chloroplast', 'Ribosome', 'Golgi apparatus'],
-  answer: 'Chloroplast',
-};
 
-export function StudentBossRaid({ battleId, currentQuestion = DEFAULT_BOSS_QUESTION, bossHealth = 1000, bossMaxHealth = 1000, activeStudentsCount = 1, bossCardEffect = null, totalQuestions = 10, onAnswer, lastMessage: propLastMessage }: StudentBossRaidProps) {
+
+export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth = 1000, bossMaxHealth = 1000, activeStudentsCount = 1, bossCardEffect = null, totalQuestions = 10, onAnswer, lastMessage: propLastMessage }: StudentBossRaidProps) {
   const socketCtx = useBattleSocketContext();
   const send = socketCtx?.send;
   const lastMessage = propLastMessage || socketCtx?.lastMessage;
+  
+  // Use currentQuestion from props if available, otherwise get it from socketCtx
+  const activeQuestion = currentQuestion || (socketCtx?.questions && socketCtx.questions[socketCtx.currentIndex]) || null;
 
   const [selected, setSelected] = useState<number | null>(null);
   const [answered, setAnswered] = useState(false);
@@ -45,6 +44,16 @@ export function StudentBossRaid({ battleId, currentQuestion = DEFAULT_BOSS_QUEST
   
   // Timer State
   const [timeLeft, setTimeLeft] = useState(30);
+
+  useEffect(() => {
+    if (socketCtx?.startedAt) {
+      const limit = socketCtx.lastMessage?.timeLimit || 30;
+      const elapsed = Math.floor((Date.now() - socketCtx.startedAt) / 1000);
+      setTimeLeft(Math.max(0, limit - elapsed));
+    } else {
+      setTimeLeft(30);
+    }
+  }, [socketCtx?.startedAt, socketCtx?.lastMessage?.timeLimit, activeQuestion]);
 
   // Stagger Meter
   const [staggerProgress, setStaggerProgress] = useState(0); // 0 to 3
@@ -149,15 +158,14 @@ export function StudentBossRaid({ battleId, currentQuestion = DEFAULT_BOSS_QUEST
     setSelected(null);
     setAnswered(false);
     setIsCorrect(null);
-    setTimeLeft(30); // Reset timer for new question
-  }, [currentQuestion]);
+  }, [activeQuestion]);
 
   const handleSelect = (i: number, choice: string) => {
     if (answered) return;
     setSelected(i);
     setAnswered(true);
     
-    const correctAnswer = currentQuestion?.answer || currentQuestion?.options?.[0] || currentQuestion?.choices?.[0];
+    const correctAnswer = activeQuestion?.answer || activeQuestion?.options?.[0] || activeQuestion?.choices?.[0];
     const correct = choice === correctAnswer;
     setIsCorrect(correct);
     
@@ -303,7 +311,7 @@ export function StudentBossRaid({ battleId, currentQuestion = DEFAULT_BOSS_QUEST
     let circleClasses = "w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm shrink-0 bg-white/10 text-white transition-colors duration-200";
     
     if (answered) {
-      const isCorrectChoice = choice === (currentQuestion?.answer || currentQuestion?.options?.[0] || currentQuestion?.choices?.[0]);
+      const isCorrectChoice = choice === (activeQuestion?.answer || activeQuestion?.options?.[0] || activeQuestion?.choices?.[0]);
 
       // Base for answered
       classes = "w-full text-left rounded-2xl p-4 flex items-center gap-4 font-[Manrope] font-bold text-base cursor-default transition-all duration-200";
@@ -329,7 +337,7 @@ export function StudentBossRaid({ battleId, currentQuestion = DEFAULT_BOSS_QUEST
     return { classes, circleClasses };
   };
 
-  const options = currentQuestion?.options || currentQuestion?.choices || [];
+  const options = activeQuestion?.options || activeQuestion?.choices || [];
 
   if (isQuarantined) {
     return (
@@ -466,14 +474,14 @@ export function StudentBossRaid({ battleId, currentQuestion = DEFAULT_BOSS_QUEST
 
       {/* ── Question + Choices Area ─────────────────────────────────── */}
       <div className="flex-1 flex flex-col p-5 pb-4 gap-4 relative z-10">
-        {currentQuestion ? (
+        {activeQuestion ? (
           <>
            
 
             {/* Question text */}
             <div className="bg-white/[0.03] border border-white/[0.08] rounded-2xl p-5 text-center backdrop-blur-sm">
               <p className="text-[17px] font-bold leading-relaxed m-0">
-                {currentQuestion.text || currentQuestion.question || "Unknown Question"}
+                {activeQuestion.text || activeQuestion.question || "Unknown Question"}
               </p>
             </div>
 
@@ -545,3 +553,5 @@ export function StudentBossRaid({ battleId, currentQuestion = DEFAULT_BOSS_QUEST
     </div>
   );
 }
+
+
