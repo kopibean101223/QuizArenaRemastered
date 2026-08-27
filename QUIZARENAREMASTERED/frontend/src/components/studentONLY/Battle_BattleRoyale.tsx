@@ -160,8 +160,6 @@ useEffect(() => {
 
     if (data.type === 'ROYALE_MATCH_ENDED') {
       if (Array.isArray(data.players)) applyPlayers(data.players);
-      localStorage.removeItem('active_battle_session');
-      navigate('results');
     }
 
     // Global chat — CHAT_MESSAGE is relayed to everyone in the room.

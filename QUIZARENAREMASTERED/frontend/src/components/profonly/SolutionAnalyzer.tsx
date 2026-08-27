@@ -14,7 +14,7 @@ export function SolutionAnalyzer() {
 
   const renderActiveMode = () => {
     switch (activeMode) {
-      case "prof_endless": return <ProfEndlessMode />;
+      case "prof_endless": return <ProfEndlessMode session={{ status: 'COMPLETED', id: 'mock-session-id' }} />;
       case "prof_normal": return <ProfBossRaid />;
       case "prof_bingo": return <ProfBingoMode />;
       case "prof_chaos": return <ProfChaosClash />;

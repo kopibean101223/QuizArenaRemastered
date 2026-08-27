@@ -138,8 +138,6 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
     }
 
     if (data.type === 'TEAM_BATTLE_COMPLETED') {
-      localStorage.removeItem('active_battle_session');
-      navigate('results');
     }
 
     // Teammate-only chat — the server only forwards this to sockets on the

@@ -23,6 +23,7 @@ import { Lobby_LiveQuiz } from "./Lobby/Lobby_LiveQuiz";
 import { Lobby_TeamMode } from "./Lobby/Lobby_TeamMode";
 import { Lobby_BattleRoyale } from "./Lobby/Lobby_BattleRoyale";
 import { Lobby_OwnPaced } from "./Lobby/Lobby_OwnPaced";
+import { StudentEndlessMode } from "../gamemodes/StudentEndlessMode";
 
 import { BattleSocketProvider } from "@/lib/student/battle/useBattleSocketProvider";
 
@@ -37,14 +38,13 @@ const C = {
   muted: "rgba(255,255,255,0.5)",
 };
 
-type ResolvedMode = "LIVE" | "TEAM" | "ROYALE" | "SELF_PACED" | "BOSSRAID";
-
+type ResolvedMode = "LIVE" | "TEAM" | "ROYALE" | "SELF_PACED" | "ENDLESS";
 function normalizeMode(mode: string | null | undefined): ResolvedMode {
   const m = (mode || "").toUpperCase();
   if (m === "TEAM") return "TEAM";
   if (m === "ROYALE") return "ROYALE";
   if (m === "SELF_PACED" || m === "SELFPACED") return "SELF_PACED";
-  if (m === "BOSSRAID") return "BOSSRAID";
+  if (m === "ENDLESS") return "ENDLESS";
   return "LIVE";
 }
 
@@ -178,7 +178,14 @@ useEffect(() => {
     }
   }
 
-  function handleJoinLiveSession(session: LiveSessionInfo) {
+  async function handleJoinLiveSession(session: LiveSessionInfo) {
+    setJoining(true);
+    const res = await resolveRoomCode(supabase, session.room_code);
+    setJoining(false);
+    if (!res.ok || !res.sessionId) {
+      toast.error(res.message);
+      return;
+    }
     enterBattle(session.room_code, session.id, session.mode); // session.id, not section_id
   }
 
@@ -243,9 +250,19 @@ if (hasJoined && sessionId) {
           <Lobby_BattleRoyale sessionId={sessionId} roomCode={roomCode} />
         </BattleSocketProvider>
       );
+    case "ENDLESS":
+      return (
+        <BattleSocketProvider
+          sessionId={sessionId}
+          userId={user?.id}
+          userName={resolvedUserName}
+          mode="ENDLESS"
+        >
+          <StudentEndlessMode sessionId={sessionId} />
+        </BattleSocketProvider>
+      );
     case "SELF_PACED":
       return <Lobby_OwnPaced sessionId={sessionId} roomCode={roomCode} />;
-    case "BOSSRAID":
     case "LIVE":
     default:
       return (
@@ -253,7 +270,7 @@ if (hasJoined && sessionId) {
           sessionId={sessionId}
           userId={user?.id}
           userName={resolvedUserName}
-          mode={mode === "BOSSRAID" ? "BOSSRAID" : "LIVE"}
+          mode="LIVE"
         >
           <Lobby_LiveQuiz sessionId={sessionId} roomCode={roomCode} />
         </BattleSocketProvider>

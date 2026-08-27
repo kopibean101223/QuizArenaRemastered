@@ -3,8 +3,8 @@ import Redis from 'ioredis';
 import { finalizeAndSaveBattle, PlayerResult } from '../src/lib/student/battle/battleSync';
 import roomPresenceHandler from './RoomPresence';
 
-const COMPLETED_ROOM_TTL_SECONDS = 3600;
-const ACTIVE_ROOM_TTL_SECONDS = 4 * 60 * 60;
+const COMPLETED_ROOM_TTL_SECONDS = 7 * 24 * 3600;
+const ACTIVE_ROOM_TTL_SECONDS = 7 * 24 * 3600;
 
 function roomChannel(battleId: string): string {
   return `battle:${battleId}`;

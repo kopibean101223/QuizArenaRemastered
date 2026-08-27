@@ -136,7 +136,7 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
   useEffect(() => {
     const interval = setInterval(() => {
       setEnergy(prev => {
-        const next = prev + 0.5;
+        const next = prev + 5;
         if (next >= 100) {
           setUltimateReady(true);
           return 100;

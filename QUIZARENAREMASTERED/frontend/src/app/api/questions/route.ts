@@ -6,7 +6,7 @@ const globalForPrisma = global as unknown as { prisma: PrismaClient };
 const prisma = globalForPrisma.prisma || new PrismaClient();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const supabase = await createServerSupabaseClient();
     const { data: { user }, error } = await supabase.auth.getUser();
@@ -15,11 +15,25 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized user" }, { status: 401 });
     }
 
-    // Filter questions by status AND the current professor's user ID
+    const { searchParams } = new URL(req.url);
+    const professorId = searchParams.get('professor_id');
+    const sessionId = searchParams.get('sessionId');
+
+    let targetUserId = user.id;
+
+    if (sessionId) {
+      const { data: session } = await supabase.from('quiz_sessions').select('professor_id').eq('id', sessionId).single();
+      if (session && session.professor_id) {
+        targetUserId = session.professor_id;
+      }
+    } else if (professorId) {
+      targetUserId = professorId;
+    }
+
+    // Filter questions by the target user ID
     const questions = await prisma.generatedQuestion.findMany({
       where: { 
-        status: "APPROVED",
-        userId: user.id // Scope questions only to this specific professor
+        userId: targetUserId // Scope questions to the target professor
       },
       orderBy: { createdAt: "desc" },
     });

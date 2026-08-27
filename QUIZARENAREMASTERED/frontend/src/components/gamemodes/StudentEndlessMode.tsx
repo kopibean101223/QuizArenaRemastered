@@ -2,9 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { CheckpointCard } from './CheckpointCard';
-import { Zap, Heart, Flag } from 'lucide-react';
+import { Zap, Heart, Flag, Skull } from 'lucide-react';
 import { cn } from '@/components/ui/utils';
 import { StreakRewardCard } from './StreakRewardCard';
+import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProvider';
+import { CountdownDisplay } from '../CountdownDisplay';
 
 const OPTION_COLORS = [
   { base: 'bg-[var(--gm-indigo)]', border: 'border-[var(--gm-indigo)]', light: 'bg-[var(--gm-indigo)]/20', text: 'text-[var(--gm-indigo)]', glow: 'shadow-[0_8px_24px_rgba(91,61,246,0.5)]' },
@@ -29,6 +31,7 @@ interface StudentEndlessModeProps {
   onAnswer?: (choice: string) => void;
   showCheckpoint?: boolean;
   onContinueCheckpoint?: (selectedPowerup?: string) => void;
+  sessionId?: string;
 }
 
 const DEFAULT_QUESTION = {
@@ -44,8 +47,10 @@ export function StudentEndlessMode({
   currentQuestion = DEFAULT_QUESTION,
   onAnswer,
   showCheckpoint: initialShowCheckpoint = false,
-  onContinueCheckpoint
+  onContinueCheckpoint,
+  sessionId
 }: StudentEndlessModeProps) {
+  const socketCtx = useBattleSocketContext();
   // Local state for demonstration of mechanics, normally passed down or hoisted
   const [selected, setSelected] = useState<number | null>(null);
   const [answered, setAnswered] = useState(false);
@@ -57,6 +62,28 @@ export function StudentEndlessMode({
   // Gameplay Mechanics State
   const [combo, setCombo] = useState(0);
   const [comboPop, setComboPop] = useState(false);
+  const [alreadyPlayed, setAlreadyPlayed] = useState(false);
+
+  useEffect(() => {
+    if (sessionId && socketCtx?.userId) {
+      import('@/lib/supabase/client').then(({ createBrowserSupabaseClient }) => {
+        const supabase = createBrowserSupabaseClient();
+        supabase.from('quiz_results')
+          .select('id')
+          .eq('session_id', sessionId)
+          .eq('user_id', socketCtx.userId)
+          .maybeSingle()
+          .then(({ data }) => {
+            if (data) setAlreadyPlayed(true);
+          });
+      });
+    }
+  }, [sessionId, socketCtx?.userId]);
+
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(!!sessionId);
+  const [activeQuestion, setActiveQuestion] = useState(initialQuestion);
+
   const [questionStartTime, setQuestionStartTime] = useState(Date.now());
   const [timerPercent, setTimerPercent] = useState(75);
   const [streak, setStreak] = useState(0);
@@ -109,6 +136,15 @@ export function StudentEndlessMode({
       setInternalLives(prev => Math.max(0, prev - 1));
     }
 
+    if (socketCtx?.send) {
+      socketCtx.send({
+        type: 'SUBMIT_SCORE',
+        score: isCorrect ? internalScore + (100 * comboMultiplier) : internalScore,
+        correct: isCorrect,
+        stage: internalStage,
+      });
+    }
+
     if (onAnswer) {
       onAnswer(choice);
     }
@@ -155,6 +191,66 @@ export function StudentEndlessMode({
     }, 3000);
   };
 
+  if (alreadyPlayed) {
+    return (
+      <div className="min-h-screen bg-[var(--gm-navy)] flex flex-col items-center justify-center font-[Manrope] text-white p-4 text-center">
+        <div className="bg-[var(--gm-red)]/10 border-2 border-[var(--gm-red)]/30 rounded-2xl p-8 max-w-md">
+          <h2 className="font-[Fredoka] text-3xl font-bold mb-4">Quiz Completed</h2>
+          <p className="text-white/70 mb-8">You have already completed this Endless Mode quiz. You cannot take it again!</p>
+          <button 
+            onClick={() => window.location.href = '/'}
+            className="w-full bg-[var(--gm-indigo)] py-4 rounded-xl font-bold font-[Fredoka] text-lg uppercase tracking-wide hover:opacity-90 active:scale-95 transition-all"
+          >
+            Return to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const handleGameOver = async () => {
+    // API call logic from previous attempt
+    try {
+      await fetch('/api/quiz-results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          userId: socketCtx?.userId,
+          score: internalScore,
+          correctAnswers: Math.max(0, internalStage - 1),
+          totalQuestions: internalStage - 1 + (3 - internalLives),
+          accuracy: internalStage > 1 ? Math.round(((internalStage - 1) / ((internalStage - 1) + 3)) * 100) : 0,
+        })
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  if (internalLives <= 0) {
+    if (!alreadyPlayed) {
+      handleGameOver();
+      setAlreadyPlayed(true); // Prevent multi-calls
+    }
+
+    return (
+      <div className="min-h-screen bg-[var(--gm-navy)] flex flex-col items-center justify-center font-[Manrope] text-white p-4 text-center">
+        <div className="bg-[var(--gm-red)]/10 border-2 border-[var(--gm-red)]/30 rounded-2xl p-8 max-w-md">
+          <h2 className="font-[Fredoka] text-3xl font-bold mb-4">Game Over</h2>
+          <p className="text-[var(--gm-yellow)] text-xl font-bold mb-2">Stage Reached: {internalStage}</p>
+          <p className="text-white/70 mb-8">Score: {internalScore}</p>
+          <button 
+            onClick={() => window.location.href = '/'}
+            className="w-full bg-[var(--gm-indigo)] py-4 rounded-xl font-bold font-[Fredoka] text-lg uppercase tracking-wide hover:opacity-90 active:scale-95 transition-all"
+          >
+            Return to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (showStreakCard) {
     return (
       <div className="min-h-screen bg-[var(--gm-navy)] flex flex-col font-[Manrope] text-white p-4">
@@ -166,6 +262,10 @@ export function StudentEndlessMode({
         />
       </div>
     );
+  }
+
+  if (socketCtx?.countdown !== null && !socketCtx?.battleStarted) {
+    return <CountdownDisplay countdown={socketCtx?.countdown!} />;
   }
 
   const choices = currentQuestion?.options || currentQuestion?.choices || [];

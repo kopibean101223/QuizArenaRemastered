@@ -80,6 +80,7 @@ interface BattleSocketValue {
   // Connection
   status: 'connecting' | 'open' | 'closed';
   send: (payload: object) => boolean;
+  userId: string;
 
   // Lobby-phase state
   players: LobbyPlayerT[];
@@ -109,7 +110,7 @@ export interface BattleSocketProviderProps {
    * Which mode-specific join message to send alongside the base
    * JOIN_BATTLE handshake. Defaults to 'LIVE' (no extra message).
    */
-  mode?: 'LIVE' | 'TEAM' | 'ROYALE';
+  mode?: 'LIVE' | 'TEAM' | 'ROYALE' | 'ENDLESS';
   /**
    * Extra fields merged into the mode-specific join payload — e.g. Team's
    * { teamId } on reconnect. Optional: the server already falls back to
@@ -144,6 +145,12 @@ export function BattleSocketProvider({
   const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
   const [lastMessage, setLastMessage] = useState<any>(null);
 
+  const resolvedName = userName || 'Unknown Student';
+  
+  // Use a ref or state for resolvedUserId so it's stable and accessible outside useEffect
+  const resolvedUserIdRef = useRef<string>(userId || `user_${Math.random()}`);
+  const resolvedUserId = userId || resolvedUserIdRef.current;
+
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
@@ -152,9 +159,6 @@ export function BattleSocketProvider({
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
     setStatus('connecting');
-
-    const resolvedName = userName || 'Unknown Student';
-    const resolvedUserId = userId || `user_${Math.random()}`;
 
     socket.onopen = () => {
       if (cancelled) {
@@ -322,7 +326,7 @@ export function BattleSocketProvider({
         if (data.startedAt) setStartedAt(data.startedAt);
       }
 
-      if (data.type === 'SCORE_UPDATED' || data.type === 'LEADERBOARD_UPDATE') {
+      if (data.type === 'SCORE_UPDATED' || data.type === 'LEADERBOARD_UPDATE' || data.type === 'ROOM_STATE_SYNC') {
         if (Array.isArray(data.leaderboard)) {
           const formatted: LeaderboardPlayer[] = data.leaderboard.map((item: any, idx: number) => ({
             id: item.id || item.userId,
@@ -409,6 +413,7 @@ export function BattleSocketProvider({
       value={{
         status,
         send,
+        userId: resolvedUserId,
         players,
         countdown,
         battleStarted,
