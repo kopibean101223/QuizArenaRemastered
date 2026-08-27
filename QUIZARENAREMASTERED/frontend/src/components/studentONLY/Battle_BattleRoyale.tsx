@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Skull, Heart, Zap, LogOut, ChevronRight } from 'lucide-react';
+import { Skull, Heart, Zap, ChevronRight } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
   formatBattleQuestions,
@@ -291,12 +291,6 @@ useEffect(() => {
           <div className="bg-[#FF4757]/15 border border-[#FF4757] px-3 py-1 rounded-full text-xs font-extrabold text-[#FF4757] flex items-center gap-1.5">
             <Skull size={14} /> {battleName.toUpperCase()}
           </div>
-          <button
-            onClick={onLeaveBattle}
-            className="bg-[#FF4757]/15 border-none text-[#FF4757] px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer flex items-center gap-1"
-          >
-            <LogOut size={13} /> Exit
-          </button>
         </div>
       </header>
 

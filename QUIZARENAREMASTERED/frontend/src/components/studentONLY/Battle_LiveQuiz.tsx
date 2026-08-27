@@ -242,7 +242,7 @@ export function LiveBattle({ battleId }: { battleId: string }) {
 
   return (
     <>
-      <StudentTopBar />
+      <StudentTopBar mode="Live Battle" />
       <style>{`
         @keyframes timerPulse   { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
         @keyframes rankPop      { 0%{transform:scale(0.9)} 60%{transform:scale(1.05)} 100%{transform:scale(1)} }

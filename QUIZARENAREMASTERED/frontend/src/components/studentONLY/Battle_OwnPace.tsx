@@ -334,7 +334,7 @@ export function SelfPacedBattle({ battleId = "room_101" }: { battleId?: string }
 
   return (
     <>
-      <StudentTopBar />
+      <StudentTopBar mode="Own Pace Battle" />
 
       <div
         style={{

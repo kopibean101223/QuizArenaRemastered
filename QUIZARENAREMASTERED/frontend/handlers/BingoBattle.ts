@@ -58,8 +58,21 @@ function shuffle<T>(items: T[]): T[] {
 }
 
 function createCard(): BingoCell[] {
-  const values = shuffle(Array.from({ length: 75 }, (_, index) => index + 1)).slice(0, BOARD_SIZE);
+  const columns = Array.from({ length: 5 }, (_, columnIndex) => {
+    const start = columnIndex * 15 + 1;
+    return shuffle(Array.from({ length: 15 }, (_, index) => start + index)).slice(0, 5);
+  });
+  const values = Array.from({ length: 5 }, (_, rowIndex) => columns.map((column) => column[rowIndex])).flat();
   return values.map((value) => ({ value, status: 'unanswered' }));
+}
+
+function hasValidColumnRanges(card: BingoCell[] | undefined): boolean {
+  if (!card || card.length !== BOARD_SIZE) return false;
+  return card.every((cell, index) => {
+    const column = index % 5;
+    const minimum = column * 15 + 1;
+    return cell.value >= minimum && cell.value <= minimum + 14;
+  });
 }
 
 function normalizeAnswer(value: unknown): string {
@@ -128,7 +141,7 @@ class BingoBattleHandler {
       phase: state.phase || 'rolling',
       phaseEndsAt: Number(state.phaseEndsAt || 0),
       serverTime: Date.now(),
-      phaseSeconds: Math.max(0, Math.ceil((Number(state.phaseEndsAt || 0) - Date.now()) / 1000)),
+      phaseSeconds: Number(state.phaseEndsAt || 0) > 0 ? Math.max(0, Math.ceil((Number(state.phaseEndsAt) - Date.now()) / 1000)) : 0,
       round: Number(state.round || 0),
       rolledNumber: state.rolledNumber ? Number(state.rolledNumber) : null,
       calledNumbers: JSON.parse(state.calledNumbers || '[]'),
@@ -234,7 +247,7 @@ class BingoBattleHandler {
         this.clientUserMap.set(ws, player.id);
         const existing = await redis.hget(pKey, player.id);
         const stored: BingoPlayerData = existing ? JSON.parse(existing) : { ...player, card: createCard(), wins: 0, stealBuffs: 0, retakeBuffs: 0, bingo: false };
-        if (!stored.card || stored.card.length !== BOARD_SIZE) stored.card = createCard();
+        if (!hasValidColumnRanges(stored.card)) stored.card = createCard();
         await redis.hset(pKey, player.id, JSON.stringify(stored));
       }
       if (!(await redis.hget(sKey, 'status'))) await redis.hset(sKey, { status: 'waiting', phase: 'rolling', round: '0', calledNumbers: '[]', eligiblePlayerIds: '[]' });
@@ -249,7 +262,7 @@ class BingoBattleHandler {
           phase: state.phase || 'rolling',
           phaseEndsAt: Number(state.phaseEndsAt || 0),
           serverTime: Date.now(),
-          phaseSeconds: Math.max(0, Math.ceil((Number(state.phaseEndsAt || 0) - Date.now()) / 1000)),
+          phaseSeconds: Number(state.phaseEndsAt || 0) > 0 ? Math.max(0, Math.ceil((Number(state.phaseEndsAt) - Date.now()) / 1000)) : 0,
           round: Number(state.round || 0),
           rolledNumber: state.rolledNumber ? Number(state.rolledNumber) : null,
           calledNumbers: JSON.parse(state.calledNumbers || '[]'),

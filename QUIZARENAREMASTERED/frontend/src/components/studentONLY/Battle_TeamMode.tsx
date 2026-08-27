@@ -255,7 +255,7 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
           <div className="size-7 bg-[#5B3DF6] rounded-lg flex items-center justify-center">
             <Zap size={16} fill="#FFF" color="transparent" />
           </div>
-          QuizArena - Team Mode
+          <span className="rounded-lg border border-[#5B3DF6]/60 bg-[#5B3DF6]/20 px-3 py-1 text-sm font-extrabold uppercase tracking-wider text-[#A98CFF] shadow-[0_0_18px_rgba(91,61,246,0.2)]">Team Battle</span>
         </div>
         <div className="flex items-center gap-4">
           <div className="w-40">

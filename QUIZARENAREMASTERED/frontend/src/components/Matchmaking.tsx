@@ -651,13 +651,14 @@ const handleRemoveGroup = (groupName: string) => {
               });
             } 
           } else if (data.type === 'BINGO_STATE_SYNC' && Array.isArray(data.players)) {
+            setIsSyncing(false);
             if (data.status === 'active') {
               setBattleStarted(true);
               setProfessorView("bingo-monitor");
             }
             setBingoState({
               phase: data.phase || 'rolling',
-              phaseSeconds: Number(data.phaseSeconds || 0),
+              phaseSeconds: Number(data.phaseEndsAt || 0) > 0 ? Math.max(0, Math.ceil((Number(data.phaseEndsAt) - Date.now()) / 1000)) : Number(data.phaseSeconds || 0),
               round: Number(data.round || 0),
               rolledNumber: typeof data.rolledNumber === 'number' ? data.rolledNumber : null,
               eligiblePlayerIds: Array.isArray(data.eligiblePlayerIds) ? data.eligiblePlayerIds : [],

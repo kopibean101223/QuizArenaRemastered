@@ -13,6 +13,7 @@ const bingoRefreshStyles = `
   .bingo-topbar { min-height: 72px; padding: 0 28px; background: rgba(8, 8, 25, .92); border-bottom-color: rgba(255,255,255,.08); }
   .bingo-brand { color: #f5f3ff; }
   .bingo-brand span { background: linear-gradient(145deg, #8a5cff, #5b35e9); box-shadow: 0 0 20px rgba(111, 78, 255, .4); }
+  .bingo-mode-title { padding: 7px 12px; border: 1px solid rgba(91,61,246,.6); border-radius: 10px; background: rgba(91,61,246,.18); color: #a98cff; font-size: 12px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; box-shadow: 0 0 18px rgba(91,61,246,.2); }
   .bingo-layout { max-width: 1440px; grid-template-columns: minmax(290px, .95fr) minmax(390px, 1.15fr) minmax(250px, .72fr); gap: 16px; padding: 22px 18px; }
   .bingo-main-column { display: contents; }
   .bingo-side-column { grid-column: 3; grid-row: 1 / span 3; gap: 16px; }
@@ -100,25 +101,33 @@ export function BattleBingo({ battleId }: { battleId: string }) {
     return lines.filter((line) => line.every((index) => cells[index] && green.has(cells[index].value))).length;
   }, [cells]);
 
+  function applyBingoState(state: any) {
+    if (!state || state.battleId !== battleId) return;
+    if (state.playerId === currentUserId || state.playerId === undefined) {
+      const own = state.self || state.player;
+      if (own?.card) setCells(normalizeCells(own.card));
+    }
+    if (Array.isArray(state.players)) setPlayers(state.players);
+    if (Array.isArray(state.calledNumbers)) setCalledNumbers(state.calledNumbers);
+    if (typeof state.round === 'number') setRound(state.round);
+    if (state.phase) setPhase(state.phase);
+    const phaseEndsAt = Number(state.phaseEndsAt || 0);
+    if (phaseEndsAt > 0) setPhaseSeconds(Math.max(0, Math.ceil((phaseEndsAt - Date.now()) / 1000)));
+    else if (typeof state.phaseSeconds === 'number') setPhaseSeconds(state.phaseSeconds);
+    if (typeof state.rolledNumber === 'number') setRolledNumber(state.rolledNumber);
+    if (Array.isArray(state.eligiblePlayerIds)) setEligiblePlayerIds(state.eligiblePlayerIds);
+    if (state.question) setQuestion(state.question);
+  }
+
   useEffect(() => {
     const data = lastMessage;
-    if (!data || data.battleId !== battleId) return;
-
-    if (data.type === 'BINGO_STATE_SYNC' || (lastBingoState?.battleId === battleId && phaseSeconds === 0)) {
-      const state = data.type === 'BINGO_STATE_SYNC' ? data : lastBingoState;
-      if (state.playerId === currentUserId || state.playerId === undefined) {
-        const own = state.self || state.player;
-        if (own?.card) setCells(normalizeCells(own.card));
-      }
-      if (Array.isArray(state.players)) setPlayers(state.players);
-      if (Array.isArray(state.calledNumbers)) setCalledNumbers(state.calledNumbers);
-      if (typeof state.round === 'number') setRound(state.round);
-      if (state.phase) setPhase(state.phase);
-      if (typeof state.phaseSeconds === 'number') setPhaseSeconds(state.phaseSeconds);
-      if (typeof state.rolledNumber === 'number') setRolledNumber(state.rolledNumber);
-      if (Array.isArray(state.eligiblePlayerIds)) setEligiblePlayerIds(state.eligiblePlayerIds);
-      if (state.question) setQuestion(state.question);
+    if (!data || data.battleId !== battleId) {
+      applyBingoState(lastBingoState);
+      return;
     }
+
+    if (data.type === 'BINGO_STATE_SYNC') applyBingoState(data);
+    else applyBingoState(lastBingoState);
     if (data.type === 'BINGO_ANSWER_RESULT' && data.playerId === currentUserId) {
       setAnswerFeedback(Boolean(data.isCorrect));
       setCells(normalizeCells(data.card));
@@ -139,6 +148,12 @@ export function BattleBingo({ battleId }: { battleId: string }) {
     const timer = window.setInterval(() => setPhaseSeconds((seconds) => Math.max(0, seconds - 1)), 1000);
     return () => window.clearInterval(timer);
   }, [phaseSeconds]);
+
+  useEffect(() => {
+    setAnswer('');
+    setSelectedChoiceIndex(null);
+    setAnswerFeedback(null);
+  }, [round, rolledNumber]);
 
   useEffect(() => {
     if (phase !== 'finished' || !winner) return;
@@ -180,7 +195,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
 
   return (
     <><style>{bingoStyles}</style><style>{bingoRefreshStyles}</style><main className="bingo-battle">
-      <header className="bingo-topbar"><div className="bingo-brand"><span>Q</span> QuizArena</div><div className="bingo-round"><Grid3X3 size={17} /> Round {round || 1}</div><div className={`bingo-phase-countdown ${phaseEnding ? "ending" : ""}`}><strong>{phaseSeconds > 0 ? `${phaseSeconds}s` : "--"}</strong><span>remaining</span></div><div className="bingo-phase"><span className="bingo-live-dot" /> {phase.toUpperCase()} {phaseSeconds > 0 && `Â· ${phaseSeconds}s`}</div></header>
+      <header className="bingo-topbar"><div className="bingo-brand"><span>Q</span> QuizArena</div><div className="bingo-mode-title">Bingo Battle</div><div className="bingo-round"><Grid3X3 size={17} /> Round {round || 1}</div><div className={`bingo-phase-countdown ${phaseEnding ? "ending" : ""}`}><strong>{phaseSeconds > 0 ? `${phaseSeconds}s` : "--"}</strong><span>remaining</span></div><div className="bingo-phase"><span className="bingo-live-dot" /> {phase.toUpperCase()} {phaseSeconds > 0 && `Â· ${phaseSeconds}s`}</div></header>
       <div className="bingo-layout">
         <section className="bingo-main-column">
           <div className="bingo-number-panel">
@@ -192,7 +207,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
 
           {phase === 'stealing' && <section className="bingo-panel bingo-action-panel"><div><p className="bingo-eyebrow">10-second steal phase</p><h2>Swap with a fellow player</h2><p className="bingo-muted">Choose a target blindly. If they own the drawn number, your selected number is exchanged.</p></div><div className="bingo-action-row"><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">Choose target</option>{players.filter((player) => player.id !== currentUserId).map((player) => <option key={player.id} value={player.id}>{player.name}</option>)}</select><select value={discardValue} onChange={(event) => setDiscardValue(event.target.value)}><option value="">Discard one of yours</option>{cells.map((cell) => <option key={cell.value} value={cell.value}>{bingoLetter(cell.value)}-{cell.value}</option>)}</select><button onClick={useSteal} disabled={!targetId || !discardValue}><Shield size={16} /> Use Steal ({me?.stealBuffs || 0})</button></div></section>}
 
-          {phase === 'question' && <section className="bingo-panel bingo-question-panel"><div className="bingo-panel-heading"><div><p className="bingo-eyebrow">Question for {rolledNumber ? `${bingoLetter(rolledNumber)}-${rolledNumber}` : 'your number'}</p><h2>{eligiblePlayerIds.includes(currentUserId) ? currentQuestionText || 'Loading questionâ€¦' : 'You do not own the drawn number'}</h2></div><Clock3 size={22} /></div>{eligiblePlayerIds.includes(currentUserId) && currentQuestionText && <form onSubmit={submitAnswer}>{questionChoices.length > 0 ? <div className="bingo-choices">{questionChoices.map((choice) => <button type="button" key={choice} className={answer === choice ? 'selected' : ''} onClick={() => setAnswer(choice)}>{choice}</button>)}</div> : <input value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type your answer" />}{answerFeedback !== null && <div className={answerFeedback ? 'bingo-feedback correct' : 'bingo-feedback wrong'}>{answerFeedback ? 'Correct! Your number is green.' : 'Incorrect. Your number stays red.'}</div>}<button type="submit" className="bingo-primary" disabled={!answer}><Zap size={16} /> Submit answer</button></form>}</section>}
+          {phase === 'question' && <section className="bingo-panel bingo-question-panel"><div className="bingo-panel-heading"><div><p className="bingo-eyebrow">Question for {rolledNumber ? `${bingoLetter(rolledNumber)}-${rolledNumber}` : 'your number'}</p><h2>{eligiblePlayerIds.includes(currentUserId) ? currentQuestionText || 'Loading questionâ€¦' : 'You do not own the drawn number'}</h2></div><Clock3 size={22} /></div>{eligiblePlayerIds.includes(currentUserId) && currentQuestionText && <form onSubmit={submitAnswer}>{questionChoices.length > 0 ? <div className="bingo-choices">{questionChoices.map((choice, index) => <button type="button" key={`${choice}-${index}`} className={selectedChoiceIndex === index ? 'selected' : ''} aria-pressed={selectedChoiceIndex === index} onClick={() => { setAnswer(choice); setSelectedChoiceIndex(index); setAnswerFeedback(null); }}>{choice}</button>)}</div> : <input value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type your answer" />}{answerFeedback !== null && <div className={answerFeedback ? 'bingo-feedback correct' : 'bingo-feedback wrong'}>{answerFeedback ? 'Correct! Your number is green.' : 'Incorrect. Your number stays red.'}</div>}<button type="submit" className="bingo-primary" disabled={!answer}><Zap size={16} /> Submit answer</button></form>}</section>}
 
           {phase === 'retake' && <section className="bingo-panel bingo-action-panel"><p className="bingo-eyebrow">Retake phase</p><h2>Recover a red answer</h2><p className="bingo-muted">Use one Retake Buff on an incorrect number.</p><form onSubmit={(event) => { event.preventDefault(); useRetake(); }}><select value={retakeValue} onChange={(event) => setRetakeValue(event.target.value)}><option value="">Choose a red number</option>{cells.filter((cell) => cell.status === 'wrong').map((cell) => <option key={cell.value} value={cell.value}>{bingoLetter(cell.value)}-{cell.value}</option>)}</select><input value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Answer the retake question" /><button className="bingo-primary" disabled={!answer || !retakeValue}><RefreshCcw size={16} /> Retake ({me?.retakeBuffs || 0})</button></form></section>}
         </section>
@@ -204,6 +219,10 @@ export function BattleBingo({ battleId }: { battleId: string }) {
 }
 
 export default BattleBingo;
+
+
+
+
 
 
 
