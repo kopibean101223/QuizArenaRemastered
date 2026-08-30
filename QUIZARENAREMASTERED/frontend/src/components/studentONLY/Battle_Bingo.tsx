@@ -1,50 +1,31 @@
 ﻿'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Check, CircleHelp, Clock3, Grid3X3, MessageCircle, RefreshCcw, Send, Shield, Trophy, Users, X, Zap } from 'lucide-react';
+import {
+  Check, ChevronRight, CircleHelp, Clock3, Grid3X3,
+  RefreshCcw, Send as SendIcon, Shield, Trophy, X, Zap,
+} from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { getStudentIdentity } from '@/lib/student/battle/useBattleConnection';
 import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProvider';
-
-const bingoStyles = {"value":"* {\r\n  box-sizing: border-box;\r\n}\r\n\r\n:root {\r\n  font-family:\r\n    Inter,\r\n    ui-sans-serif,\r\n    system-ui,\r\n    -apple-system,\r\n    BlinkMacSystemFont,\r\n    \"Segoe UI\",\r\n    sans-serif;\r\n\r\n  color: #f4f0ff;\r\n  background: #080718;\r\n}\r\n\r\nbody {\r\n  margin: 0;\r\n  min-width: 320px;\r\n  background:\r\n    radial-gradient(\r\n      circle at 50% 20%,\r\n      rgba(91, 52, 183, 0.11),\r\n      transparent 30%\r\n    ),\r\n    radial-gradient(\r\n      circle at 80% 80%,\r\n      rgba(73, 38, 147, 0.08),\r\n      transparent 25%\r\n    ),\r\n    #080718;\r\n}\r\n\r\nbutton {\r\n  font: inherit;\r\n}\r\n\r\n.app {\r\n  min-height: 100vh;\r\n  background:\r\n    linear-gradient(\r\n      180deg,\r\n      rgba(18, 15, 42, 0.95),\r\n      rgba(7, 6, 22, 1)\r\n    );\r\n  overflow-x: hidden;\r\n}\r\n\r\n/* =========================\r\n   TOP BAR\r\n========================= */\r\n\r\n.topbar {\r\n  height: 56px;\r\n  display: flex;\r\n  align-items: center;\r\n  padding: 0 22px;\r\n  border-bottom: 1px solid rgba(255, 255, 255, 0.08);\r\n  background: rgba(9, 8, 26, 0.8);\r\n}\r\n\r\n.brand {\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 10px;\r\n  font-size: 17px;\r\n  font-weight: 750;\r\n  letter-spacing: -0.4px;\r\n}\r\n\r\n.brand span span {\r\n  color: #7952ff;\r\n}\r\n\r\n.brand-icon {\r\n  width: 32px;\r\n  height: 32px;\r\n  border-radius: 8px;\r\n  display: flex;\r\n  justify-content: center;\r\n  align-items: center;\r\n  background: linear-gradient(\r\n    145deg,\r\n    #8455ff,\r\n    #5c32e7\r\n  );\r\n  color: white;\r\n  font-weight: 900;\r\n  box-shadow:\r\n    0 0 20px rgba(117, 75, 255, 0.35);\r\n}\r\n\r\n/* =========================\r\n   GAME HEADER\r\n========================= */\r\n\r\n.game-header {\r\n  min-height: 77px;\r\n  padding: 10px 20px;\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 18px;\r\n  border-bottom: 1px solid rgba(255, 255, 255, 0.06);\r\n}\r\n\r\n.round-info {\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 12px;\r\n  width: 122px;\r\n}\r\n\r\n.trophy {\r\n  width: 36px;\r\n  height: 36px;\r\n  display: grid;\r\n  place-items: center;\r\n  border-radius: 10px;\r\n  background: linear-gradient(\r\n    145deg,\r\n    #6d42ee,\r\n    #4d24bc\r\n  );\r\n  font-size: 18px;\r\n  box-shadow:\r\n    0 0 18px rgba(111, 68, 238, 0.3);\r\n}\r\n\r\n.round-label {\r\n  color: #aaa5ba;\r\n  font-size: 13px;\r\n}\r\n\r\n.round-number {\r\n  font-size: 16px;\r\n  line-height: 18px;\r\n  font-weight: 800;\r\n}\r\n\r\n.round-number span {\r\n  color: #858095;\r\n  font-weight: 500;\r\n}\r\n\r\n.progress-wrapper {\r\n  flex: 1;\r\n}\r\n\r\n.progress-bar {\r\n  height: 12px;\r\n  border-radius: 20px;\r\n  background: #292737;\r\n  overflow: hidden;\r\n}\r\n\r\n.progress-value {\r\n  width: 90%;\r\n  height: 100%;\r\n  border-radius: inherit;\r\n  background: linear-gradient(\r\n    90deg,\r\n    #27d884,\r\n    #38d68d\r\n  );\r\n  box-shadow:\r\n    0 0 12px rgba(39, 216, 132, 0.25);\r\n}\r\n\r\n.timer-circle {\r\n  width: 55px;\r\n  height: 55px;\r\n  border-radius: 50%;\r\n  display: grid;\r\n  place-items: center;\r\n  border: 3px solid #16cf7b;\r\n  color: #26db8c;\r\n  font-size: 19px;\r\n  font-weight: 800;\r\n}\r\n\r\n.points {\r\n  height: 38px;\r\n  padding: 0 17px;\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 5px;\r\n  border-radius: 20px;\r\n  border: 1px solid rgba(255, 255, 255, 0.14);\r\n  background: rgba(255, 255, 255, 0.035);\r\n  color: #d5d1dc;\r\n  font-size: 13px;\r\n}\r\n\r\n.points .star {\r\n  color: #f7bd32;\r\n  font-size: 15px;\r\n}\r\n\r\n.points strong {\r\n  color: white;\r\n}\r\n\r\n.mode {\r\n  height: 38px;\r\n  padding: 0 16px;\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 8px;\r\n  border-radius: 20px;\r\n  border: 1px solid rgba(119, 73, 255, 0.5);\r\n  color: #936eff;\r\n  background: rgba(101, 51, 224, 0.09);\r\n  font-size: 13px;\r\n  font-weight: 750;\r\n  letter-spacing: 0.4px;\r\n}\r\n\r\n/* =========================\r\n   DASHBOARD\r\n========================= */\r\n\r\n.dashboard {\r\n  display: grid;\r\n  grid-template-columns:\r\n    minmax(360px, 1.08fr)\r\n    minmax(470px, 1.14fr)\r\n    minmax(310px, 0.74fr);\r\n\r\n  gap: 18px;\r\n  padding: 0 19px;\r\n  max-width: 1600px;\r\n  margin: 0 auto;\r\n}\r\n\r\n.left-column,\r\n.center-column,\r\n.right-column {\r\n  min-width: 0;\r\n}\r\n\r\n/* =========================\r\n   PANELS\r\n========================= */\r\n\r\n.panel {\r\n  background:\r\n    linear-gradient(\r\n      145deg,\r\n      rgba(30, 26, 58, 0.96),\r\n      rgba(17, 15, 39, 0.98)\r\n    );\r\n\r\n  border: 1px solid rgba(255, 255, 255, 0.10);\r\n  border-radius: 17px;\r\n  box-shadow:\r\n    inset 0 1px 0 rgba(255, 255, 255, 0.025),\r\n    0 15px 35px rgba(0, 0, 0, 0.12);\r\n}\r\n\r\n.bingo-panel {\r\n  margin-top: 0;\r\n  padding: 17px 20px 18px;\r\n  min-height: 610px;\r\n}\r\n\r\n.panel-title-row {\r\n  display: flex;\r\n  justify-content: space-between;\r\n  align-items: center;\r\n}\r\n\r\n.panel h2 {\r\n  margin: 0;\r\n  font-size: 13px;\r\n  letter-spacing: 0.9px;\r\n  color: #c6b5f8;\r\n}\r\n\r\n.info {\r\n  display: inline-grid;\r\n  place-items: center;\r\n  width: 16px;\r\n  height: 16px;\r\n  margin-left: 3px;\r\n  border: 1px solid #7c62be;\r\n  border-radius: 50%;\r\n  color: #9c86d7;\r\n  font-size: 10px;\r\n}\r\n\r\n.expand {\r\n  color: #aaa1c2;\r\n  font-size: 18px;\r\n}\r\n\r\n/* =========================\r\n   BINGO CARD\r\n========================= */\r\n\r\n.bingo-header {\r\n  display: grid;\r\n  grid-template-columns: repeat(5, 1fr);\r\n  margin-top: 20px;\r\n  margin-bottom: 8px;\r\n  text-align: center;\r\n  font-size: 25px;\r\n  font-weight: 850;\r\n}\r\n\r\n.b {\r\n  color: #8053f4;\r\n}\r\n\r\n.i {\r\n  color: #43a8f6;\r\n}\r\n\r\n.n {\r\n  color: #34dc89;\r\n}\r\n\r\n.g {\r\n  color: #f06a3e;\r\n}\r\n\r\n.o {\r\n  color: #f6c044;\r\n}\r\n\r\n.bingo-grid {\r\n  display: grid;\r\n  grid-template-columns: repeat(5, 1fr);\r\n  gap: 6px;\r\n}\r\n\r\n.bingo-cell {\r\n  position: relative;\r\n  height: 84px;\r\n  display: flex;\r\n  align-items: center;\r\n  justify-content: center;\r\n  border-radius: 8px;\r\n  border: 1px solid rgba(255, 255, 255, 0.14);\r\n  background: rgba(255, 255, 255, 0.025);\r\n  color: #cbc7d4;\r\n  font-size: 25px;\r\n  font-weight: 450;\r\n  overflow: hidden;\r\n}\r\n\r\n.bingo-cell.current {\r\n  border: 2px solid #f4c044;\r\n  color: #f9c83e;\r\n  background:\r\n    radial-gradient(\r\n      circle,\r\n      rgba(245, 185, 42, 0.11),\r\n      transparent 60%\r\n    );\r\n  box-shadow:\r\n    0 0 13px rgba(244, 184, 50, 0.35);\r\n}\r\n\r\n.bingo-cell.correct {\r\n  border-color: rgba(31, 211, 130, 0.65);\r\n  background:\r\n    linear-gradient(\r\n      145deg,\r\n      rgba(25, 158, 100, 0.48),\r\n      rgba(23, 83, 66, 0.48)\r\n    );\r\n  color: #3ce393;\r\n}\r\n\r\n.bingo-cell.wrong {\r\n  border-color: rgba(226, 69, 67, 0.48);\r\n  color: #c9c3d1;\r\n}\r\n\r\n.cell-check,\r\n.cell-x {\r\n  position: absolute;\r\n  top: 8px;\r\n  left: 10px;\r\n  font-weight: 900;\r\n  font-size: 18px;\r\n}\r\n\r\n.cell-x {\r\n  color: #f24d3c;\r\n}\r\n\r\n.current-dot {\r\n  position: absolute;\r\n  bottom: 6px;\r\n  width: 9px;\r\n  height: 9px;\r\n  border-radius: 50%;\r\n  background: #ffc43d;\r\n}\r\n\r\n/* =========================\r\n   LEGEND\r\n========================= */\r\n\r\n.legend {\r\n  margin-top: 17px;\r\n  display: flex;\r\n  align-items: center;\r\n  justify-content: space-between;\r\n  color: #aaa4b7;\r\n  font-size: 11px;\r\n  gap: 7px;\r\n}\r\n\r\n.legend \u003e div {\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 6px;\r\n}\r\n\r\n.legend-icon {\r\n  width: 15px;\r\n  height: 15px;\r\n  display: inline-grid;\r\n  place-items: center;\r\n}\r\n\r\n.current-icon {\r\n  border: 2px solid #ffc43d;\r\n  border-radius: 50%;\r\n}\r\n\r\n.check-icon {\r\n  color: #28dd88;\r\n  font-size: 17px;\r\n}\r\n\r\n.wrong-icon {\r\n  color: #ff513d;\r\n  font-size: 20px;\r\n}\r\n\r\n.empty-icon {\r\n  border: 1px solid #777383;\r\n  border-radius: 50%;\r\n}\r\n\r\n/* =========================\r\n   GOAL\r\n========================= */\r\n\r\n.goal-panel {\r\n  margin-top: 14px;\r\n  padding: 20px 22px;\r\n  min-height: 121px;\r\n  display: grid;\r\n  grid-template-columns: 1fr 1px 1fr;\r\n  align-items: center;\r\n  gap: 25px;\r\n}\r\n\r\n.goal-box {\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 18px;\r\n}\r\n\r\n.goal-star {\r\n  color: #f7bd32;\r\n  font-size: 52px;\r\n  line-height: 1;\r\n}\r\n\r\n.goal-title {\r\n  color: #9a68ff;\r\n  font-size: 12px;\r\n  font-weight: 800;\r\n  letter-spacing: 0.8px;\r\n}\r\n\r\n.goal-main {\r\n  margin-top: 8px;\r\n  font-size: 16px;\r\n  font-weight: 650;\r\n}\r\n\r\n.goal-sub {\r\n  margin-top: 4px;\r\n  color: #9a95a9;\r\n  font-size: 11px;\r\n}\r\n\r\n.goal-divider {\r\n  width: 1px;\r\n  height: 65px;\r\n  background: rgba(255, 255, 255, 0.1);\r\n}\r\n\r\n.progress-number {\r\n  margin-top: 5px;\r\n  font-size: 22px;\r\n  font-weight: 800;\r\n}\r\n\r\n.mini-progress {\r\n  display: flex;\r\n  gap: 12px;\r\n  margin-top: 7px;\r\n}\r\n\r\n.mini-progress span {\r\n  font-size: 20px;\r\n}\r\n\r\n.mini-progress .done {\r\n  color: #25d883;\r\n}\r\n\r\n.mini-progress .empty {\r\n  color: #8c8796;\r\n}\r\n\r\n/* =========================\r\n   DRAW PANEL\r\n========================= */\r\n\r\n.draw-panel {\r\n  padding: 17px 16px 14px;\r\n  min-height: 322px;\r\n}\r\n\r\n.draw-header,\r\n.question-top,\r\n.side-header {\r\n  display: flex;\r\n  align-items: center;\r\n  justify-content: space-between;\r\n}\r\n\r\n.live-badge {\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 6px;\r\n  border: 1px solid rgba(238, 74, 73, 0.45);\r\n  color: #e95148;\r\n  padding: 5px 10px;\r\n  border-radius: 20px;\r\n  font-size: 11px;\r\n  font-weight: 750;\r\n}\r\n\r\n.live-badge span,\r\n.live-text span {\r\n  width: 7px;\r\n  height: 7px;\r\n  border-radius: 50%;\r\n  background: #e95445;\r\n}\r\n\r\n.letters {\r\n  display: flex;\r\n  align-items: center;\r\n  justify-content: center;\r\n  gap: 12px;\r\n  margin-top: 17px;\r\n  font-size: 19px;\r\n}\r\n\r\n.letters b {\r\n  color: #777185;\r\n  font-size: 16px;\r\n}\r\n\r\n.draw-content {\r\n  min-height: 160px;\r\n  display: flex;\r\n  align-items: center;\r\n  justify-content: center;\r\n  gap: 38px;\r\n}\r\n\r\n/* Orb */\r\n\r\n.number-orb {\r\n  position: relative;\r\n  width: 150px;\r\n  height: 150px;\r\n  border-radius: 50%;\r\n  display: grid;\r\n  place-items: center;\r\n}\r\n\r\n.orb-glow {\r\n  position: absolute;\r\n  inset: 15px;\r\n  border-radius: 50%;\r\n  background:\r\n    radial-gradient(\r\n      circle,\r\n      rgba(51, 236, 133, 0.5),\r\n      rgba(34, 170, 94, 0.12) 55%,\r\n      transparent 70%\r\n    );\r\n\r\n  filter: blur(8px);\r\n}\r\n\r\n.number-orb::before {\r\n  content: \"\";\r\n  position: absolute;\r\n  inset: 18px;\r\n  border-radius: 50%;\r\n  border: 3px solid #46ed91;\r\n  box-shadow:\r\n    0 0 20px rgba(47, 239, 137, 0.7),\r\n    inset 0 0 18px rgba(57, 230, 137, 0.3);\r\n}\r\n\r\n.orb-ring {\r\n  position: absolute;\r\n  width: 190px;\r\n  height: 60px;\r\n  border: 1px solid rgba(105, 249, 172, 0.55);\r\n  border-radius: 50%;\r\n  transform: rotate(-7deg);\r\n}\r\n\r\n.ring-two {\r\n  transform: rotate(15deg);\r\n  opacity: 0.45;\r\n}\r\n\r\n.orb-content {\r\n  position: relative;\r\n  z-index: 2;\r\n  display: flex;\r\n  flex-direction: column;\r\n  align-items: center;\r\n}\r\n\r\n.orb-letter {\r\n  color: #36e78b;\r\n  font-size: 22px;\r\n  font-weight: 850;\r\n}\r\n\r\n.orb-content strong {\r\n  margin-top: -1px;\r\n  font-size: 58px;\r\n  line-height: 1;\r\n}\r\n\r\n/* Called numbers */\r\n\r\n.called-box {\r\n  width: 185px;\r\n  padding: 10px;\r\n  border: 1px solid rgba(255, 255, 255, 0.1);\r\n  border-radius: 10px;\r\n}\r\n\r\n.called-title {\r\n  text-align: center;\r\n  color: #aaa5b3;\r\n  font-size: 10px;\r\n  margin-bottom: 8px;\r\n}\r\n\r\n.called-grid {\r\n  display: grid;\r\n  grid-template-columns: repeat(3, 1fr);\r\n  gap: 7px;\r\n}\r\n\r\n.called-number {\r\n  height: 44px;\r\n  border-radius: 50%;\r\n  border: 1px solid #514c5d;\r\n  display: flex;\r\n  flex-direction: column;\r\n  align-items: center;\r\n  justify-content: center;\r\n}\r\n\r\n.called-number strong {\r\n  font-size: 13px;\r\n}\r\n\r\n.called-letter {\r\n  font-size: 8px;\r\n}\r\n\r\n.called-active {\r\n  border-color: #39dc8a;\r\n  box-shadow: 0 0 9px rgba(44, 221, 132, 0.35);\r\n}\r\n\r\n.players-number {\r\n  height: 51px;\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 12px;\r\n  padding: 0 14px;\r\n  border: 1px solid #7145d6;\r\n  border-radius: 10px;\r\n  background: rgba(101, 47, 216, 0.08);\r\n}\r\n\r\n.players-icon {\r\n  color: #8f5fff;\r\n  font-size: 19px;\r\n}\r\n\r\n.players-text {\r\n  display: grid;\r\n  grid-template-columns: auto auto;\r\n  gap: 3px 5px;\r\n  font-size: 11px;\r\n}\r\n\r\n.players-text strong {\r\n  font-weight: 600;\r\n}\r\n\r\n.players-text small {\r\n  grid-column: 1 / 3;\r\n  color: #8f889f;\r\n}\r\n\r\n.question-timer {\r\n  margin-left: auto;\r\n  color: #a77bff;\r\n  font-size: 13px;\r\n  font-weight: 700;\r\n  display: flex;\r\n  gap: 5px;\r\n}\r\n\r\n/* =========================\r\n   QUESTION\r\n========================= */\r\n\r\n.question-panel {\r\n  margin-top: 13px;\r\n  padding: 15px 20px 17px;\r\n  min-height: 410px;\r\n  border-color: #7144d5;\r\n}\r\n\r\n.question-top h2 span {\r\n  color: #36df8b;\r\n}\r\n\r\n.question-points {\r\n  border: 1px solid #7351b9;\r\n  border-radius: 20px;\r\n  padding: 7px 15px;\r\n  font-size: 11px;\r\n}\r\n\r\n.question {\r\n  max-width: 650px;\r\n  margin: 19px 0 17px;\r\n  font-size: 17px;\r\n  line-height: 1.45;\r\n  font-weight: 600;\r\n}\r\n\r\n.answers {\r\n  display: flex;\r\n  flex-direction: column;\r\n  gap: 8px;\r\n}\r\n\r\n.answer {\r\n  height: 46px;\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 13px;\r\n  padding: 0 12px;\r\n  border-radius: 9px;\r\n  border: 1px solid rgba(255, 255, 255, 0.1);\r\n  background: rgba(255, 255, 255, 0.035);\r\n}\r\n\r\n.answer-letter {\r\n  width: 31px;\r\n  height: 31px;\r\n  display: grid;\r\n  place-items: center;\r\n  border-radius: 7px;\r\n  background: rgba(104, 60, 205, 0.25);\r\n  color: #a06dff;\r\n  font-weight: 850;\r\n}\r\n\r\n.answer-text {\r\n  font-size: 13px;\r\n}\r\n\r\n.correct-answer {\r\n  border-color: #24c981;\r\n  background:\r\n    linear-gradient(\r\n      90deg,\r\n      rgba(30, 166, 105, 0.12),\r\n      rgba(30, 166, 105, 0.07)\r\n    );\r\n}\r\n\r\n.correct-answer .answer-letter {\r\n  color: #36e593;\r\n  background: rgba(27, 203, 125, 0.2);\r\n}\r\n\r\n.correct-answer .answer-text {\r\n  color: #3ce493;\r\n}\r\n\r\n.answer-check {\r\n  margin-left: auto;\r\n  width: 21px;\r\n  height: 21px;\r\n  display: grid;\r\n  place-items: center;\r\n  border-radius: 50%;\r\n  background: #46dc92;\r\n  color: #10251b;\r\n  font-size: 13px;\r\n  font-weight: 900;\r\n}\r\n\r\n.correct-result {\r\n  height: 47px;\r\n  margin-top: 13px;\r\n  padding: 0 15px;\r\n  display: flex;\r\n  align-items: center;\r\n  justify-content: space-between;\r\n  border-radius: 9px;\r\n  background:\r\n    linear-gradient(\r\n      90deg,\r\n      rgba(35, 184, 119, 0.2),\r\n      rgba(35, 184, 119, 0.13)\r\n    );\r\n  color: #eefcf5;\r\n  font-size: 13px;\r\n}\r\n\r\n.correct-result strong {\r\n  font-size: 16px;\r\n}\r\n\r\n/* =========================\r\n   STANDINGS\r\n========================= */\r\n\r\n.standings-panel {\r\n  padding: 17px 16px 14px;\r\n  min-height: 322px;\r\n}\r\n\r\n.live-text {\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 5px;\r\n  color: #d8574d;\r\n  font-size: 10px;\r\n  font-weight: 800;\r\n}\r\n\r\n.standings {\r\n  margin-top: 16px;\r\n  display: flex;\r\n  flex-direction: column;\r\n  gap: 4px;\r\n}\r\n\r\n.standing-row {\r\n  min-height: 48px;\r\n  display: grid;\r\n  grid-template-columns: 31px 33px 1fr auto;\r\n  align-items: center;\r\n  gap: 8px;\r\n  padding: 5px 8px;\r\n  border-radius: 9px;\r\n}\r\n\r\n.standing-row.current-player {\r\n  border: 1px solid #6840bd;\r\n  background: rgba(95, 45, 190, 0.12);\r\n}\r\n\r\n.rank {\r\n  color: #ded6a3;\r\n  font-size: 11px;\r\n  font-weight: 800;\r\n}\r\n\r\n.standing-row:nth-child(2) .rank {\r\n  color: #ded4d5;\r\n}\r\n\r\n.standing-row:nth-child(3) .rank {\r\n  color: #f2cd31;\r\n}\r\n\r\n.avatar {\r\n  width: 33px;\r\n  height: 33px;\r\n  display: grid;\r\n  place-items: center;\r\n  border-radius: 50%;\r\n  color: white;\r\n  font-size: 10px;\r\n  font-weight: 850;\r\n}\r\n\r\n.avatar-small {\r\n  width: 26px;\r\n  height: 26px;\r\n  flex-shrink: 0;\r\n  font-size: 8px;\r\n}\r\n\r\n.avatar.blue {\r\n  background: linear-gradient(145deg, #4d9ce9, #3086d5);\r\n}\r\n\r\n.avatar.orange {\r\n  background: linear-gradient(145deg, #ff7250, #ed542f);\r\n}\r\n\r\n.avatar.purple {\r\n  background: linear-gradient(145deg, #8763ed, #6240c5);\r\n}\r\n\r\n.avatar.yellow {\r\n  background: linear-gradient(145deg, #f3bd3e, #d99921);\r\n}\r\n\r\n.player-info {\r\n  display: flex;\r\n  flex-direction: column;\r\n  gap: 2px;\r\n  min-width: 0;\r\n}\r\n\r\n.player-info strong {\r\n  overflow: hidden;\r\n  text-overflow: ellipsis;\r\n  white-space: nowrap;\r\n  font-size: 11px;\r\n}\r\n\r\n.player-info span {\r\n  color: #df5142;\r\n  font-size: 9px;\r\n}\r\n\r\n.current-player .player-info strong {\r\n  color: #9867ff;\r\n}\r\n\r\n.score {\r\n  font-size: 11px;\r\n  font-weight: 700;\r\n  color: #c5c0cc;\r\n}\r\n\r\n.current-player .score {\r\n  color: #f5ca31;\r\n}\r\n\r\n.best-score {\r\n  display: flex;\r\n  justify-content: space-between;\r\n  padding: 14px 8px 0;\r\n  margin-top: 4px;\r\n  border-top: 1px solid rgba(255, 255, 255, 0.08);\r\n  color: #8f899c;\r\n  font-size: 11px;\r\n}\r\n\r\n.best-score strong {\r\n  color: #c5c0ca;\r\n  font-size: 13px;\r\n}\r\n\r\n/* =========================\r\n   CHAT\r\n========================= */\r\n\r\n.chat-panel {\r\n  margin-top: 13px;\r\n  padding: 17px 16px 13px;\r\n  min-height: 410px;\r\n}\r\n\r\n.chat-panel h2 {\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 7px;\r\n}\r\n\r\n.green-dot {\r\n  width: 8px;\r\n  height: 8px;\r\n  border-radius: 50%;\r\n  background: #2bd98a;\r\n}\r\n\r\n.message-count {\r\n  color: #898398;\r\n  font-size: 10px;\r\n}\r\n\r\n.chat-messages {\r\n  display: flex;\r\n  flex-direction: column;\r\n  gap: 9px;\r\n  margin-top: 16px;\r\n}\r\n\r\n.chat-message {\r\n  display: flex;\r\n  align-items: center;\r\n  gap: 7px;\r\n  min-width: 0;\r\n}\r\n\r\n.chat-name {\r\n  color: #898397;\r\n  font-size: 9px;\r\n  width: 47px;\r\n  flex-shrink: 0;\r\n}\r\n\r\n.bubble {\r\n  padding: 8px 9px;\r\n  border-radius: 7px;\r\n  background: rgba(55, 48, 79, 0.65);\r\n  color: #e1dde8;\r\n  font-size: 10px;\r\n  white-space: nowrap;\r\n}\r\n\r\n.quick-replies {\r\n  display: flex;\r\n  gap: 5px;\r\n  margin-top: 18px;\r\n  overflow: hidden;\r\n}\r\n\r\n.quick-replies button {\r\n  white-space: nowrap;\r\n  border: 1px solid rgba(117, 74, 207, 0.5);\r\n  background: rgba(83, 45, 161, 0.1);\r\n  color: #d4c6e9;\r\n  border-radius: 15px;\r\n  padding: 6px 8px;\r\n  font-size: 9px;\r\n  cursor: pointer;\r\n}\r\n\r\n.quick-replies button:hover {\r\n  background: rgba(102, 58, 190, 0.22);\r\n}\r\n\r\n/* =========================\r\n   FOOTER\r\n========================= */\r\n\r\nfooter {\r\n  margin: 20px 19px 0;\r\n  padding: 20px 0 25px;\r\n  border-top: 1px solid rgba(255, 255, 255, 0.07);\r\n  text-align: center;\r\n  color: #7f798d;\r\n  font-size: 12px;\r\n}\r\n\r\n/* =========================\r\n   RESPONSIVE\r\n========================= */\r\n\r\n@media (max-width: 1250px) {\r\n  .dashboard {\r\n    grid-template-columns: 1fr 1fr;\r\n  }\r\n\r\n  .right-column {\r\n    grid-column: 1 / -1;\r\n    display: grid;\r\n    grid-template-columns: 1fr 1fr;\r\n    gap: 18px;\r\n  }\r\n\r\n  .chat-panel {\r\n    margin-top: 0;\r\n  }\r\n}\r\n\r\n@media (max-width: 850px) {\r\n  .game-header {\r\n    flex-wrap: wrap;\r\n  }\r\n\r\n  .progress-wrapper {\r\n    order: 5;\r\n    flex-basis: 100%;\r\n  }\r\n\r\n  .dashboard {\r\n    grid-template-columns: 1fr;\r\n  }\r\n\r\n  .right-column {\r\n    grid-column: auto;\r\n    display: block;\r\n  }\r\n\r\n  .chat-panel {\r\n    margin-top: 13px;\r\n  }\r\n\r\n  .bingo-panel {\r\n    min-height: auto;\r\n  }\r\n\r\n  .draw-content {\r\n    gap: 20px;\r\n  }\r\n}\r\n\r\n@media (max-width: 600px) {\r\n  .topbar {\r\n    padding: 0 13px;\r\n  }\r\n\r\n  .game-header {\r\n    padding: 10px 13px;\r\n    gap: 10px;\r\n  }\r\n\r\n  .points,\r\n  .mode {\r\n    padding: 0 10px;\r\n    font-size: 10px;\r\n  }\r\n\r\n  .dashboard {\r\n    padding: 0 10px;\r\n  }\r\n\r\n  .bingo-panel,\r\n  .question-panel,\r\n  .draw-panel,\r\n  .standings-panel,\r\n  .chat-panel {\r\n    padding-left: 12px;\r\n    padding-right: 12px;\r\n  }\r\n\r\n  .bingo-cell {\r\n    height: 64px;\r\n    font-size: 19px;\r\n  }\r\n\r\n  .bingo-header {\r\n    font-size: 20px;\r\n  }\r\n\r\n  .legend {\r\n    font-size: 9px;\r\n  }\r\n\r\n  .goal-panel {\r\n    grid-template-columns: 1fr;\r\n    gap: 15px;\r\n  }\r\n\r\n  .goal-divider {\r\n    width: 100%;\r\n    height: 1px;\r\n  }\r\n\r\n  .draw-content {\r\n    flex-direction: column;\r\n    padding: 10px 0;\r\n  }\r\n\r\n  .number-orb {\r\n    width: 130px;\r\n    height: 130px;\r\n  }\r\n\r\n  .number-orb::before {\r\n    inset: 15px;\r\n  }\r\n\r\n  .orb-content strong {\r\n    font-size: 48px;\r\n  }\r\n\r\n  .called-box {\r\n    width: 100%;\r\n  }\r\n\r\n  .players-number {\r\n    height: auto;\r\n    padding: 10px;\r\n  }\r\n\r\n  .question {\r\n    font-size: 15px;\r\n  }\r\n\r\n  .answer {\r\n    height: 43px;\r\n  }\r\n\r\n  .quick-replies {\r\n    overflow-x: auto;\r\n  }\r\n}\r\n\r\n/* Live Bingo battle */\r\n.bingo-battle { min-height: 100vh; background: #111522; color: #f8fafc; padding-bottom: 32px; font-family: Manrope, sans-serif; }\r\n.bingo-topbar { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 32px; border-bottom: 1px solid rgba(255,255,255,.1); background: #171b2b; }\r\n.bingo-brand { font-weight: 900; font-size: 18px; display: flex; align-items: center; gap: 9px; }\r\n.bingo-brand span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: #5b3df6; }\r\n.bingo-round, .bingo-phase { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 800; color: rgba(255,255,255,.65); text-transform: uppercase; letter-spacing: .08em; }\r\n.bingo-phase { color: #ffc93c; }\r\n.bingo-live-dot { width: 8px; height: 8px; border-radius: 50%; background: #2ed47a; box-shadow: 0 0 10px #2ed47a; }\r\n.bingo-layout { max-width: 1280px; margin: 0 auto; padding: 28px; display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 22px; }\r\n.bingo-main-column, .bingo-side-column { display: flex; flex-direction: column; gap: 18px; }\r\n.bingo-panel, .bingo-number-panel { border: 1px solid rgba(255,255,255,.1); border-radius: 18px; background: rgba(255,255,255,.045); padding: 22px; }\r\n.bingo-number-panel { display: flex; justify-content: space-between; align-items: center; gap: 22px; background: linear-gradient(135deg, rgba(91,61,246,.22), rgba(255,107,74,.08)); }\r\n.bingo-eyebrow { margin: 0 0 7px; color: #ffc93c; font-size: 10px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }\r\n.bingo-number { display: flex; align-items: baseline; gap: 12px; font-size: 56px; font-weight: 900; line-height: 1; }\r\n.bingo-number span { font-size: 23px; color: #ff6b4a; }\r\n.bingo-called { min-width: 260px; }\r\n.bingo-called \u003e div { display: flex; flex-wrap: wrap; gap: 7px; }\r\n.bingo-called span { border: 1px solid rgba(255,255,255,.12); border-radius: 9px; padding: 7px 9px; font-size: 11px; font-weight: 800; background: rgba(0,0,0,.16); }\r\n.bingo-called small, .bingo-muted { color: rgba(255,255,255,.5); font-size: 12px; }\r\n.bingo-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }\r\n.bingo-panel h2 { margin: 0; font-size: 18px; font-weight: 900; }\r\n.bingo-panel-heading \u003e strong { color: #2ed47a; font-size: 13px; }\r\n.bingo-letters, .bingo-grid-live { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }\r\n.bingo-letters { margin: 20px 0 8px; text-align: center; font-size: 14px; }\r\n.bingo-letters b:nth-child(1) { color: #5bc8f6; }.bingo-letters b:nth-child(2) { color: #2ed47a; }.bingo-letters b:nth-child(3) { color: #ffc93c; }.bingo-letters b:nth-child(4) { color: #ff9f40; }.bingo-letters b:nth-child(5) { color: #ff6b4a; }\r\n.bingo-cell-live { aspect-ratio: 1; display: grid; place-items: center; position: relative; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; background: rgba(0,0,0,.16); font-size: 18px; font-weight: 900; }\r\n.bingo-cell-live svg { position: absolute; top: 6px; right: 6px; }.bingo-cell-live.current { border-color: #ffc93c; box-shadow: 0 0 0 2px rgba(255,201,60,.2); }.bingo-cell-live.correct { background: rgba(46,212,122,.18); border-color: #2ed47a; }.bingo-cell-live.wrong { background: rgba(255,71,87,.18); border-color: #ff4757; }\r\n.bingo-empty-board { grid-column: 1 / -1; padding: 80px 10px; text-align: center; color: rgba(255,255,255,.45); }\r\n.bingo-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 16px; color: rgba(255,255,255,.5); font-size: 11px; }.bingo-legend span { display: flex; align-items: center; gap: 6px; }.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }.current-dot-live { background: #ffc93c; }.correct-dot-live { background: #2ed47a; }.wrong-dot-live { background: #ff4757; }\r\n.bingo-action-row, .bingo-action-panel form { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }.bingo-action-row select, .bingo-action-panel select, .bingo-action-panel input, .bingo-question-panel input, .bingo-chat input { min-height: 40px; flex: 1; min-width: 150px; border: 1px solid rgba(255,255,255,.14); border-radius: 9px; background: #171b2b; color: white; padding: 0 11px; }.bingo-action-row button, .bingo-primary, .bingo-chat form button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 0; border-radius: 9px; background: #5b3df6; color: white; padding: 0 14px; font-weight: 900; cursor: pointer; }.bingo-action-row button:disabled, .bingo-primary:disabled { opacity: .45; cursor: not-allowed; }\r\n.bingo-question-panel form { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }.bingo-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }.bingo-choices button { border: 1px solid rgba(255,255,255,.12); border-radius: 10px; background: rgba(255,255,255,.04); color: white; padding: 12px; text-align: left; cursor: pointer; }.bingo-choices button.selected { border-color: #ffc93c; background: rgba(255,201,60,.16); }.bingo-feedback { border-radius: 9px; padding: 10px; font-weight: 800; font-size: 12px; }.bingo-feedback.correct { background: rgba(46,212,122,.13); color: #2ed47a; }.bingo-feedback.wrong { background: rgba(255,71,87,.13); color: #ff4757; }\r\n.bingo-standing-panel h2, .bingo-chat h2 { display: flex; align-items: center; gap: 8px; }.bingo-standing-panel \u003e .bingo-panel-heading { align-items: center; margin-bottom: 12px; }.bingo-standing { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid rgba(255,255,255,.07); font-size: 11px; }.bingo-standing.you { color: #ffc93c; }.bingo-avatar { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; font-size: 10px; font-weight: 900; }.bingo-player-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.bingo-buffs \u003e div { display: flex; gap: 10px; }.bingo-buffs span { display: flex; align-items: center; gap: 6px; flex: 1; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 10px; font-size: 11px; }.bingo-buffs b { margin-left: auto; color: #ffc93c; }.bingo-chat-list { max-height: 190px; overflow-y: auto; margin: 12px 0; }.bingo-chat-list p { margin: 0 0 9px; font-size: 11px; color: rgba(255,255,255,.65); }.bingo-chat-list strong { color: #ffc93c; margin-right: 6px; }.bingo-chat form { display: flex; gap: 7px; }.bingo-chat input { min-width: 0; }.bingo-chat form button { width: 40px; padding: 0; }.bingo-rule-note { display: flex; align-items: flex-start; gap: 9px; color: rgba(255,255,255,.45); font-size: 11px; line-height: 1.5; }.bingo-finished { display: grid; place-items: center; align-content: center; gap: 12px; min-height: 100vh; color: #ffc93c; }.bingo-finished h1 { color: white; margin: 0; }\r\n@media (max-width: 850px) { .bingo-topbar { padding: 0 16px; }.bingo-round { display: none; }.bingo-layout { grid-template-columns: 1fr; padding: 16px; }.bingo-number-panel { align-items: flex-start; flex-direction: column; }.bingo-called { min-width: 0; width: 100%; }.bingo-side-column { display: grid; grid-template-columns: 1fr 1fr; }.bingo-chat, .bingo-rule-note { grid-column: 1 / -1; } }\r\n@media (max-width: 520px) { .bingo-phase { font-size: 10px; }.bingo-number { font-size: 45px; }.bingo-side-column { display: flex; }.bingo-choices { grid-template-columns: 1fr; }.bingo-cell-live { font-size: 15px; } }","PSPath":"C:\\Users\\User\\Documents\\QuizArenaRemastered\\QUIZARENAREMASTERED\\frontend\\src\\components\\studentONLY\\battle\\Bingo_Styles.css","PSParentPath":"C:\\Users\\User\\Documents\\QuizArenaRemastered\\QUIZARENAREMASTERED\\frontend\\src\\components\\studentONLY\\battle","PSChildName":"Bingo_Styles.css","PSDrive":{"CurrentLocation":"Users\\User\\Documents\\QuizArenaRemastered\\QUIZARENAREMASTERED\\frontend","Name":"C","Provider":{"ImplementingType":"Microsoft.PowerShell.Commands.FileSystemProvider","HelpFile":"System.Management.Automation.dll-Help.xml","Name":"FileSystem","PSSnapIn":"Microsoft.PowerShell.Core","ModuleName":"Microsoft.PowerShell.Core","Module":null,"Description":"","Capabilities":52,"Home":"C:\\Users\\User","Drives":"C"},"Root":"C:\\","Description":"Windows","MaximumSize":null,"Credential":{"UserName":null,"Password":null},"DisplayRoot":null},"PSProvider":{"ImplementingType":{"Module":"System.Management.Automation.dll","Assembly":"System.Management.Automation, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35","TypeHandle":"System.RuntimeTypeHandle","DeclaringMethod":null,"BaseType":"System.Management.Automation.Provider.NavigationCmdletProvider","UnderlyingSystemType":"Microsoft.PowerShell.Commands.FileSystemProvider","FullName":"Microsoft.PowerShell.Commands.FileSystemProvider","AssemblyQualifiedName":"Microsoft.PowerShell.Commands.FileSystemProvider, System.Management.Automation, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35","Namespace":"Microsoft.PowerShell.Commands","GUID":"b4755d19-b6a7-38dc-ae06-4167f801062f","IsEnum":false,"GenericParameterAttributes":null,"IsSecurityCritical":true,"IsSecuritySafeCritical":false,"IsSecurityTransparent":false,"IsGenericTypeDefinition":false,"IsGenericParameter":false,"GenericParameterPosition":null,"IsGenericType":false,"IsConstructedGenericType":false,"ContainsGenericParameters":false,"StructLayoutAttribute":"System.Runtime.InteropServices.StructLayoutAttribute","Name":"FileSystemProvider","MemberType":32,"DeclaringType":null,"ReflectedType":null,"MetadataToken":33556356,"GenericTypeParameters":"","DeclaredConstructors":"Void .ctor() Void .cctor()","DeclaredEvents":"","DeclaredFields":"System.Collections.ObjectModel.Collection`1[System.Management.Automation.WildcardPattern] excludeMatcher System.Management.Automation.PSTraceSource tracer Int32 FILETRANSFERSIZE System.String ProviderName","DeclaredMembers":"System.String NormalizePath(System.String) System.IO.FileSystemInfo GetFileSystemInfo(System.String, Boolean ByRef) Boolean IsFilterSet() System.Object GetChildNamesDynamicParameters(System.String) System.Object GetChildItemsDynamicParameters(System.String, Boolean) System.Object CopyItemDynamicParameters(System.String, System.String, Boolean) Boolean IsNetworkMappedDrive(System.Management.Automation.PSDriveInfo) Boolean IsSupportedDriveForPersistence(System.Management.Automation.PSDriveInfo) System.String GetRootPathForNetworkDriveOrDosDevice(System.IO.DriveInfo) System.Collections.ObjectModel.Collection`1[System.Management.Automation.PSDriveInfo] InitializeDefaultDrives() System.Object GetItemDynamicParameters(System.String) Void InvokeDefaultAction(System.String) Void GetChildItems(System.String, Boolean, UInt32) Void GetChildNames(System.String, System.Management.Automation.ReturnContainers) Boolean CheckItemExists(System.String, Boolean ByRef) System.Object RemoveItemDynamicParameters(System.String, Boolean) Void RemoveFileInfoItem(System.IO.FileInfo, Boolean) Boolean ItemExists(System.String) System.Object ItemExistsDynamicParameters(System.String) Boolean HasChildItems(System.String) Void CopyItemLocalOrToSession(System.String, System.String, Boolean, Boolean, System.Management.Automation.PowerShell) Void InitilizeFunctionPSCopyFileFromRemoteSession(System.Management.Automation.PowerShell) Boolean ValidRemoteSessionForScripting(System.Management.Automation.Runspaces.Runspace) Void InitilizeFunctionsPSCopyFileToRemoteSession(System.Management.Automation.PowerShell) Boolean PathIsReservedDeviceName(System.String, System.String) Boolean IsAbsolutePath(System.String) System.String GetCommonBase(System.String, System.String) System.String CreateNormalizedRelativePathFromStack(System.Collections.Generic.Stack`1[System.String]) Boolean IsItemContainer(System.String) Void MoveDirectoryInfoUnchecked(System.IO.DirectoryInfo, System.String, Boolean) Boolean IsSameVolume(System.String, System.String) System.Object GetPropertyDynamicParameters(System.String, System.Collections.ObjectModel.Collection`1[System.String]) System.Object SetPropertyDynamicParameters(System.String, System.Management.Automation.PSObject) System.Object ClearPropertyDynamicParameters(System.String, System.Collections.ObjectModel.Collection`1[System.String]) System.Object GetContentWriterDynamicParameters(System.String) System.Object ClearContentDynamicParameters(System.String) Int32 SafeGetFileAttributes(System.String) System.Security.AccessControl.ObjectSecurity NewSecurityDescriptorFromPath(System.String, System.Security.AccessControl.AccessControlSections) System.Security.AccessControl.ObjectSecurity NewSecurityDescriptorOfType(System.String, System.Security.AccessControl.AccessControlSections) System.Security.AccessControl.ObjectSecurity NewSecurityDescriptor(ItemType) System.Management.Automation.ErrorRecord CreateErrorRecord(System.String, System.String) System.String GetHelpMaml(System.String, System.String) System.Management.Automation.ProviderInfo Start(System.Management.Automation.ProviderInfo) System.Management.Automation.PSDriveInfo NewDrive(System.Management.Automation.PSDriveInfo) Void MapNetworkDrive(System.Management.Automation.PSDriveInfo) System.Management.Automation.PSDriveInfo RemoveDrive(System.Management.Automation.PSDriveInfo) System.String GetUNCForNetworkDrive(System.String) System.String GetSubstitutedPathForNetworkDosDevice(System.String) Boolean IsValidPath(System.String) Void GetItem(System.String) System.IO.FileSystemInfo GetFileSystemItem(System.String, Boolean ByRef, Boolean) Boolean ConvertPath(System.String, System.String, System.String ByRef, System.String ByRef) Void GetPathItems(System.String, Boolean, UInt32, Boolean, System.Management.Automation.ReturnContainers) Void Dir(System.IO.DirectoryInfo, Boolean, UInt32, Boolean, System.Management.Automation.ReturnContainers, InodeTracker) System.Management.Automation.FlagsExpression`1[System.IO.FileAttributes] FormatAttributeSwitchParamters() System.String Mode(System.Management.Automation.PSObject) Void RenameItem(System.String, System.String) Void NewItem(System.String, System.String, System.Object) ItemType GetItemType(System.String) Void CreateDirectory(System.String, Boolean) Boolean CreateIntermediateDirectories(System.String) Void RemoveItem(System.String, Boolean) Void RemoveDirectoryInfoItem(System.IO.DirectoryInfo, Boolean, Boolean, Boolean) Void RemoveFileSystemItem(System.IO.FileSystemInfo, Boolean) Boolean ItemExists(System.String, System.Management.Automation.ErrorRecord ByRef) Boolean DirectoryInfoHasChildItems(System.IO.DirectoryInfo) Void CopyItem(System.String, System.String, Boolean) Void CopyItemFromRemoteSession(System.String, System.String, Boolean, Boolean, System.Management.Automation.Runspaces.PSSession) Void CopyDirectoryInfoItem(System.IO.DirectoryInfo, System.String, Boolean, Boolean, System.Management.Automation.PowerShell) Void CopyFileInfoItem(System.IO.FileInfo, System.String, Boolean, System.Management.Automation.PowerShell) Void CopyDirectoryFromRemoteSession(System.String, System.String, System.String, Boolean, Boolean, System.Management.Automation.PowerShell) System.Collections.ArrayList GetRemoteSourceAlternateStreams(System.Management.Automation.PowerShell, System.String) Void RemoveFunctionsPSCopyFileFromRemoteSession(System.Management.Automation.PowerShell) System.Collections.Hashtable GetRemoteFileMetadata(System.String, System.Management.Automation.PowerShell) Void SetFileMetadata(System.String, System.IO.FileInfo, System.Management.Automation.PowerShell) Void CopyFileFromRemoteSession(System.String, System.String, System.String, Boolean, System.Management.Automation.PowerShell, Int64) Boolean PerformCopyFileFromRemoteSession(System.String, System.IO.FileInfo, System.String, Boolean, System.Management.Automation.PowerShell, Int64, Boolean, System.String) Void RemoveFunctionPSCopyFileToRemoteSession(System.Management.Automation.PowerShell) Boolean RemoteTargetSupportsAlternateStreams(System.Management.Automation.PowerShell, System.String) System.String MakeRemotePath(System.Management.Automation.PowerShell, System.String, System.String) Boolean RemoteDirectoryExist(System.Management.Automation.PowerShell, System.String) Boolean CopyFileStreamToRemoteSession(System.IO.FileInfo, System.String, System.Management.Automation.PowerShell, Boolean, System.String) System.Collections.Hashtable GetFileMetadata(System.IO.FileInfo) Void SetRemoteFileMetadata(System.IO.FileInfo, System.String, System.Management.Automation.PowerShell) Boolean PerformCopyFileToRemoteSession(System.IO.FileInfo, System.String, System.Management.Automation.PowerShell) Boolean RemoteDestinationPathIsFile(System.String, System.Management.Automation.PowerShell) System.String CreateDirectoryOnRemoteSession(System.String, Boolean, System.Management.Automation.PowerShell) System.String GetParentPath(System.String, System.String) Boolean IsUNCPath(System.String) Boolean IsUNCRoot(System.String) Boolean IsPathRoot(System.String) System.String NormalizeRelativePath(System.String, System.String) System.String NormalizeRelativePathHelper(System.String, System.String) System.String RemoveRelativeTokens(System.String) System.Collections.Generic.Stack`1[System.String] TokenizePathToStack(System.String, System.String) System.Collections.Generic.Stack`1[System.String] NormalizeThePath(System.String, System.Collections.Generic.Stack`1[System.String]) System.String GetChildName(System.String) System.String EnsureDriveIsRooted(System.String) Void MoveItem(System.String, System.String) Void MoveFileInfoItem(System.IO.FileInfo, System.String, Boolean, Boolean) Void MoveDirectoryInfoItem(System.IO.DirectoryInfo, System.String, Boolean) Void CopyAndDelete(System.IO.DirectoryInfo, System.String, Boolean) Void GetProperty(System.String, System.Collections.ObjectModel.Collection`1[System.String]) Void SetProperty(System.String, System.Management.Automation.PSObject) Void ClearProperty(System.String, System.Collections.ObjectModel.Collection`1[System.String]) System.Management.Automation.Provider.IContentReader GetContentReader(System.String) System.Object GetContentReaderDynamicParameters(System.String) System.Management.Automation.Provider.IContentWriter GetContentWriter(System.String) Void ClearContent(System.String) Void ValidateParameters(Boolean) Void GetSecurityDescriptor(System.String, System.Security.AccessControl.AccessControlSections) Void SetSecurityDescriptor(System.String, System.Security.AccessControl.ObjectSecurity) Void SetSecurityDescriptor(System.String, System.Security.AccessControl.ObjectSecurity, System.Security.AccessControl.AccessControlSections) Void \u003cRemoveDirectoryInfoItem\u003eg__WriteErrorHelper|43_0(System.Exception, \u003c\u003ec__DisplayClass43_0 ByRef) Void .ctor() Void .cctor() System.Collections.ObjectModel.Collection`1[System.Management.Automation.WildcardPattern] excludeMatcher System.Management.Automation.PSTraceSource tracer Int32 FILETRANSFERSIZE System.String ProviderName Microsoft.PowerShell.Commands.FileSystemProvider+ItemType Microsoft.PowerShell.Commands.FileSystemProvider+NativeMethods Microsoft.PowerShell.Commands.FileSystemProvider+NetResource Microsoft.PowerShell.Commands.FileSystemProvider+InodeTracker Microsoft.PowerShell.Commands.FileSystemProvider+\u003c\u003ec__DisplayClass43_0","DeclaredMethods":"System.String Mode(System.Management.Automation.PSObject) System.Object GetChildItemsDynamicParameters(System.String, Boolean) System.String NormalizePath(System.String) System.IO.FileSystemInfo GetFileSystemInfo(System.String, Boolean ByRef) Boolean IsFilterSet() System.Object GetChildNamesDynamicParameters(System.String) System.Object CopyItemDynamicParameters(System.String, System.String, Boolean) Boolean IsNetworkMappedDrive(System.Management.Automation.PSDriveInfo) Boolean IsSupportedDriveForPersistence(System.Management.Automation.PSDriveInfo) System.String GetRootPathForNetworkDriveOrDosDevice(System.IO.DriveInfo) System.Collections.ObjectModel.Collection`1[System.Management.Automation.PSDriveInfo] InitializeDefaultDrives() System.Object GetItemDynamicParameters(System.String) Void InvokeDefaultAction(System.String) Void GetChildItems(System.String, Boolean, UInt32) Void GetChildNames(System.String, System.Management.Automation.ReturnContainers) Boolean CheckItemExists(System.String, Boolean ByRef) System.Object RemoveItemDynamicParameters(System.String, Boolean) Void RemoveFileInfoItem(System.IO.FileInfo, Boolean) Boolean ItemExists(System.String) System.Object ItemExistsDynamicParameters(System.String) Boolean HasChildItems(System.String) Void CopyItemLocalOrToSession(System.String, System.String, Boolean, Boolean, System.Management.Automation.PowerShell) Void InitilizeFunctionPSCopyFileFromRemoteSession(System.Management.Automation.PowerShell) Boolean ValidRemoteSessionForScripting(System.Management.Automation.Runspaces.Runspace) Void InitilizeFunctionsPSCopyFileToRemoteSession(System.Management.Automation.PowerShell) Boolean PathIsReservedDeviceName(System.String, System.String) Boolean IsAbsolutePath(System.String) System.String GetCommonBase(System.String, System.String) System.String CreateNormalizedRelativePathFromStack(System.Collections.Generic.Stack`1[System.String]) Boolean IsItemContainer(System.String) Void MoveDirectoryInfoUnchecked(System.IO.DirectoryInfo, System.String, Boolean) Boolean IsSameVolume(System.String, System.String) System.Object GetPropertyDynamicParameters(System.String, System.Collections.ObjectModel.Collection`1[System.String]) System.Object SetPropertyDynamicParameters(System.String, System.Management.Automation.PSObject) System.Object ClearPropertyDynamicParameters(System.String, System.Collections.ObjectModel.Collection`1[System.String]) System.Object GetContentWriterDynamicParameters(System.String) System.Object ClearContentDynamicParameters(System.String) Int32 SafeGetFileAttributes(System.String) System.Security.AccessControl.ObjectSecurity NewSecurityDescriptorFromPath(System.String, System.Security.AccessControl.AccessControlSections) System.Security.AccessControl.ObjectSecurity NewSecurityDescriptorOfType(System.String, System.Security.AccessControl.AccessControlSections) System.Security.AccessControl.ObjectSecurity NewSecurityDescriptor(ItemType) System.Management.Automation.ErrorRecord CreateErrorRecord(System.String, System.String) System.String GetHelpMaml(System.String, System.String) System.Management.Automation.ProviderInfo Start(System.Management.Automation.ProviderInfo) System.Management.Automation.PSDriveInfo NewDrive(System.Management.Automation.PSDriveInfo) Void MapNetworkDrive(System.Management.Automation.PSDriveInfo) System.Management.Automation.PSDriveInfo RemoveDrive(System.Management.Automation.PSDriveInfo) System.String GetUNCForNetworkDrive(System.String) System.String GetSubstitutedPathForNetworkDosDevice(System.String) Boolean IsValidPath(System.String) Void GetItem(System.String) System.IO.FileSystemInfo GetFileSystemItem(System.String, Boolean ByRef, Boolean) Boolean ConvertPath(System.String, System.String, System.String ByRef, System.String ByRef) Void GetPathItems(System.String, Boolean, UInt32, Boolean, System.Management.Automation.ReturnContainers) Void Dir(System.IO.DirectoryInfo, Boolean, UInt32, Boolean, System.Management.Automation.ReturnContainers, InodeTracker) System.Management.Automation.FlagsExpression`1[System.IO.FileAttributes] FormatAttributeSwitchParamters() Void RenameItem(System.String, System.String) Void NewItem(System.String, System.String, System.Object) ItemType GetItemType(System.String) Void CreateDirectory(System.String, Boolean) Boolean CreateIntermediateDirectories(System.String) Void RemoveItem(System.String, Boolean) Void RemoveDirectoryInfoItem(System.IO.DirectoryInfo, Boolean, Boolean, Boolean) Void RemoveFileSystemItem(System.IO.FileSystemInfo, Boolean) Boolean ItemExists(System.String, System.Management.Automation.ErrorRecord ByRef) Boolean DirectoryInfoHasChildItems(System.IO.DirectoryInfo) Void CopyItem(System.String, System.String, Boolean) Void CopyItemFromRemoteSession(System.String, System.String, Boolean, Boolean, System.Management.Automation.Runspaces.PSSession) Void CopyDirectoryInfoItem(System.IO.DirectoryInfo, System.String, Boolean, Boolean, System.Management.Automation.PowerShell) Void CopyFileInfoItem(System.IO.FileInfo, System.String, Boolean, System.Management.Automation.PowerShell) Void CopyDirectoryFromRemoteSession(System.String, System.String, System.String, Boolean, Boolean, System.Management.Automation.PowerShell) System.Collections.ArrayList GetRemoteSourceAlternateStreams(System.Management.Automation.PowerShell, System.String) Void RemoveFunctionsPSCopyFileFromRemoteSession(System.Management.Automation.PowerShell) System.Collections.Hashtable GetRemoteFileMetadata(System.String, System.Management.Automation.PowerShell) Void SetFileMetadata(System.String, System.IO.FileInfo, System.Management.Automation.PowerShell) Void CopyFileFromRemoteSession(System.String, System.String, System.String, Boolean, System.Management.Automation.PowerShell, Int64) Boolean PerformCopyFileFromRemoteSession(System.String, System.IO.FileInfo, System.String, Boolean, System.Management.Automation.PowerShell, Int64, Boolean, System.String) Void RemoveFunctionPSCopyFileToRemoteSession(System.Management.Automation.PowerShell) Boolean RemoteTargetSupportsAlternateStreams(System.Management.Automation.PowerShell, System.String) System.String MakeRemotePath(System.Management.Automation.PowerShell, System.String, System.String) Boolean RemoteDirectoryExist(System.Management.Automation.PowerShell, System.String) Boolean CopyFileStreamToRemoteSession(System.IO.FileInfo, System.String, System.Management.Automation.PowerShell, Boolean, System.String) System.Collections.Hashtable GetFileMetadata(System.IO.FileInfo) Void SetRemoteFileMetadata(System.IO.FileInfo, System.String, System.Management.Automation.PowerShell) Boolean PerformCopyFileToRemoteSession(System.IO.FileInfo, System.String, System.Management.Automation.PowerShell) Boolean RemoteDestinationPathIsFile(System.String, System.Management.Automation.PowerShell) System.String CreateDirectoryOnRemoteSession(System.String, Boolean, System.Management.Automation.PowerShell) System.String GetParentPath(System.String, System.String) Boolean IsUNCPath(System.String) Boolean IsUNCRoot(System.String) Boolean IsPathRoot(System.String) System.String NormalizeRelativePath(System.String, System.String) System.String NormalizeRelativePathHelper(System.String, System.String) System.String RemoveRelativeTokens(System.String) System.Collections.Generic.Stack`1[System.String] TokenizePathToStack(System.String, System.String) System.Collections.Generic.Stack`1[System.String] NormalizeThePath(System.String, System.Collections.Generic.Stack`1[System.String]) System.String GetChildName(System.String) System.String EnsureDriveIsRooted(System.String) Void MoveItem(System.String, System.String) Void MoveFileInfoItem(System.IO.FileInfo, System.String, Boolean, Boolean) Void MoveDirectoryInfoItem(System.IO.DirectoryInfo, System.String, Boolean) Void CopyAndDelete(System.IO.DirectoryInfo, System.String, Boolean) Void GetProperty(System.String, System.Collections.ObjectModel.Collection`1[System.String]) Void SetProperty(System.String, System.Management.Automation.PSObject) Void ClearProperty(System.String, System.Collections.ObjectModel.Collection`1[System.String]) System.Management.Automation.Provider.IContentReader GetContentReader(System.String) System.Object GetContentReaderDynamicParameters(System.String) System.Management.Automation.Provider.IContentWriter GetContentWriter(System.String) Void ClearContent(System.String) Void ValidateParameters(Boolean) Void GetSecurityDescriptor(System.String, System.Security.AccessControl.AccessControlSections) Void SetSecurityDescriptor(System.String, System.Security.AccessControl.ObjectSecurity) Void SetSecurityDescriptor(System.String, System.Security.AccessControl.ObjectSecurity, System.Security.AccessControl.AccessControlSections) Void \u003cRemoveDirectoryInfoItem\u003eg__WriteErrorHelper|43_0(System.Exception, \u003c\u003ec__DisplayClass43_0 ByRef)","DeclaredNestedTypes":"Microsoft.PowerShell.Commands.FileSystemProvider+ItemType Microsoft.PowerShell.Commands.FileSystemProvider+NativeMethods Microsoft.PowerShell.Commands.FileSystemProvider+NetResource Microsoft.PowerShell.Commands.FileSystemProvider+InodeTracker Microsoft.PowerShell.Commands.FileSystemProvider+\u003c\u003ec__DisplayClass43_0","DeclaredProperties":"","ImplementedInterfaces":"System.Management.Automation.IResourceSupplier System.Management.Automation.Provider.IContentCmdletProvider System.Management.Automation.Provider.IPropertyCmdletProvider System.Management.Automation.Provider.ISecurityDescriptorCmdletProvider System.Management.Automation.Provider.ICmdletProviderSupportsHelp","TypeInitializer":"Void .cctor()","IsNested":false,"Attributes":1048833,"IsVisible":true,"IsNotPublic":false,"IsPublic":true,"IsNestedPublic":false,"IsNestedPrivate":false,"IsNestedFamily":false,"IsNestedAssembly":false,"IsNestedFamANDAssem":false,"IsNestedFamORAssem":false,"IsAutoLayout":true,"IsLayoutSequential":false,"IsExplicitLayout":false,"IsClass":true,"IsInterface":false,"IsValueType":false,"IsAbstract":false,"IsSealed":true,"IsSpecialName":false,"IsImport":false,"IsSerializable":false,"IsAnsiClass":true,"IsUnicodeClass":false,"IsAutoClass":false,"IsArray":false,"IsByRef":false,"IsPointer":false,"IsPrimitive":false,"IsCOMObject":false,"HasElementType":false,"IsContextful":false,"IsMarshalByRef":false,"GenericTypeArguments":"","CustomAttributes":"[System.Management.Automation.OutputTypeAttribute(new Type[2] { typeof(System.String), typeof(System.IO.FileInfo) }, ProviderCmdlet = \"New-Item\")] [System.Management.Automation.OutputTypeAttribute(typeof(System.Security.AccessControl.FileSecurity), ProviderCmdlet = \"Set-Acl\")] [System.Management.Automation.OutputTypeAttribute(new Type[2] { typeof(System.String), typeof(System.Management.Automation.PathInfo) }, ProviderCmdlet = \"Resolve-Path\")] [System.Management.Automation.OutputTypeAttribute(typeof(System.Management.Automation.PathInfo), ProviderCmdlet = \"Push-Location\")] [System.Management.Automation.OutputTypeAttribute(new Type[2] { typeof(System.Byte), typeof(System.String) }, ProviderCmdlet = \"Get-Content\")] [System.Management.Automation.OutputTypeAttribute(typeof(System.IO.FileInfo), ProviderCmdlet = \"Get-Item\")] [System.Management.Automation.OutputTypeAttribute(new Type[2] { typeof(System.IO.FileInfo), typeof(System.IO.DirectoryInfo) }, ProviderCmdlet = \"Get-ChildItem\")] [System.Management.Automation.OutputTypeAttribute(new Type[2] { typeof(System.Security.AccessControl.FileSecurity), typeof(System.Security.AccessControl.DirectorySecurity) }, ProviderCmdlet = \"Get-Acl\")] [System.Management.Automation.OutputTypeAttribute(new Type[4] { typeof(System.Boolean), typeof(System.String), typeof(System.IO.FileInfo), typeof(System.IO.DirectoryInfo) }, ProviderCmdlet = \"Get-Item\")] [System.Management.Automation.OutputTypeAttribute(new Type[5] { typeof(System.Boolean), typeof(System.String), typeof(System.DateTime), typeof(System.IO.FileInfo), typeof(System.IO.DirectoryInfo) }, ProviderCmdlet = \"Get-ItemProperty\")] [System.Management.Automation.Provider.CmdletProviderAttribute(\"FileSystem\", (System.Management.Automation.Provider.ProviderCapabilities)52)]"},"HelpFile":"System.Management.Automation.dll-Help.xml","Name":"FileSystem","PSSnapIn":{"Name":"Microsoft.PowerShell.Core","IsDefault":true,"ApplicationBase":"C:\\Windows\\System32\\WindowsPowerShell\\v1.0","AssemblyName":"System.Management.Automation, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, ProcessorArchitecture=MSIL","ModuleName":"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\System.Management.Automation.dll","PSVersion":"5.1.26100.9168","Version":"3.0.0.0","Types":"types.ps1xml typesv3.ps1xml","Formats":"Certificate.format.ps1xml DotNetTypes.format.ps1xml FileSystem.format.ps1xml Help.format.ps1xml HelpV3.format.ps1xml PowerShellCore.format.ps1xml PowerShellTrace.format.ps1xml Registry.format.ps1xml","Description":"This Windows PowerShell snap-in contains cmdlets used to manage components of Windows PowerShell.","Vendor":"Microsoft Corporation","LogPipelineExecutionDetails":false},"ModuleName":"Microsoft.PowerShell.Core","Module":null,"Description":"","Capabilities":52,"Home":"C:\\Users\\User","Drives":["C"]},"ReadCount":1}.value;
-
-const bingoRefreshStyles = `
-  .bingo-battle { background: #09091c; color: #f5f3ff; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-  .bingo-topbar { min-height: 72px; padding: 0 28px; background: rgba(8, 8, 25, .92); border-bottom-color: rgba(255,255,255,.08); }
-  .bingo-brand { color: #f5f3ff; }
-  .bingo-brand span { background: linear-gradient(145deg, #8a5cff, #5b35e9); box-shadow: 0 0 20px rgba(111, 78, 255, .4); }
-  .bingo-mode-title { padding: 7px 12px; border: 1px solid rgba(91,61,246,.6); border-radius: 10px; background: rgba(91,61,246,.18); color: #a98cff; font-size: 12px; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; box-shadow: 0 0 18px rgba(91,61,246,.2); }
-  .bingo-layout { max-width: 1440px; grid-template-columns: minmax(290px, .95fr) minmax(390px, 1.15fr) minmax(250px, .72fr); gap: 16px; padding: 22px 18px; }
-  .bingo-main-column { display: contents; }
-  .bingo-side-column { grid-column: 3; grid-row: 1 / span 3; gap: 16px; }
-  .bingo-card-panel { grid-column: 1; grid-row: 1 / span 2; }
-  .bingo-number-panel { grid-column: 2; grid-row: 1; min-height: 250px; background: radial-gradient(circle at 50% 80%, rgba(46, 212, 122, .12), transparent 42%), linear-gradient(145deg, #171342, #0f1029); border-color: rgba(125, 94, 255, .34); }
-  .bingo-question-panel, .bingo-action-panel { grid-column: 2; grid-row: 2; background: linear-gradient(145deg, #171342, #11102b); border-color: rgba(125, 94, 255, .28); }
-  .bingo-panel, .bingo-number-panel { border-radius: 14px; padding: 18px; box-shadow: 0 12px 28px rgba(0,0,0,.18); }
-  .bingo-cell-live { background: rgba(255,255,255,.045); border-color: rgba(255,255,255,.13); border-radius: 7px; font-size: 18px; }
-  .bingo-cell-live.current { border-color: #ffc43d; background: rgba(255,196,61,.16); box-shadow: 0 0 18px rgba(255,196,61,.28); }
-  .bingo-cell-live.correct { background: rgba(38, 216, 132, .22); border-color: #27d884; color: #45e99a; }
-  .bingo-cell-live.wrong { background: rgba(255, 81, 61, .14); border-color: rgba(255,81,61,.55); color: #ff6957; }
-  .bingo-choices { grid-template-columns: 1fr; gap: 8px; }
-  .bingo-choices button { min-height: 48px; display: flex; align-items: center; border-radius: 8px; border-color: rgba(255,255,255,.1); background: rgba(255,255,255,.045); transition: border-color .15s, background .15s; }
-  .bingo-choices button:hover { border-color: #8a5cff; background: rgba(138,92,255,.12); }
-  .bingo-choices button.selected { border-color: #2ed47a; background: rgba(46,212,122,.18); color: #58e99a; box-shadow: inset 3px 0 #2ed47a; }
-  .bingo-primary { min-height: 42px; background: linear-gradient(135deg, #5b3df6, #7b55ff); }
-  .bingo-standing-panel, .bingo-chat { background: linear-gradient(145deg, #151238, #101025); }
-  @media (max-width: 1050px) { .bingo-layout { grid-template-columns: minmax(260px, .9fr) minmax(340px, 1.1fr); } .bingo-side-column { grid-column: 1 / -1; grid-row: auto; display: grid; grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 720px) { .bingo-topbar { padding: 12px 16px; flex-wrap: wrap; } .bingo-layout { display: flex; flex-direction: column; padding: 14px; } .bingo-side-column { display: flex; } .bingo-number-panel { min-height: 0; } }
-  .bingo-phase-countdown { min-width: 76px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 5px 10px; border: 2px solid #2ed47a; border-radius: 11px; background: rgba(46,212,122,.12); color: #55e99a; line-height: 1; }
-  .bingo-phase-countdown strong { font-size: 20px; }
-  .bingo-phase-countdown span { color: rgba(255,255,255,.52); font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-  .bingo-phase-countdown.ending { border-color: #ff4757; background: rgba(255,71,87,.14); color: #ff6b78; animation: bingoCountdownPulse .7s infinite; }
-  @keyframes bingoCountdownPulse { 50% { transform: scale(1.05); box-shadow: 0 0 18px rgba(255,71,87,.35); } }
-  @media (max-width: 520px) { .bingo-phase-countdown { order: 3; flex: 1; } }
-`;
+import { CountdownBar } from './LiveBattleCOMPONENTONLY/CountdownBar';
+import { BattleChat, BattleChatMessage } from './battle/BattleChat';
+import { PowerCard } from './PowerCards/PowerCard';
+import type { PowerCardData } from './PowerCards/types';
 
 type CellStatus = 'unanswered' | 'correct' | 'wrong';
 type BingoCell = { value: number; status: CellStatus };
 type BingoPlayer = { id: string; name: string; initials?: string; color?: string; wins?: number; stealBuffs?: number; retakeBuffs?: number; bingo?: boolean };
 type BingoQuestion = { id?: string | number; text?: string; question?: string; answer?: string; choices?: string[]; options?: string[] };
+
+// Approximate per-phase durations, only used to drive the header progress
+// bar — the server is still the source of truth for phaseSeconds itself.
+const PHASE_DURATIONS: Record<string, number> = {
+  rolling: 5,
+  question: 15,
+  stealing: 10,
+  retake: 15,
+};
 
 function bingoLetter(value: number) {
   if (value <= 15) return 'B';
@@ -66,6 +47,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
   const { user, navigate } = useApp();
   const { send, lastMessage, lastBingoState } = useBattleSocketContext();
   const { studentName, currentUserId } = getStudentIdentity(user);
+
   const [cells, setCells] = useState<BingoCell[]>([]);
   const [players, setPlayers] = useState<BingoPlayer[]>([]);
   const [round, setRound] = useState(0);
@@ -78,19 +60,42 @@ export function BattleBingo({ battleId }: { battleId: string }) {
   const [selectedChoiceIndex, setSelectedChoiceIndex] = useState<number | null>(null);
   const [answerFeedback, setAnswerFeedback] = useState<boolean | null>(null);
   const [calledNumbers, setCalledNumbers] = useState<number[]>([]);
-  const [chat, setChat] = useState<{ id: string; sender: string; message: string }[]>([]);
-  const [chatText, setChatText] = useState('');
+  const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
   const [targetId, setTargetId] = useState('');
   const [discardValue, setDiscardValue] = useState('');
   const [retakeValue, setRetakeValue] = useState('');
   const [winner, setWinner] = useState<BingoPlayer | null>(null);
+  const [retakeStarted, setRetakeStarted] = useState(false);   // ADD
+  const [retakeUsed, setRetakeUsed] = useState(false);          // ADD
+  const [retakeChoiceIndex, setRetakeChoiceIndex] = useState<number | null>(null); // ADD
 
   const me = players.find((player) => player.id === currentUserId);
-  const currentCell = cells.find((cell) => cell.value === rolledNumber);
   const currentQuestionText = question?.text || question?.question || '';
-  const questionChoices = (question?.choices || question?.options || []).map((choice: any) => typeof choice === 'string' ? choice : choice?.text || choice?.label || choice?.value || String(choice));
-  const phaseEnding = phaseSeconds > 0 && phaseSeconds <= 5;
-  const greenCount = cells.filter((cell) => cell.status === 'correct').length;
+  const questionChoices = (question?.choices || question?.options || []).map((choice: any) =>
+    typeof choice === 'string' ? choice : choice?.text || choice?.label || choice?.value || String(choice)
+  );
+
+  const buffCards: PowerCardData[] = [
+    ...Array.from({ length: (me?.stealBuffs || 0) }, (_, i) => ({
+      id: `steal-${i}`,
+      category: 'shield' as const,
+      name: 'Steal',
+      description: 'Blindly swap a number with another player.',
+      cost: 0,
+      rarity: 'rare' as const,
+      effect: { category: 'shield' as const, target: 'enemy' as const },
+    })),
+    ...Array.from({ length: (me?.retakeBuffs || 0)}, (_, i ) => ({
+      id: `retake-${i}`,
+      category: 'hp' as const,
+      name: 'Retake',
+      description: 'Recover one of your incorrect numbers.',
+      cost: 0,
+      rarity: 'rare' as const,
+      effect: { category: 'hp' as const, target: 'self' as const },
+    })),
+  ];
+  
   const bingoProgress = useMemo(() => {
     const green = new Set(cells.filter((cell) => cell.status === 'correct').map((cell) => cell.value));
     const lines = [
@@ -128,6 +133,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
 
     if (data.type === 'BINGO_STATE_SYNC') applyBingoState(data);
     else applyBingoState(lastBingoState);
+
     if (data.type === 'BINGO_ANSWER_RESULT' && data.playerId === currentUserId) {
       setAnswerFeedback(Boolean(data.isCorrect));
       setCells(normalizeCells(data.card));
@@ -138,8 +144,18 @@ export function BattleBingo({ battleId }: { battleId: string }) {
       setWinner(data.winner || null);
       setPhase('finished');
     }
+    // FIX: carry userId through so the chat panel can tell "You" apart
+    // from everyone else, matching how the other battle modes tag isMe.
     if (data.type === 'BINGO_CHAT') {
-      setChat((previous) => [...previous, { id: `${data.sender}-${data.timestamp}`, sender: data.sender || 'Player', message: data.message }]);
+      setChatMessages((previous) => [
+        ...previous,
+        {
+          id: `${data.userId || data.sender}-${data.timestamp || Date.now()}`,
+          sender: data.sender || 'Player',
+          text: data.message,
+          isMe: data.userId === currentUserId,
+        },
+      ]);
     }
   }, [lastMessage, lastBingoState, battleId, currentUserId]);
 
@@ -154,6 +170,18 @@ export function BattleBingo({ battleId }: { battleId: string }) {
     setSelectedChoiceIndex(null);
     setAnswerFeedback(null);
   }, [round, rolledNumber]);
+
+  // One retake attempt per retake phase — re-arm everything the moment a
+  // new retake phase starts, and lock it the instant useRetake() fires.
+  useEffect(() => {
+    if (phase === 'retake') {
+      setRetakeStarted(false);
+      setRetakeUsed(false);
+      setRetakeChoiceIndex(null);
+      setRetakeValue('');
+      setAnswer('');
+    }
+  }, [phase]);
 
   useEffect(() => {
     if (phase !== 'finished' || !winner) return;
@@ -175,56 +203,407 @@ export function BattleBingo({ battleId }: { battleId: string }) {
     setDiscardValue('');
   }
 
-  function useRetake() {
-    if (phase !== 'retake' || !answer) return;
+    function useRetake() {
+    if (phase !== 'retake' || !answer || retakeUsed) return;
     send({ type: 'USE_BINGO_RETAKE', mode: 'BINGO', battleId, answer, retakeValue: Number(retakeValue) });
-    setAnswer('');
-    setRetakeValue('');
+    setRetakeUsed(true);
   }
 
-  function sendChat(event: FormEvent) {
-    event.preventDefault();
-    if (!chatText.trim()) return;
-    send({ type: 'BINGO_CHAT', mode: 'BINGO', battleId, sender: studentName, userId: currentUserId, message: chatText.trim() });
-    setChatText('');
+  function handleSendChat(text: string) {
+    send({ type: 'BINGO_CHAT', mode: 'BINGO', battleId, sender: studentName, userId: currentUserId, message: text });
   }
 
   if (phase === 'finished') {
-    return <><style>{bingoStyles}</style><style>{bingoRefreshStyles}</style><main className="bingo-battle bingo-finished"><Trophy size={56} /><h1>{winner?.id === currentUserId ? 'Bingo! You won!' : `${winner?.name || 'A player'} won Bingo!`}</h1><p>The match is complete. Redirecting to resultsâ€¦</p></main></>;
+    return (
+      <div className="min-h-screen bg-[#131524] text-white flex flex-col items-center justify-center gap-3 font-sans">
+        <Trophy size={56} className="text-[#FFC93C]" />
+        <h1 className="text-2xl font-black">
+          {winner?.id === currentUserId ? 'Bingo! You won!' : `${winner?.name || 'A player'} won Bingo!`}
+        </h1>
+        <p className="text-sm text-[#8F93A8]">The match is complete. Redirecting to results…</p>
+      </div>
+    );
   }
 
   return (
-    <><style>{bingoStyles}</style><style>{bingoRefreshStyles}</style><main className="bingo-battle">
-      <header className="bingo-topbar"><div className="bingo-brand"><span>Q</span> QuizArena</div><div className="bingo-mode-title">Bingo Battle</div><div className="bingo-round"><Grid3X3 size={17} /> Round {round || 1}</div><div className={`bingo-phase-countdown ${phaseEnding ? "ending" : ""}`}><strong>{phaseSeconds > 0 ? `${phaseSeconds}s` : "--"}</strong><span>remaining</span></div><div className="bingo-phase"><span className="bingo-live-dot" /> {phase.toUpperCase()} {phaseSeconds > 0 && `Â· ${phaseSeconds}s`}</div></header>
-      <div className="bingo-layout">
-        <section className="bingo-main-column">
-          <div className="bingo-number-panel">
-            <div><p className="bingo-eyebrow">Current draw</p><div className="bingo-number"><span>{rolledNumber ? bingoLetter(rolledNumber) : '?'}</span>{rolledNumber ?? '--'}</div></div>
-            <div className="bingo-called"><p className="bingo-eyebrow">Called numbers</p><div>{calledNumbers.length ? calledNumbers.map((number) => <span key={number}>{bingoLetter(number)}-{number}</span>) : <small>Waiting for the first draw</small>}</div></div>
+    <div className="min-h-screen bg-[#131524] text-white flex flex-col font-sans">
+      {/* Header Bar — same shell as every other battle mode */}
+      <header className="px-6 py-3 flex items-center justify-between border-b border-white/10">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 font-black text-lg">
+            <div className="size-7 bg-[#5B3DF6] rounded-lg flex items-center justify-center">
+              <Zap size={16} fill="#FFF" color="transparent" />
+            </div>
+            QuizArena
+          </div>
+          <div className="flex items-center gap-2 text-xs text-[#8F93A8]">
+            <span>Battle Lobby</span>
+            <ChevronRight size={12} />
+            <span className="text-white font-semibold">Bingo Battle</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="w-40">
+            <CountdownBar timeLeft={phaseSeconds} timeLimit={PHASE_DURATIONS[phase] ?? Math.max(phaseSeconds, 1)} />
+          </div>
+          <div className="bg-[#5B3DF6]/15 border border-[#5B3DF6] px-3 py-1 rounded-full text-xs font-extrabold text-[#A98CFF] flex items-center gap-1.5">
+            <Grid3X3 size={14} /> {phase.toUpperCase()}
+          </div>
+        </div>
+      </header>
+
+      {buffCards.length > 0 && (
+        <div className="fixed left-[30px] top-60 z-30">
+          <div className="relative flex h-44 w-64 items-center">
+            {buffCards.map((card, index) => {
+              const mid = (buffCards.length - 1) / 2;
+              return (
+                <div
+                  key={card.id}
+                  className="absolute left-0 top-1/2 transition-all duration-500"
+                  style={{
+                    transform: `translateY(-50%) rotate(${90 + (index - mid) * 12}deg) translateX(${index * 20}px)`,
+                    transformOrigin: 'left center',
+                    zIndex: buffCards.length - index,
+                  }}
+                >
+                  <PowerCard card={card} state="revealed" size="md" />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+
+      {/* Main Grid — same two-column shape as Royale/TeamMode */}
+      <div className="flex-1 p-5 pl-5 lg:pl-44 grid grid-cols-[1fr_280px] gap-5 min-h-0">
+        <div className="flex flex-col gap-4">
+          {/* Round row */}
+          <div className="flex items-center justify-between px-2">
+            <div className="flex items-center gap-1.5 bg-white/5 px-3 py-1 rounded-lg">
+              <span className="text-[10px] font-extrabold text-[#8F93A8] uppercase">ROUND</span>
+              <span className="text-base font-black">{round || 1}</span>
+            </div>
+
+            <div className="flex flex-col items-center">
+              <span className="text-3xl font-black leading-none">
+                {rolledNumber ? `${bingoLetter(rolledNumber)}-${rolledNumber}` : '--'}
+              </span>
+              <span className="text-[9px] font-extrabold text-[#8F93A8] tracking-widest uppercase">
+                CURRENT DRAW
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-[#2ED47A]/10 border border-[#2ED47A]/30 px-3 py-1 rounded-xl">
+              <span className="text-[10px] font-extrabold text-[#2ED47A] uppercase">LINES:</span>
+              <span className="text-sm font-black text-white">{bingoProgress} / 1</span>
+            </div>
           </div>
 
-          <section className="bingo-panel bingo-card-panel"><div className="bingo-panel-heading"><div><p className="bingo-eyebrow">Your board</p><h2>First to five in a row</h2></div><strong>{bingoProgress}/1 line</strong></div><div className="bingo-letters"><b>B</b><b>I</b><b>N</b><b>G</b><b>O</b></div><div className="bingo-grid-live">{cells.length === 25 ? cells.map((cell) => <div key={cell.value} className={`bingo-cell-live ${cell.status} ${cell.value === rolledNumber ? 'current' : ''}`}><span>{cell.value}</span>{cell.status === 'correct' && <Check size={16} />}{cell.status === 'wrong' && <X size={16} />}</div>) : <div className="bingo-empty-board">Your board is syncingâ€¦</div>}</div><div className="bingo-legend"><span><i className="dot current-dot-live" /> Current</span><span><i className="dot correct-dot-live" /> Correct</span><span><i className="dot wrong-dot-live" /> Incorrect</span></div></section>
+          {/* Called numbers strip */}
+          <div className="bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3 flex items-center gap-2 overflow-x-auto">
+            <span className="text-[10px] font-extrabold text-[#8F93A8] uppercase flex-shrink-0">Called</span>
+            {calledNumbers.length ? (
+              calledNumbers.map((n) => (
+                <span key={n} className="flex-shrink-0 bg-black/20 border border-white/10 rounded-lg px-2 py-1 text-xs font-bold">
+                  {bingoLetter(n)}-{n}
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-white/30 italic">Waiting for the first draw…</span>
+            )}
+          </div>
 
-          {phase === 'stealing' && <section className="bingo-panel bingo-action-panel"><div><p className="bingo-eyebrow">10-second steal phase</p><h2>Swap with a fellow player</h2><p className="bingo-muted">Choose a target blindly. If they own the drawn number, your selected number is exchanged.</p></div><div className="bingo-action-row"><select value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">Choose target</option>{players.filter((player) => player.id !== currentUserId).map((player) => <option key={player.id} value={player.id}>{player.name}</option>)}</select><select value={discardValue} onChange={(event) => setDiscardValue(event.target.value)}><option value="">Discard one of yours</option>{cells.map((cell) => <option key={cell.value} value={cell.value}>{bingoLetter(cell.value)}-{cell.value}</option>)}</select><button onClick={useSteal} disabled={!targetId || !discardValue}><Shield size={16} /> Use Steal ({me?.stealBuffs || 0})</button></div></section>}
+          {/* Bingo Board — takes the visual slot the "Question Box" fills in Royale */}
+                    <div className="bg-[#5B3DF6]/10 border border-[#5B3DF6]/30 rounded-2xl p-4">
+            <div className="flex gap-2 mb-2">
+              <span className="bg-[#5B3DF6]/20 text-[#A98CFF] text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
+                Your Board
+              </span>
+              <span className="bg-[#5B3DF6]/20 text-[#A98CFF] text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
+                First to five in a row
+              </span>
+            </div>
 
-          {phase === 'question' && <section className="bingo-panel bingo-question-panel"><div className="bingo-panel-heading"><div><p className="bingo-eyebrow">Question for {rolledNumber ? `${bingoLetter(rolledNumber)}-${rolledNumber}` : 'your number'}</p><h2>{eligiblePlayerIds.includes(currentUserId) ? currentQuestionText || 'Loading questionâ€¦' : 'You do not own the drawn number'}</h2></div><Clock3 size={22} /></div>{eligiblePlayerIds.includes(currentUserId) && currentQuestionText && <form onSubmit={submitAnswer}>{questionChoices.length > 0 ? <div className="bingo-choices">{questionChoices.map((choice, index) => <button type="button" key={`${choice}-${index}`} className={selectedChoiceIndex === index ? 'selected' : ''} aria-pressed={selectedChoiceIndex === index} onClick={() => { setAnswer(choice); setSelectedChoiceIndex(index); setAnswerFeedback(null); }}>{choice}</button>)}</div> : <input value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type your answer" />}{answerFeedback !== null && <div className={answerFeedback ? 'bingo-feedback correct' : 'bingo-feedback wrong'}>{answerFeedback ? 'Correct! Your number is green.' : 'Incorrect. Your number stays red.'}</div>}<button type="submit" className="bingo-primary" disabled={!answer}><Zap size={16} /> Submit answer</button></form>}</section>}
+            <div className="max-w-[300px] mx-auto">
+              <div className="grid grid-cols-5 gap-1 mb-1.5 text-center">
+                {['B', 'I', 'N', 'G', 'O'].map((letter, i) => (
+                  <span
+                    key={letter}
+                    className="text-xs font-black"
+                    style={{ color: ['#5bc8f6', '#2ed47a', '#ffc93c', '#ff9f40', '#ff6b4a'][i] }}
+                  >
+                    {letter}
+                  </span>
+                ))}
+              </div>
 
-          {phase === 'retake' && <section className="bingo-panel bingo-action-panel"><p className="bingo-eyebrow">Retake phase</p><h2>Recover a red answer</h2><p className="bingo-muted">Use one Retake Buff on an incorrect number.</p><form onSubmit={(event) => { event.preventDefault(); useRetake(); }}><select value={retakeValue} onChange={(event) => setRetakeValue(event.target.value)}><option value="">Choose a red number</option>{cells.filter((cell) => cell.status === 'wrong').map((cell) => <option key={cell.value} value={cell.value}>{bingoLetter(cell.value)}-{cell.value}</option>)}</select><input value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Answer the retake question" /><button className="bingo-primary" disabled={!answer || !retakeValue}><RefreshCcw size={16} /> Retake ({me?.retakeBuffs || 0})</button></form></section>}
-        </section>
+              <div className="grid grid-cols-5 gap-1">
+                {cells.length === 25 ? (
+                  cells.map((cell) => {
+                    const isCurrent = cell.value === rolledNumber;
+                    return (
+                      <div
+                        key={cell.value}
+                        className={`aspect-square rounded-md flex items-center justify-center relative font-black text-xs border ${
+                          cell.status === 'correct'
+                            ? 'bg-[#2ED47A]/20 border-[#2ED47A] text-[#2ED47A]'
+                            : cell.status === 'wrong'
+                              ? 'bg-[#FF4757]/15 border-[#FF4757]/50 text-white/60'
+                              : isCurrent
+                                ? 'bg-[#FFC93C]/10 border-[#FFC93C] text-[#FFC93C]'
+                                : 'bg-white/[0.03] border-white/10 text-white/80'
+                        }`}
+                      >
+                        {cell.value}
+                        {cell.status === 'correct' && <Check size={10} className="absolute top-0.5 right-0.5" />}
+                        {cell.status === 'wrong' && <X size={10} className="absolute top-0.5 right-0.5" />}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="col-span-5 py-8 text-center text-white/40 text-xs">Your board is syncing…</div>
+                )}
+              </div>
+            </div>
+          </div>
 
-        <aside className="bingo-side-column"><section className="bingo-panel bingo-standing-panel"><div className="bingo-panel-heading"><h2><Users size={17} /> Standings</h2><span>{players.length}</span></div>{players.sort((a, b) => (b.wins || 0) - (a.wins || 0)).map((player, index) => <div className={`bingo-standing ${player.id === currentUserId ? 'you' : ''}`} key={player.id}><b>#{index + 1}</b><span className="bingo-avatar" style={{ background: player.color || '#5B3DF6' }}>{player.initials || player.name.slice(0, 2).toUpperCase()}</span><span className="bingo-player-name">{player.name}</span><strong>{player.wins || 0} wins</strong></div>)}</section><section className="bingo-panel bingo-buffs"><p className="bingo-eyebrow">Your buffs</p><div><span><Shield size={15} /> Steal <b>{me?.stealBuffs || 0}</b></span><span><RefreshCcw size={15} /> Retake <b>{me?.retakeBuffs || 0}</b></span></div></section><section className="bingo-panel bingo-chat"><div className="bingo-panel-heading"><h2><MessageCircle size={17} /> Quick chat</h2><span>{chat.length}</span></div><div className="bingo-chat-list">{chat.slice(-8).map((item) => <p key={item.id}><strong>{item.sender}</strong>{item.message}</p>)}</div><form onSubmit={sendChat}><input value={chatText} onChange={(event) => setChatText(event.target.value)} placeholder="Send a message" /><button aria-label="Send message"><Send size={15} /></button></form></section><div className="bingo-rule-note"><CircleHelp size={17} /><span>Every 2 wins grants a random buff. Retakes open every 3 rounds.</span></div></aside>
+          {/* Phase-driven action area — same visual slot as the "Options" section in Royale */}
+          {phase === 'question' && (
+            <div className="flex flex-col gap-3">
+              <div className="bg-[#1C1F33] border border-white/10 rounded-2xl p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[10px] font-extrabold text-[#8F93A8] uppercase">
+                    Question for {rolledNumber ? `${bingoLetter(rolledNumber)}-${rolledNumber}` : 'your number'}
+                  </span>
+                  <Clock3 size={16} className="text-[#8F93A8]" />
+                </div>
+                <h2 className="m-0 text-lg font-extrabold leading-snug mb-4">
+                  {eligiblePlayerIds.includes(currentUserId)
+                    ? currentQuestionText || 'Loading question…'
+                    : 'You do not own the drawn number'}
+                </h2>
+
+                {eligiblePlayerIds.includes(currentUserId) && currentQuestionText && (
+                  <form onSubmit={submitAnswer} className="flex flex-col gap-3">
+                    {questionChoices.length > 0 ? (
+                      questionChoices.map((choice, index) => (
+                        <div
+                          key={`${choice}-${index}`}
+                          onClick={() => { setAnswer(choice); setSelectedChoiceIndex(index); setAnswerFeedback(null); }}
+                          className={`p-4 rounded-xl flex items-center gap-4 cursor-pointer transition-all border ${
+                            selectedChoiceIndex === index
+                              ? 'bg-white/10 border-[#5B3DF6]'
+                              : 'bg-white/[0.03] border-white/10'
+                          }`}
+                        >
+                          <span className="font-bold text-base text-white/90">{choice}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <input
+                        value={answer}
+                        onChange={(e) => setAnswer(e.target.value)}
+                        placeholder="Type your answer"
+                        className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-semibold text-white outline-none focus:border-[#5B3DF6]"
+                      />
+                    )}
+                    <button
+                      type="submit"
+                      disabled={!answer}
+                      className="bg-[#5B3DF6] disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold py-3 rounded-xl flex items-center justify-center gap-2"
+                    >
+                      <Zap size={16} /> Submit answer
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              {answerFeedback !== null && (
+                <div className={`rounded-xl border px-4 py-3 text-center text-sm font-extrabold ${
+                  answerFeedback
+                    ? 'border-[#2ED47A]/40 bg-[#2ED47A]/10 text-[#2ED47A]'
+                    : 'border-[#FF4757]/40 bg-[#FF4757]/10 text-[#FF4757]'
+                }`}>
+                  {answerFeedback ? 'Correct! Your number is green.' : 'Incorrect. Your number stays red.'}
+                </div>
+              )}
+            </div>
+          )}
+
+          {phase === 'stealing' && (
+            <div className="bg-[#1C1F33] border border-white/10 rounded-2xl p-5">
+              <span className="text-[10px] font-extrabold text-[#8F93A8] uppercase">10-second steal phase</span>
+              <h2 className="m-0 mt-1 mb-1 text-lg font-extrabold">Swap with a fellow player</h2>
+              <p className="text-xs text-white/50 mb-4">
+                Choose a target blindly. If they own the drawn number, your selected number is exchanged.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <select
+                  value={targetId}
+                  onChange={(e) => setTargetId(e.target.value)}
+                  className="flex-1 min-w-[150px] bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
+                >
+                  <option value="">Choose target</option>
+                  {players.filter((p) => p.id !== currentUserId).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={discardValue}
+                  onChange={(e) => setDiscardValue(e.target.value)}
+                  className="flex-1 min-w-[150px] bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
+                >
+                  <option value="">Discard one of yours</option>
+                  {cells.map((cell) => (
+                    <option key={cell.value} value={cell.value}>{bingoLetter(cell.value)}-{cell.value}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={useSteal}
+                  disabled={!targetId || !discardValue}
+                  className="bg-[#4DA3FF] disabled:opacity-40 disabled:cursor-not-allowed text-black font-extrabold px-4 py-2 rounded-xl flex items-center gap-2"
+                >
+                  <Shield size={16} /> Use Steal ({me?.stealBuffs || 0})
+                </button>
+              </div>
+            </div>
+          )}
+
+                   {phase === 'retake' && (
+            <div className="bg-[#1C1F33] border border-white/10 rounded-2xl p-5">
+              <span className="text-[10px] font-extrabold text-[#8F93A8] uppercase">Retake phase</span>
+              <h2 className="m-0 mt-1 mb-1 text-lg font-extrabold">Recover a red answer</h2>
+              <p className="text-xs text-white/50 mb-4">
+                {retakeUsed
+                  ? 'You already used your retake this phase.'
+                  : 'Use one Retake Buff on an incorrect number.'}
+              </p>
+
+              {!retakeStarted ? (
+                <div className="flex flex-wrap gap-2">
+                  <select
+                    value={retakeValue}
+                    onChange={(e) => setRetakeValue(e.target.value)}
+                    disabled={retakeUsed || (me?.retakeBuffs || 0) <= 0}
+                    className="flex-1 min-w-[150px] bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white disabled:opacity-40"
+                  >
+                    <option value="">Choose a red number</option>
+                    {cells.filter((cell) => cell.status === 'wrong').map((cell) => (
+                      <option key={cell.value} value={cell.value}>{bingoLetter(cell.value)}-{cell.value}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setRetakeStarted(true)}
+                    disabled={retakeUsed || !retakeValue || (me?.retakeBuffs || 0) <= 0}
+                    className="bg-[#2ED47A] disabled:opacity-40 disabled:cursor-not-allowed text-black font-extrabold px-4 py-2 rounded-xl flex items-center gap-2"
+                  >
+                    <RefreshCcw size={16} /> Retake ({me?.retakeBuffs || 0})
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={(e) => { e.preventDefault(); useRetake(); }} className="flex flex-col gap-3">
+                  <div className="text-xs text-white/50">
+                    Retaking <strong className="text-white">{bingoLetter(Number(retakeValue))}-{retakeValue}</strong>
+                  </div>
+
+                  <h3 className="m-0 text-base font-extrabold leading-snug">
+                    {currentQuestionText || 'Loading question…'}
+                  </h3>
+
+                  {questionChoices.length > 0 ? (
+                    questionChoices.map((choice, index) => (
+                      <div
+                        key={`${choice}-${index}`}
+                        onClick={() => {
+                          if (retakeUsed) return;
+                          setAnswer(choice);
+                          setRetakeChoiceIndex(index);
+                        }}
+                        className={`p-4 rounded-xl flex items-center gap-4 cursor-pointer transition-all border ${
+                          retakeChoiceIndex === index
+                            ? 'bg-white/10 border-[#2ED47A]'
+                            : 'bg-white/[0.03] border-white/10'
+                        } ${retakeUsed ? 'pointer-events-none opacity-60' : ''}`}
+                      >
+                        <span className="font-bold text-base text-white/90">{choice}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <input
+                      value={answer}
+                      onChange={(e) => setAnswer(e.target.value)}
+                      placeholder="Answer the retake question"
+                      disabled={retakeUsed}
+                      className="bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-semibold text-white outline-none focus:border-[#2ED47A] disabled:opacity-40"
+                    />
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={!answer || retakeUsed}
+                    className="bg-[#2ED47A] disabled:opacity-40 disabled:cursor-not-allowed text-black font-extrabold py-3 rounded-xl flex items-center justify-center gap-2"
+                  >
+                    <RefreshCcw size={16} /> Submit retake answer
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Right Sidebar — same shell as Royale's Survivors panel */}
+        <div className="bg-[#1C1F33] border border-white/10 rounded-2xl p-4 flex flex-col gap-4">
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <span className="text-xs font-extrabold flex items-center gap-1.5">
+              <Trophy size={15} className="text-[#FFC93C]" /> Standings
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            {players.length === 0 ? (
+              <span className="text-xs text-white/30 italic">Waiting for players…</span>
+            ) : (
+              [...players].sort((a, b) => (b.wins || 0) - (a.wins || 0)).map((p, idx) => (
+                <div
+                  key={p.id}
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded-lg ${
+                    p.id === currentUserId ? 'bg-[#5B3DF6]/10 border border-[#5B3DF6]/30' : ''
+                  }`}
+                >
+                  <span className="text-[10px] font-black text-[#8F93A8] w-4">#{idx + 1}</span>
+                  <div
+                    className="size-7 rounded-full flex items-center justify-center font-extrabold text-[10px] text-white flex-shrink-0"
+                    style={{ backgroundColor: p.color || '#5B3DF6' }}
+                  >
+                    {p.initials || p.name.slice(0, 2).toUpperCase()}
+                  </div>
+                  <span className="text-xs font-bold flex-1 truncate">{p.name}</span>
+                  <span className="text-xs font-black text-[#FFC93C]">{p.wins || 0}</span>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Buffs — Bingo's own steal/retake economy, shown in the same
+              visual weight the other modes give HP/points */}
+          {/* Global match chat — reuses the same BattleChat component as
+              Royale/LiveQuiz/TeamMode instead of Bingo's old bespoke form */}
+          <div className="border-t border-white/10 pt-4">
+            <BattleChat mode="free" title="Match Chat" messages={chatMessages} onSend={handleSendChat} height={220} placeholder="Say something…" />
+          </div>
+
+          <div className="flex items-start gap-2 text-[11px] text-white/40 leading-relaxed">
+            <CircleHelp size={14} className="flex-shrink-0 mt-0.5" />
+            <span>Every 2 wins grants a random buff. Retakes open every 3 rounds.</span>
+          </div>
+        </div>
       </div>
-    </main></>
+    </div>
   );
 }
 
 export default BattleBingo;
-
-
-
-
-
-
-
-
-

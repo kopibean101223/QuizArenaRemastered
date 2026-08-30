@@ -17,6 +17,7 @@ import { AnswerBtn } from "./LiveBattleCOMPONENTONLY/AnswerButton";
 import { AnswerInput } from "./battle/Answer_Input";
 import { BattleChat } from "./battle/BattleChat";
 import { LeaderRow } from "./LiveBattleCOMPONENTONLY/LeaderRow";
+import { PowerCardTray } from "./PowerCards/PowerCardTray";   // <-- ADD THIS LINE
 import {
   getStudentIdentity,
   computeTimeLeft,
@@ -279,9 +280,11 @@ export function LiveBattle({ battleId }: { battleId: string }) {
           </div>
         </div>
 
+ <PowerCardTray topClassName="top-60" />
+
+
         <div style={{ flex: 1, display: "flex", gap: 0, overflow: "hidden" }}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "20px", minWidth: 0 }}>
-            <div style={{ background: "rgba(255,255,255,0.05)", border: "1.5px solid rgba(255,255,255,0.08)", borderRadius: 24, padding: "22px 26px", marginBottom: 16, flexShrink: 0 }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "20px 20px 20px 190px", minWidth: 0 }}>            <div style={{ background: "rgba(255,255,255,0.05)", border: "1.5px solid rgba(255,255,255,0.08)", borderRadius: 24, padding: "22px 26px", marginBottom: 16, flexShrink: 0 }}>
               <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
                 <span style={{ background: C.indigoLight, border: "1.5px solid rgba(91,61,246,0.3)", borderRadius: 8, padding: "3px 10px", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: "#A08FFF" }}>{currentQuestion.subject}</span>
               </div>

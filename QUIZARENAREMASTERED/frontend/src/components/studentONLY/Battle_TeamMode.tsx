@@ -13,7 +13,7 @@ import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProv
 import { CountdownBar } from './LiveBattleCOMPONENTONLY/CountdownBar';
 import { AnswerInput } from './battle/Answer_Input';
 import { BattleChat, BattleChatMessage } from './battle/BattleChat';
-
+import { PowerCardTray } from './PowerCards/PowerCardTray';
 export interface TeamMemberAnswer {
   memberId: string;
   memberName: string;
@@ -267,9 +267,13 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
         </div>
       </header>
 
+
+ <PowerCardTray topClassName="top-60" />
+
+
       {/* Content */}
-      <div className="flex-1 p-5 grid grid-cols-[1fr_280px] gap-5">
-        <div className="flex flex-col gap-4">
+<div className="flex-1 p-5 pl-5 lg:pl-44 grid grid-cols-[1fr_280px] gap-5">      
+    <div className="flex flex-col gap-4">
           <div className="bg-[#1C1F33] border border-white/10 rounded-2xl p-6">
             <span className="bg-[#5B3DF6]/20 text-[#5B3DF6] text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
               {currentQuestion.subject}
