@@ -20,6 +20,8 @@ export interface AppUser {
   email: string;
   name: string;
   role: Role | null;
+  username?: string;
+  user_metadata?: any;
 }
 
 interface AppContextValue {
@@ -74,7 +76,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (user.role === "student" && PROFESSOR_PAGES.includes(target)) {
-      setPageInternal("lobby");
+      setPageInternal("student_dashboard");
       return;
     }
 
@@ -122,7 +124,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (appUser.role === "professor" && STUDENT_PAGES.includes(urlPage)) {
             setPageInternal("dashboard");
           } else if (appUser.role === "student" && PROFESSOR_PAGES.includes(urlPage)) {
-            setPageInternal("lobby");
+            setPageInternal("student_dashboard");
           } else {
             setPageInternal(urlPage);
           }

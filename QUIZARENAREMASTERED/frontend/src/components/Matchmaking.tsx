@@ -13,6 +13,9 @@ import { toast } from "sonner";
 import { useBotSimulator } from "@/hooks/useBotSimulator";
 import { CountdownDisplay } from "./studentONLY/ComponentsLobby/CountdownDisplay";
 import { ProfBingoMonitor } from "./profonly/ProfBingoMonitor";
+import { ProfBossRaid } from "./gamemodes/ProfBossRaid";
+import { ProfEndlessMode } from "./gamemodes/ProfEndlessMode";
+import { BattleSocketProvider } from "@/lib/student/battle/useBattleSocketProvider";
 
 // ─── Tokens ────────────────────────────────────────────────────────────────────
 const C = {
@@ -34,7 +37,7 @@ interface Student {
 }
 
 // ─── Lobby Type ────────────────────────────────────────────────────────────────
-type LobbyType = "individual" | "team" | "royale" | "chaosclash" | "bingo";
+type LobbyType = "individual" | "team" | "royale" | "bossraid" | "endless" | "chaosclash" | "bingo";
 
 const LOBBY_TYPES: { id: LobbyType; label: string; emoji: string; desc: string }[] = [
   { id: "individual", label: "Individual", emoji: "⚡", desc: "Solo play — go live now or schedule for later." },
@@ -42,6 +45,8 @@ const LOBBY_TYPES: { id: LobbyType; label: string; emoji: string; desc: string }
   { id: "royale", label: "Battle Royale", emoji: "👑", desc: "Elimination mode. Always live — no scheduling." },
   { id: "chaosclash", label: "ChaosClash", emoji: "💥", desc: "Fast elimination chaos. Always live — no scheduling." },
   { id: "bingo", label: "Bingo Arena", emoji: "🎯", desc: "Interactive grid-based matrix challenge mode." },
+  { id: "bossraid", label: "Boss Raid", emoji: "🐉", desc: "Class vs Teacher. Drag and drop questions." },
+  { id: "endless", label: "Endless", emoji: "♾️", desc: "Survival mode. Keep answering to stay alive." },
 ];
 
 interface QuestionItem {
@@ -284,15 +289,25 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [teamSize, setTeamSize] = useState(3);
   const [previewed, setPreviewed] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
+  const [asyncQuizzes, setAsyncQuizzes] = useState<any[]>([]);
+  const [viewingAsyncQuiz, setViewingAsyncQuiz] = useState<any>(null);
 
   // Battle Royale is always live — force it and clear any scheduled deadline whenever selected.
+  // Endless Mode is always async — force isLive to false.
   useEffect(() => {
     if (lobbyType === "royale" || lobbyType === "chaosclash") {
       setIsLive(true);
       setDeadline('');
+    } else if (lobbyType==="bossraid"){
+      setIsLive(true);
+        setDeadline('');
+    }
+      else if (lobbyType === "endless") {
+      setIsLive(false);
     }
   }, [lobbyType]);
   
+  const [asyncFilter, setAsyncFilter] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE');
   const [inLobby, setInLobby] = useState(false);
   const [activeSessionExists, setActiveSessionExists] = useState(false);
   const [roomCode, setRoomCode] = useState(() => generateSecureRoomCode());
@@ -306,7 +321,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [battleStarted, setBattleStarted] = useState(false);
   const [professorView, setProfessorView] = useState<"lobby" | "bingo-monitor">("lobby");
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [timeRemaining, setTimeRemaining] = useState(60);
+  const [activeCustomQuestion, setActiveCustomQuestion] = useState<any>(null);
+  const [timeRemaining, setTimeRemaining] = useState(30);
   const [liveFeed, setLiveFeed] = useState<any[]>([]);
   const [bingoState, setBingoState] = useState({ phase: 'rolling', phaseSeconds: 0, round: 0, rolledNumber: null as number | null, eligiblePlayerIds: [] as string[], answeredPlayerIds: [] as string[], question: null as any });
   const [bingoAnswers, setBingoAnswers] = useState<any[]>([]);
@@ -318,6 +334,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [groups, setGroups] = useState<string[]>(['Team 1', 'Team 2']);
 
   const [quizCompleted, setQuizCompleted] = useState(false);
+  const [lastMessage, setLastMessage] = useState<any>(null);
   const [isAdvancing, setIsAdvancing] = useState(false);
   const isAdvancingRef = useRef(false);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -403,6 +420,24 @@ const handleRemoveGroup = (groupName: string) => {
     };
     checkActiveSession();
   }, [supabase, professorId]);
+
+  // Fetch active async quizzes
+  useEffect(() => {
+    const fetchAsyncQuizzes = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      const currentProfId = professorId || user?.id;
+      if (!currentProfId) return;
+      const { data } = await supabase
+        .from('quiz_sessions')
+        .select('*')
+        .eq('professor_id', currentProfId)
+        .eq('is_live', false)
+        .in('status', ['PENDING', 'ACTIVE', 'COMPLETED'])
+        .order('created_at', { ascending: false });
+      if (data) setAsyncQuizzes(data);
+    };
+    fetchAsyncQuizzes();
+  }, [supabase, professorId, isDeploying]);
 
   // Load Sections and Question Banks from API
   useEffect(() => {
@@ -524,7 +559,7 @@ const handleRemoveGroup = (groupName: string) => {
           type: 'JOIN_BATTLE',
           battleId: sessionId,
           totalQuestions: randomizedQuestions.length || 37,
-          timeLimit: 60,
+          timeLimit: 30,
           sender: 'Professor'
         }));
           console.log("[TEAM][prof] onopen, lobbyType =", lobbyType);
@@ -569,15 +604,54 @@ const handleRemoveGroup = (groupName: string) => {
         try {
           const data = JSON.parse(event.data);
             console.log("[TEAM][prof] received message type:", data.type, data);   // <-- add this line first thing
+          setLastMessage(data);
           if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'SCORE_UPDATED') {
             setIsSyncing(false);
             if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
+            if (data.customQuestion) {
+              setActiveCustomQuestion(data.customQuestion);
+            } else if (data.type === 'QUESTION_ADVANCED' || data.type === 'ROOM_STATE_SYNC') {
+              setActiveCustomQuestion(null);
+            }
             if (data.startedAt) {
-              const limit = data.timeLimit || 60;
+              const limit = data.timeLimit || 30;
               const elapsed = Math.floor((Date.now() - data.startedAt) / 1000);
               setTimeRemaining(Math.max(0, limit - elapsed));
             }
-            if (data.history) setLiveFeed(data.history);
+            if (data.history) {
+              setLiveFeed(data.history);
+              // Recover students from history if they haven't scored yet
+              const historicalStudents = data.history
+                .filter((item: any) => item.isJoinEvent && item.sender !== 'Professor')
+                .map((item: any) => ({
+                  id: item.userId || `peer_${Math.random()}`,
+                  name: item.sender || 'Anonymous',
+                  initials: String(item.sender || 'AN').substring(0, 2).toUpperCase(),
+                  perfLevel: 'Medium',
+                  score: 0,
+                  team: 'Unassigned',
+                  isActive: true,
+                  isReady: true,
+                }));
+              
+              if (historicalStudents.length > 0) {
+                setJoinedStudents(prev => {
+                  const updated = [...prev];
+                  historicalStudents.forEach((hs: any) => {
+                    if (!updated.some(p => p.id === hs.id || p.name === hs.name)) {
+                      hs.avatarColor = AVATAR_COLORS[updated.length % AVATAR_COLORS.length];
+                      updated.push(hs);
+                    }
+                  });
+                  return updated;
+                });
+              }
+            }
+            if (data.type === 'ROOM_STATE_SYNC' && Array.isArray(data.questions)) {
+              if (data.questions.length > 0 || data.status !== 'waiting') {
+                setRandomizedQuestions(data.questions);
+              }
+            }
             if (data.status === 'completed') {
               setQuizCompleted(true);
             } else if (data.status === 'active') {
@@ -750,8 +824,7 @@ const handleRemoveGroup = (groupName: string) => {
         if (prev <= 1) {
           clearInterval(timer);
           if (isAdvancingRef.current) return 0;
-          handleNextQuestion();
-          return 0; 
+          
         }
         return prev - 1;
       });
@@ -806,7 +879,8 @@ async function handleConfirmAndDeploy() {
         professor_id: currentProfId, 
         room_code: finalRoomCode, 
         is_live: isLive,
-        status: isLive ? 'ACTIVE' : 'PENDING',
+        // All deployed quizzes (live and async) are immediately ACTIVE and ready to be joined
+        status: 'ACTIVE', 
         deadline: isLive ? null : deadline || null,
         mode: lobbyType,
         team_size: lobbyType === "team" ? teamSize : null,
@@ -827,7 +901,7 @@ async function handleConfirmAndDeploy() {
           professor_id: currentProfId, 
           room_code: finalRoomCode, 
           is_live: isLive,
-          status: isLive ? 'ACTIVE' : 'PENDING',
+          status: 'ACTIVE',
           deadline: isLive ? null : deadline || null
         };
 
@@ -852,9 +926,24 @@ async function handleConfirmAndDeploy() {
         setActiveSessionExists(true);
         setInLobby(true);
         setJoinedStudents([]); 
-        const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "chaosclash" ? "ChaosClash" : lobbyType === "team" ? "Team" : "Individual";
+        const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "chaosclash" ? "ChaosClash" : lobbyType === "team" ? "Team" : "Individual" || "Live";
         toast.success(`${modeLabel} Live Session initialized using bank: ${selectedBank.name}! Session Locked.`);
-      } else {
+      } else if (sessionData) {
+        // For Async/Endless modes, seed the questions into Redis so students can fetch them
+        const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
+        const ws = new WebSocket(wsUrl);
+        ws.onopen = () => {
+          ws.send(JSON.stringify({
+            type: 'PROF_START_BATTLE',
+            mode: lobbyType.toUpperCase(),
+            battleId: sessionData.id,
+            bankId: selectedBank.id,
+            forceReset: true,
+            questions: randomizedQuestions,
+            startingHp: 3,
+          }));
+          setTimeout(() => ws.close(), 1000);
+        };
         toast.success("Quiz created!");
       }
     } finally {
@@ -880,25 +969,31 @@ async function handleConfirmAndDeploy() {
     }
   };
 
-  const handleNextQuestion = () => {
+  const handleNextQuestion = (customQ?: any) => {
     if (isAdvancingRef.current) return;
     setIsAdvancing(true);
 
     const totalQCount = randomizedQuestions.length || 1;
     const nextIdx = currentIndex + 1;
 
-    if (nextIdx < totalQCount) {
+    if (lobbyType === 'bossraid' || nextIdx < totalQCount) {
       setCurrentIndex(nextIdx);
+      if (customQ) {
+        setActiveCustomQuestion(customQ);
+      } else {
+        setActiveCustomQuestion(null);
+      }
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: 'ADVANCE_QUESTION',
           battleId: sessionId,
           currentIndex: nextIdx,
-          nextTimeLimit: 60,
-          isLastQuestion: false
+          nextTimeLimit: 30,
+          isLastQuestion: false,
+          customQuestion: customQ
         }));
       }
-      setTimeRemaining(60);
+      setTimeRemaining(30);
       setTimeout(() => setIsAdvancing(false), 500);
     } else {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -943,6 +1038,9 @@ async function handleConfirmAndDeploy() {
       setCurrentIndex(0);
       setSessionId(''); 
       setRoomCode(generateSecureRoomCode());
+      setRandomizedQuestions([]);
+      setSelectedBank(prev => ({ ...prev }));
+      setActiveCustomQuestion(null);
       
       toast.success("Live session ended successfully. Configuration unlocked.");
     }
@@ -969,6 +1067,31 @@ async function handleConfirmAndDeploy() {
     return { team, score: totalScore, members };
   }).sort((a, b) => b.score - a.score) : [];
 
+
+  if (viewingAsyncQuiz) {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", background: C.navy, overflow: "hidden" }}>
+        <button 
+          onClick={() => setViewingAsyncQuiz(null)}
+          style={{ position: "absolute", top: 24, right: 24, zIndex: 10000, background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, padding: "8px 16px", color: "white", cursor: "pointer", fontFamily: "Fredoka, sans-serif", fontSize: 14 }}
+        >
+          ✕ Close Dashboard
+        </button>
+        <div style={{ flex: 1, overflowY: "auto", position: "relative" }}>
+          {viewingAsyncQuiz.mode === 'endless' ? (
+            <BattleSocketProvider sessionId={viewingAsyncQuiz.id} userId={professorId || 'professor'} userName="Professor" mode="ENDLESS" extraJoinPayload={{ isHost: true }}>
+              <ProfEndlessMode session={viewingAsyncQuiz} />
+            </BattleSocketProvider>
+          ) : (
+            <div style={{ color: "white", padding: 50, textAlign: "center", marginTop: 100 }}>
+              <h2 style={{ fontFamily: "Fredoka, sans-serif" }}>Async {viewingAsyncQuiz.mode} Dashboard</h2>
+              <p>Student performance overview for this mode will be displayed here.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (inLobby) {
     return (
@@ -1225,6 +1348,18 @@ async function handleConfirmAndDeploy() {
               answerEvents={bingoAnswers}
               questionEvents={bingoQuestions}
               chatEvents={bingoChat}
+          ) : lobbyType === 'bossraid' ? (
+            <ProfBossRaid
+              students={joinedStudents.map(s => ({ ...s, isActive: true, score: s.score || 0, avatarColor: s.avatarColor || '#FFC93C' }))}
+              bossHealth={1000}
+              timeLeft={timeRemaining}
+              currentQuestion={activeCustomQuestion || randomizedQuestions[currentIndex] || null}
+              questions={randomizedQuestions}
+              onLaunchQuestion={(q) => {
+                 handleNextQuestion(q);
+              }}
+              lastMessage={lastMessage}
+              socketSend={(msg) => wsRef.current?.send(JSON.stringify({ ...msg, battleId: sessionId }))}
             />
           ) : (
             <div style={{ maxWidth: 1000, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 20 }}>
@@ -1386,7 +1521,7 @@ async function handleConfirmAndDeploy() {
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px", display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ background: C.white, borderRadius: 22, border: `1.5px solid ${C.border}`, boxShadow: "0 2px 16px rgba(0,0,0,0.04)", overflow: "hidden" }}>
+          <div style={{ background: C.white, borderRadius: 22, border: `1.5px solid ${C.border}`, boxShadow: "0 2px 16px rgba(0,0,0,0.04)", overflow: "hidden", flexShrink: 0 }}>
             <div style={{ padding: "18px 24px 14px", borderBottom: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ width: 32, height: 32, borderRadius: 10, background: C.indigoLight, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1404,7 +1539,7 @@ async function handleConfirmAndDeploy() {
               {/* Lobby Type Selector */}
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Lobby Type</span>
-                <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                   {LOBBY_TYPES.map(t => (
                     <LobbyTypeCard key={t.id} type={t} selected={lobbyType === t.id} onClick={() => setLobbyType(t.id)} disabled={activeSessionExists} />
                   ))}
@@ -1457,6 +1592,23 @@ async function handleConfirmAndDeploy() {
                     <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: C.navy }}>👑 Always Live — cannot be scheduled</span>
                   </div>
                 )}
+                
+                {/* Endless Mode: always async */}
+                {lobbyType === "endless" && (
+                  <div style={{ background: C.indigoLight, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.indigoBorder}`, display: "flex", flexDirection: "column", gap: 10, justifyContent: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Scheduled on</span>
+                    
+                    </div>
+                    <input
+                      type="datetime-local"
+                      value={deadline}
+                      onChange={e => setDeadline(e.target.value)}
+                      disabled={activeSessionExists}
+                      style={{ background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "8px 10px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600, color: C.navy }}
+                    />
+                  </div>
+                )}
 
                 <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
                   <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Target Class Section</span>
@@ -1476,7 +1628,7 @@ async function handleConfirmAndDeploy() {
                 <button type="button" disabled={activeSessionExists} onClick={() => setPreviewed(true)} style={{
                   background: C.coral, border: "none", borderRadius: 13, padding: "11px 22px", fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 700, color: "#fff", cursor: activeSessionExists ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 14px rgba(255,107,74,0.3)"
                 }}>
-                  <Users size={16} strokeWidth={2.5} />Preview Team Assignments
+                  <Users size={16} strokeWidth={2.5} />{lobbyType === 'team' ? "Preview Team Assignments" : "Review & Deploy"}
                   <ArrowRight size={15} strokeWidth={2.5} />
                 </button>
               </div>
@@ -1486,7 +1638,9 @@ async function handleConfirmAndDeploy() {
               <div style={{ borderTop: `1.5px solid ${C.border}`, padding: "20px 24px" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <h3 style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 800, color: C.navy, margin: 0 }}>Team Preview</h3>
+                    <h3 style={{ fontFamily: "Manrope, sans-serif", fontSize: 14, fontWeight: 800, color: C.navy, margin: 0 }}>
+                      {lobbyType === 'team' ? 'Team Preview' : 'Confirm Deployment'}
+                    </h3>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <style>{`
@@ -1503,6 +1657,76 @@ async function handleConfirmAndDeploy() {
               </div>
             )}
           </div>
+          
+          {/* Async Quizzes */}
+          <div style={{ background: C.white, borderRadius: 22, border: `1.5px solid ${C.border}`, boxShadow: "0 2px 16px rgba(0,0,0,0.04)", overflow: "hidden", flexShrink: 0 }}>
+            <div style={{ padding: "18px 24px 14px", borderBottom: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 10, background: "rgba(46,212,122,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Clock size={15} color={C.green} strokeWidth={2} />
+                </div>
+                <div>
+                  <h2 style={{ fontFamily: "Manrope, sans-serif", fontSize: 15, fontWeight: 800, color: C.navy, margin: 0 }}>Scheduled Quizzes</h2>
+                  <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted, margin: 0, fontWeight: 500 }}>Scheduled & self-paced sessions</p>
+                </div>
+              </div>
+              
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => setAsyncFilter('ACTIVE')}
+                  style={{
+                    background: asyncFilter === 'ACTIVE' ? C.indigo : 'transparent',
+                    border: `1.5px solid ${asyncFilter === 'ACTIVE' ? C.indigo : C.border}`,
+                    color: asyncFilter === 'ACTIVE' ? '#fff' : C.muted,
+                    borderRadius: 8, padding: "6px 12px", fontFamily: "Fredoka, sans-serif", fontSize: 13, cursor: "pointer",
+                  }}
+                >
+                  Active
+                </button>
+                <button
+                  onClick={() => setAsyncFilter('COMPLETED')}
+                  style={{
+                    background: asyncFilter === 'COMPLETED' ? C.indigo : 'transparent',
+                    border: `1.5px solid ${asyncFilter === 'COMPLETED' ? C.indigo : C.border}`,
+                    color: asyncFilter === 'COMPLETED' ? '#fff' : C.muted,
+                    borderRadius: 8, padding: "6px 12px", fontFamily: "Fredoka, sans-serif", fontSize: 13, cursor: "pointer",
+                  }}
+                >
+                  Completed
+                </button>
+              </div>
+            </div>
+            
+            <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 12 }}>
+              {asyncQuizzes.filter(q => asyncFilter === 'ACTIVE' ? (q.status === 'PENDING' || q.status === 'ACTIVE') : q.status === 'COMPLETED').length === 0 ? (
+                <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, color: C.muted, textAlign: "center", margin: "20px 0" }}>No {asyncFilter.toLowerCase()} quizzes.</p>
+              ) : (
+                asyncQuizzes
+                  .filter(q => asyncFilter === 'ACTIVE' ? (q.status === 'PENDING' || q.status === 'ACTIVE') : q.status === 'COMPLETED')
+                  .map(quiz => (
+                  <div key={quiz.id} onClick={() => setViewingAsyncQuiz(quiz)} style={{ background: C.offWhite, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", transition: "border 0.2s" }} onMouseEnter={(e) => (e.currentTarget.style.border = `1px solid ${C.indigo}`)} onMouseLeave={(e) => (e.currentTarget.style.border = `1px solid ${C.border}`)}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                      <div style={{ width: 44, height: 44, borderRadius: 12, background: C.indigoLight, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Fredoka, sans-serif", fontSize: 20, color: C.indigo }}>
+                        {quiz.mode === 'endless' ? '♾️' : quiz.mode === 'individual' ? '⚡' : '🛡️'}
+                      </div>
+                      <div>
+                        <h4 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 16, margin: 0, color: C.navy }}>Room: {quiz.room_code}</h4>
+                        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, color: C.muted, textTransform: "uppercase", fontWeight: 700 }}>Mode: {quiz.mode || 'Individual'}</span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right", display: "flex", alignItems: "center", gap: 20 }}>
+                      <div>
+                        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, color: C.muted, display: "block" }}>Created</span>
+                        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600, color: C.navy }}>{new Date(quiz.created_at).toLocaleDateString()}</span>
+                      </div>
+                      <button style={{ background: "transparent", border: "none", color: C.indigo, cursor: "pointer" }}><ArrowRight size={18} /></button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          
         </div>
       </div>
     </div>
@@ -1510,3 +1734,8 @@ async function handleConfirmAndDeploy() {
 }
 
 export default Matchmaking;
+
+
+
+
+

@@ -22,7 +22,10 @@ export type CardCategory =
   | 'points'
   | 'selfTimer'
   | 'enemyTimer'
-  | 'removeChoices';
+  | 'removeChoices'
+  | 'profOverride'
+  | 'profEvasion'
+  | 'profTime';
 
 export type CardRarity = 'common' | 'rare' | 'epic' | 'legendary';
 
@@ -68,6 +71,9 @@ export const CARD_CATEGORY_META: Record<CardCategory, CardCategoryMeta> = {
   selfTimer: { label: 'Extra Time', icon: Hourglass, color: '#8F7BFF' },
   enemyTimer: { label: 'Time Drain', icon: TimerOff, color: '#FF8A3D' },
   removeChoices: { label: 'Eliminate', icon: XCircle, color: '#FF6FD8' },
+  profOverride: { label: 'Override', icon: XCircle, color: '#FF4757' },
+  profEvasion: { label: 'Evasion', icon: ShieldCheck, color: '#5B3DF6' },
+  profTime: { label: 'Cooldown', icon: TimerOff, color: '#FFC93C' },
 };
 
 export const RARITY_LABEL: Record<CardRarity, string> = {

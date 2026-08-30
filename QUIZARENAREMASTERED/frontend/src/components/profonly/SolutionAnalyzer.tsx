@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { ProfSidebar } from "../shared/ProfSidebar";
 import { ProfEndlessMode } from "../gamemodes/ProfEndlessMode";
-import { ProfNormalMode } from "../gamemodes/ProfNormalMode";
+import { ProfBossRaid } from "../gamemodes/ProfBossRaid";
 import { ProfBingoMode } from "../gamemodes/ProfBingoMode";
 import { ProfChaosClash } from "../gamemodes/ProfChaosClash";
 import { StudentEndlessMode } from "../gamemodes/StudentEndlessMode";
-import { StudentNormalMode } from "../gamemodes/StudentNormalMode";
+import { StudentBossRaid } from "../gamemodes/StudentBossRaid";
 import { StudentBingoMode } from "../gamemodes/StudentBingoMode";
 import { StudentChaosClash } from "../gamemodes/StudentChaosClash";
 
@@ -14,12 +14,12 @@ export function SolutionAnalyzer() {
 
   const renderActiveMode = () => {
     switch (activeMode) {
-      case "prof_endless": return <ProfEndlessMode />;
-      case "prof_normal": return <ProfNormalMode />;
+      case "prof_endless": return <ProfEndlessMode session={{ status: 'COMPLETED', id: 'mock-session-id' }} />;
+      case "prof_normal": return <ProfBossRaid />;
       case "prof_bingo": return <ProfBingoMode />;
       case "prof_chaos": return <ProfChaosClash />;
       case "student_endless": return <StudentEndlessMode />;
-      case "student_normal": return <StudentNormalMode />;
+      case "student_normal": return <StudentBossRaid />;
       case "student_bingo": return <StudentBingoMode />;
       case "student_chaos": return <StudentChaosClash />;
       default: return null;

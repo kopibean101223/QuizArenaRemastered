@@ -2,7 +2,7 @@
 
 import { useApp } from "../../../context/AppContext";
 import { Check } from "lucide-react";
-//import { useLobbySocket } from "@/lib/student/battle/useLobbySockets";
+import { useBattleSocketContext } from "@/lib/student/battle/useBattleSocketProvider";
 import { C, PlayerStatus } from "../ComponentsLobby/LobbyConstants";
 import { SelfPacedBattle } from "../Battle_OwnPace";
 import type { LobbyModeProps } from "./Lobby_LiveQuiz";
@@ -34,27 +34,7 @@ export function Lobby_OwnPaced({ sessionId, roomCode }: LobbyModeProps) {
     user?.email?.split('@')[0] ||
     "Unknown Student";
 
-  const { players, setPlayers } = useLobbySocket({
-    sessionId,
-    userId: user?.id,
-    userName: studentName,
-    enabled: true,
-    autoCountdown: false, // no shared countdown in Own-Paced
-    onMessage: (data) => {
-      const status: PlayerStatus | null =
-        data.type === "SELF_PACED_PROGRESS" || data.type === "PLAYER_PROGRESS" ? "answering" :
-        data.type === "STUDENT_FINISHED" || data.type === "SELF_PACED_COMPLETE" ? "finished" :
-        null;
-
-      if (!status) return;
-      const targetId = data.userId || data.playerId;
-      if (!targetId) return;
-
-      setPlayers((prev) =>
-        prev.map((p) => (p.id === targetId ? { ...p, status } : p))
-      );
-    },
-  });
+  const { players } = useBattleSocketContext();
 
   return (
     <div style={{ position: "relative" }}>

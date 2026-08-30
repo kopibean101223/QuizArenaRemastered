@@ -25,6 +25,7 @@ import { Lobby_BattleRoyale } from "./Lobby/Lobby_BattleRoyale";
 import { Lobby_ChaosClash } from "./Lobby/Lobby_ChaosClash";
 import { Lobby_OwnPaced } from "./Lobby/Lobby_OwnPaced";
 import { StudentBingoMode } from "./Lobby/Lobby_BingoMode";
+import { StudentEndlessMode } from "../gamemodes/StudentEndlessMode";
 
 import { BattleSocketProvider } from "@/lib/student/battle/useBattleSocketProvider";
 
@@ -39,7 +40,7 @@ const C = {
   muted: "rgba(255,255,255,0.5)",
 };
 
-type ResolvedMode = "LIVE" | "TEAM" | "ROYALE" | "CHAOS_CLASH" | "SELF_PACED" | "BINGO";
+type ResolvedMode = "LIVE" | "TEAM" | "ROYALE" | "CHAOS_CLASH" | "SELF_PACED" | "BINGO"| "ENDLESS";
 
 function normalizeMode(mode: string | null | undefined): ResolvedMode {
   const m = (mode || "").toUpperCase();
@@ -48,6 +49,7 @@ function normalizeMode(mode: string | null | undefined): ResolvedMode {
   if (m === "CHAOSCLASH" || m === "CHAOS_CLASH") return "CHAOS_CLASH";
   if (m === "SELF_PACED" || m === "SELFPACED") return "SELF_PACED";
   if (m === "BINGO") return "BINGO";
+  if (m === "ENDLESS") return "ENDLESS";
   return "LIVE";
 }
 
@@ -181,7 +183,14 @@ useEffect(() => {
     }
   }
 
-  function handleJoinLiveSession(session: LiveSessionInfo) {
+  async function handleJoinLiveSession(session: LiveSessionInfo) {
+    setJoining(true);
+    const res = await resolveRoomCode(supabase, session.room_code);
+    setJoining(false);
+    if (!res.ok || !res.sessionId) {
+      toast.error(res.message);
+      return;
+    }
     enterBattle(session.room_code, session.id, session.mode); // session.id, not section_id
   }
 
@@ -255,6 +264,18 @@ if (hasJoined && sessionId) {
           mode="CHAOS_CLASH"
         >
           <Lobby_ChaosClash sessionId={sessionId} roomCode={roomCode} />
+        </BattleSocketProvider>
+      );
+       
+       case "ENDLESS":
+      return (
+        <BattleSocketProvider
+          sessionId={sessionId}
+          userId={user?.id}
+          userName={resolvedUserName}
+         mode="ENDLESS"
+        >
+          <StudentEndlessMode sessionId={sessionId} />
         </BattleSocketProvider>
       );
     case "SELF_PACED":

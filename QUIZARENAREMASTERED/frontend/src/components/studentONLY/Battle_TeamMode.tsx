@@ -109,16 +109,20 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
     const data = lastMessage;
     if (!data) return;
 
-    if (data.type === 'TEAM_STATE_SYNC') {
-      if (typeof data.questionIndex === 'number') setQuestionIndex(data.questionIndex);
+    if (data.type === 'TEAM_STATE_SYNC' || data.type === 'ROOM_STATE_SYNC') {
+      if (typeof data.questionIndex === 'number' || typeof data.currentIndex === 'number') {
+        setQuestionIndex(data.questionIndex ?? data.currentIndex);
+      }
       if (typeof data.startedAt === 'number') setStartedAt(data.startedAt);
       if (typeof data.timeLimit === 'number') setTimeLimit(data.timeLimit);
       if (Array.isArray(data.teamAnswers)) setTeamMemberAnswers(data.teamAnswers);
       if (Array.isArray(data.questions) && data.questions.length > 0) {
         applyTeamQuestions(data.questions);
       }
-      setSelectedOption('');
-      setConfirmed(false);
+      if (data.type === 'TEAM_STATE_SYNC') {
+        setSelectedOption('');
+        setConfirmed(false);
+      }
     }
 
     // The server broadcasts this when its own timer fires (or a professor
@@ -138,7 +142,6 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
     }
 
     if (data.type === 'TEAM_BATTLE_COMPLETED') {
-      navigate('results');
     }
 
     // Teammate-only chat — the server only forwards this to sockets on the

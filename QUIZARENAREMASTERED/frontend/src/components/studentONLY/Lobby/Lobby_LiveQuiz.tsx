@@ -10,6 +10,7 @@ import { PlayerChip } from "../ComponentsLobby/PlayerChip";
 import { EmptySlot } from "../ComponentsLobby/EmptySlot";
 import { CountdownDisplay } from "../ComponentsLobby/CountdownDisplay";
 import { LiveBattle } from "../Battle_LiveQuiz";
+import { StudentBossRaid } from "../../gamemodes/StudentBossRaid";
 
 export interface LobbyModeProps {
   sessionId: string;
@@ -30,15 +31,28 @@ export interface LobbyModeProps {
  */
 export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
   const { user, navigate } = useApp();
-  const { players, countdown, battleStarted, lastMessage } = useBattleSocketContext();
+  const { players, countdown, battleStarted, lastMessage, battleMode, questions, currentIndex } = useBattleSocketContext();
 
   useEffect(() => {
     if (lastMessage?.type === 'ROOM_COMPLETED' || lastMessage?.type === 'QUIZ_COMPLETED' || lastMessage?.status === 'completed') {
-      navigate('results');
     }
   }, [lastMessage, navigate]);
 
   if (battleStarted) {
+    if (battleMode === 'BOSSRAID') {
+      return (
+        <StudentBossRaid 
+          battleId={sessionId}
+          currentQuestion={questions[currentIndex] || null}
+          bossHealth={lastMessage?.type === 'ROOM_STATE_SYNC' && lastMessage.bossHp !== undefined ? lastMessage.bossHp : 1000}
+          bossMaxHealth={1000}
+          activeStudentsCount={players.length || 1}
+          bossCardEffect={lastMessage?.type === 'BOSS_ACTION' ? lastMessage.bossCardEffect : null}
+          lastMessage={lastMessage}
+        />
+      );
+    }
+    // (Optional: add ENDLESS here if needed later)
     return <LiveBattle battleId={sessionId} />;
   }
 
@@ -55,13 +69,10 @@ export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
             <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: C.yellow, letterSpacing: "0.1em", textTransform: "uppercase" }}>
               Live Quiz Lobby
             </span>
-          </div>
           <h1 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 48, fontWeight: 700, color: "#fff", margin: 0 }}>
             Ready to <span style={{ color: C.yellow }}>Battle?</span>
           </h1>
         </div>
-
-        <div style={{ width: "100%", maxWidth: 900, margin: "0 auto", padding: "0 24px", display: "flex", flexDirection: "column", alignItems: "center", gap: 24 }}>
 
           <div style={{ width: "100%", maxWidth: 600 }}>
             <div style={{ background: "rgba(255,255,255,0.05)", border: "1.5px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "22px 24px", display: "flex", flexDirection: "column", gap: 12, textAlign: "center" }}>

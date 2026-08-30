@@ -1,6 +1,13 @@
 import React from "react";
 import { Check } from "lucide-react";
-import { Mode, C } from "./LobbyConstants";
+import { C } from "./LobbyConstants";
+type Mode = {
+  emoji: string;
+  label: string;
+  desc: string;
+  bg: string;
+  accent: string;
+};
 
 export function ModeCard({ mode, selected, onClick }:
   { mode: Mode; selected: boolean; onClick: () => void }) {

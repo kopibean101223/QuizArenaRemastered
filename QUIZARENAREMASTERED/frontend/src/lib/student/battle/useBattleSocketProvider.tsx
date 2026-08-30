@@ -67,6 +67,10 @@ export interface LeaderboardPlayer {
   streak: number;
   isMe: boolean;
   isLeader: boolean;
+  correctAnswers?: number;
+  totalQuestions?: number;
+  accuracy?: number;
+  isActive?: boolean;
 }
 
 export interface BattleChatMessage {
@@ -80,6 +84,7 @@ interface BattleSocketValue {
   // Connection
   status: 'connecting' | 'open' | 'closed';
   send: (payload: object) => boolean;
+  userId: string;
 
   // Lobby-phase state
   players: LobbyPlayerT[];
@@ -98,6 +103,8 @@ interface BattleSocketValue {
   // need to know the meaning of, but callers may want to react to.
   lastMessage: any;
   lastBingoState: any;
+  userName?: string;
+  isSynced: boolean;
 }
 
 const BattleSocketContext = createContext<BattleSocketValue | null>(null);
@@ -110,7 +117,7 @@ export interface BattleSocketProviderProps {
    * Which mode-specific join message to send alongside the base
    * JOIN_BATTLE handshake. Defaults to 'LIVE' (no extra message).
    */
-  mode?: 'LIVE' | 'TEAM' | 'ROYALE' | 'CHAOS_CLASH' | 'BINGO';
+  mode?: 'LIVE' | 'TEAM' | 'ROYALE' | 'CHAOS_CLASH' | 'BINGO'| 'ENDLESS';
   /**
    * Extra fields merged into the mode-specific join payload — e.g. Team's
    * { teamId } on reconnect. Optional: the server already falls back to
@@ -145,6 +152,13 @@ export function BattleSocketProvider({
   const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
   const [lastMessage, setLastMessage] = useState<any>(null);
   const [lastBingoState, setLastBingoState] = useState<any>(null);
+  const [isSynced, setIsSynced] = useState(false);
+
+  const resolvedName = userName || 'Unknown Student';
+  
+  // Use a ref or state for resolvedUserId so it's stable and accessible outside useEffect
+  const resolvedUserIdRef = useRef<string>(userId || `user_${Math.random()}`);
+  const resolvedUserId = userId || resolvedUserIdRef.current;
 
   useEffect(() => {
     if (!sessionId) return;
@@ -154,9 +168,6 @@ export function BattleSocketProvider({
     const socket = new WebSocket(wsUrl);
     socketRef.current = socket;
     setStatus('connecting');
-
-    const resolvedName = userName || 'Unknown Student';
-    const resolvedUserId = userId || `user_${Math.random()}`;
 
     socket.onopen = () => {
       if (cancelled) {
@@ -324,6 +335,10 @@ export function BattleSocketProvider({
         setBattleStarted(true);
       }
 
+      if (data.type === 'ROOM_STATE_SYNC' || data.type === 'ROYALE_STATE_SYNC' || data.type === 'TEAM_STATE_SYNC') {
+        setIsSynced(true);
+      }
+
       if (data.type === 'PLAYER_JOINED' || (data.type === 'BATTLE_ACTION' && data.isJoinEvent)) {
         setPlayers((prev) => {
           if (prev.some((p) => p.id === data.userId || p.name === data.sender)) return prev;
@@ -346,11 +361,19 @@ export function BattleSocketProvider({
       }
 
       if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'PROF_START_BATTLE') {
+        if (data.customQuestion) {
+          setQuestions(prev => {
+            const formatted = formatBattleQuestions([data.customQuestion])[0];
+            const newArr = [...prev];
+            newArr[data.currentIndex] = formatted;
+            return newArr;
+          });
+        }
         if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
         if (data.startedAt) setStartedAt(data.startedAt);
       }
 
-      if (data.type === 'SCORE_UPDATED' || data.type === 'LEADERBOARD_UPDATE') {
+      if (data.type === 'SCORE_UPDATED' || data.type === 'LEADERBOARD_UPDATE' || data.type === 'ROOM_STATE_SYNC') {
         if (Array.isArray(data.leaderboard)) {
           const formatted: LeaderboardPlayer[] = data.leaderboard.map((item: any, idx: number) => ({
             id: item.id || item.userId,
@@ -361,6 +384,10 @@ export function BattleSocketProvider({
             streak: item.streak || 0,
             isMe: (item.id || item.userId) === resolvedUserId,
             isLeader: idx === 0,
+            correctAnswers: item.correctAnswers,
+            totalQuestions: item.totalQuestions,
+            accuracy: item.accuracy,
+            isActive: item.isActive,
           }));
           setLeaderboard(formatted);
         }
@@ -437,6 +464,8 @@ export function BattleSocketProvider({
       value={{
         status,
         send,
+        userId: resolvedUserId,
+        userName: resolvedName,
         players,
         countdown,
         battleStarted,
@@ -448,6 +477,7 @@ export function BattleSocketProvider({
         chatMessages,
         lastMessage,
         lastBingoState,
+        isSynced,
       }}
     >
       {children}

@@ -190,6 +190,36 @@ export const REMOVE_CHOICES_CARDS: PowerCardData[] = [
   },
 ];
 
+export const PROF_CARDS: PowerCardData[] = [
+  {
+    id: 'prof-override',
+    category: 'profOverride',
+    name: 'Override',
+    description: 'Forces a sudden-death True/False question window.',
+    cost: 50,
+    rarity: 'legendary',
+    effect: { category: 'profOverride', target: 'enemy' },
+  },
+  {
+    id: 'prof-evasion',
+    category: 'profEvasion',
+    name: 'Evasion Protocol',
+    description: 'Nullifies 50% of incoming class damage for the current turn.',
+    cost: 30,
+    rarity: 'epic',
+    effect: { category: 'profEvasion', target: 'self', multiplier: 0.5 },
+  },
+  {
+    id: 'prof-time-drain',
+    category: 'profTime',
+    name: 'Time Squeeze',
+    description: "Instantly decreases the students' remaining time by 20%.",
+    cost: 25,
+    rarity: 'rare',
+    effect: { category: 'profTime', target: 'enemy', amount: 20 },
+  }
+];
+
 export const CARD_CATALOG: PowerCardData[] = [
   ...DAMAGE_CARDS,
   ...SHIELD_CARDS,
@@ -198,6 +228,7 @@ export const CARD_CATALOG: PowerCardData[] = [
   ...SELF_TIMER_CARDS,
   ...ENEMY_TIMER_CARDS,
   ...REMOVE_CHOICES_CARDS,
+  ...PROF_CARDS,
 ];
 
 export const CARD_CATALOG_BY_CATEGORY = {

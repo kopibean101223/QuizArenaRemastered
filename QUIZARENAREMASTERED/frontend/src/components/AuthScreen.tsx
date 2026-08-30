@@ -441,7 +441,7 @@ function LoginForm() {
       if (role?.toLowerCase() === 'professor') {
         router.push('/?page=dashboard');
       } else if (role?.toLowerCase() === 'student') {
-        router.push('/?page=lobby');
+        router.push('/?page=student_dashboard');
       } else {
         router.push('/?page=role');
       }
@@ -547,7 +547,7 @@ export function AuthScreen() {
       if (user.role === "professor") {
         router.push("/?page=dashboard");
       } else if (user.role === "student") {
-        router.push("/?page=lobby");
+        router.push("/?page=student_dashboard");
       } else {
         router.push("/?page=role");
       }

@@ -120,6 +120,8 @@
           lives: p.lives ?? 0,
         }))
       );
+    if (data.type === 'ROYALE_MATCH_ENDED') {
+      if (Array.isArray(data.players)) applyPlayers(data.players);
     }
 
     function applyRoyaleQuestions(rawQuestions: unknown[]) {

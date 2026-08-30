@@ -17,6 +17,8 @@ export interface PowerCardProps {
   disabled?: boolean;
   onClick?: () => void;
   className?: string;
+  /** When true, renders a small lightning-bolt badge on the card corner to mark it as a power-up reward. */
+  powerUp?: boolean;
 }
 
 const SIZE_MAP: Record<PowerCardSize, { w: string; h: string; gem: string; icon: number; name: string; desc: string }> = {
@@ -46,6 +48,7 @@ export function PowerCard({
   disabled = false,
   onClick,
   className = '',
+  powerUp = false,
 }: PowerCardProps) {
   const dims = SIZE_MAP[size];
   const isRevealed = state === 'revealed' && !!card;
@@ -57,14 +60,29 @@ export function PowerCard({
   return (
     <div
       className={[dims.w, dims.h, disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer', className].join(' ')}
-      style={{ perspective: '1000px' }}
+      style={{ perspective: '1000px', position: 'relative' }}
       onClick={disabled ? undefined : onClick}
       role="button"
       aria-label={isRevealed && card ? card.name : 'Mystery power card'}
     >
+      {/* Power-up badge overlay */}
+      {powerUp && (
+        <span
+          className="absolute -top-1.5 -right-1.5 z-20 flex items-center justify-center w-6 h-6 rounded-full text-[11px]"
+          style={{
+            background: 'linear-gradient(135deg, #FFC93C, #FF6B4A)',
+            boxShadow: '0 2px 8px rgba(255,201,60,0.5)',
+            border: '2px solid #0b0916',
+          }}
+          title="Power-up reward"
+        >
+          ⚡
+        </span>
+      )}
       <div
-        className="relative w-full h-full transition-transform duration-500 ease-out"
+        className="relative w-full h-full"
         style={{
+          transition: 'transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
           transformStyle: 'preserve-3d',
           transform: isRevealed ? 'rotateY(180deg)' : 'rotateY(0deg)',
         }}

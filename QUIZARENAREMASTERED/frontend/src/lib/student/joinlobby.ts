@@ -17,15 +17,45 @@ export async function resolveRoomCode(
   const trimmed = code.trim().toUpperCase();
   if (!trimmed) return { ok: false, message: "Enter a room code first." };
 
+  const { data: { user } } = await supabase.auth.getUser();
+
   const { data, error } = await supabase
     .from("quiz_sessions")
-    .select("id, mode")
+    .select("id, mode, deadline, created_at")
     .eq("room_code", trimmed)
     .eq("status", "ACTIVE")
     .maybeSingle();
 
   if (error) return { ok: false, message: "Database error: " + error.message };
   if (!data) return { ok: false, message: "Invalid or inactive room code." };
+
+  if (user) {
+    const { data: pastResult } = await supabase
+      .from("quiz_results")
+      .select("id")
+      .eq("session_id", data.id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+      
+    if (pastResult) {
+      return { ok: false, message: "You have already completed this quiz!" };
+    }
+  }
+
+  if (data.deadline) {
+    const deadlineDate = new Date(data.deadline);
+    if (new Date() > deadlineDate) {
+      return { ok: false, message: "The deadline for this quiz has already passed." };
+    }
+  }
+
+  // Also check if created_at is in the future (with 1 minute grace) due to timezone differences
+  if (data.created_at) {
+    const createdDate = new Date(data.created_at);
+    if (new Date().getTime() < createdDate.getTime() - 60000) {
+      return { ok: false, message: "This quiz is not yet available to take." };
+    }
+  }
 
   return { ok: true, message: "Joined!", sessionId: data.id, code: trimmed, mode: data.mode };
 }
