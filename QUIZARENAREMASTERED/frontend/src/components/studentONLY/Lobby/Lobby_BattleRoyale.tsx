@@ -1,6 +1,7 @@
 'use client';
 
 import { useApp } from "../../../context/AppContext";
+import { useEffect } from "react";
 import { StudentTopBar } from "../../shared/StudentTopBar";
 import {
   Crown,
@@ -28,14 +29,22 @@ import type { LobbyModeProps } from "./Lobby_LiveQuiz";
 export function Lobby_BattleRoyale({
   sessionId,
   roomCode,
-}: LobbyModeProps) {
-  const { user } = useApp();
+  title = "Battle Royale",
+}: LobbyModeProps & { title?: string }) {
+  const { user, navigate } = useApp();
 
   const {
     players,
     countdown,
     battleStarted,
+    lastMessage,
   } = useBattleSocketContext();
+
+  useEffect(() => {
+    if (lastMessage?.type === "ROYALE_MATCH_ENDED") {
+      navigate("results");
+    }
+  }, [lastMessage, navigate]);
 
   /*
    * The shared socket context handles the real-time lobby.
@@ -46,6 +55,7 @@ export function Lobby_BattleRoyale({
     return (
       <BattleRoyale
         battleId={sessionId}
+        battleName={title}
       />
     );
   }
@@ -95,7 +105,7 @@ export function Lobby_BattleRoyale({
                 textTransform: "uppercase",
               }}
             >
-              Battle Royale
+              {title}
             </span>
           </div>
 
@@ -110,7 +120,7 @@ export function Lobby_BattleRoyale({
               lineHeight: 1.05,
             }}
           >
-            Ready for <span style={{ color: C.coral }}>Battle Royale?</span>
+            Ready for <span style={{ color: C.coral }}>{title}?</span>
           </h1>
         </div>
 
@@ -360,7 +370,7 @@ export function Lobby_BattleRoyale({
                 }}
               >
                 <Crown size={16} />
-                Battle Royale
+                {title}
               </div>
             </div>
 
@@ -368,7 +378,7 @@ export function Lobby_BattleRoyale({
 
             {[
               ["Room Code", roomCode],
-              ["Mode", "Battle Royale"],
+              ["Mode", title],
               ["Total Players", `${players.length} / 12`],
               ["Status", "Waiting to start…"],
             ].map(([label, value], index) => (
@@ -434,7 +444,7 @@ export function Lobby_BattleRoyale({
               color: "#fff",
             }}
           >
-            Royale Begins!
+            {title} Begins!
           </span>
         </div>
       )}

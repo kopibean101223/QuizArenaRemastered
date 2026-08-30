@@ -1,6 +1,6 @@
 
-import { LogOut, Home, ChevronRight } from "lucide-react";
-import { useApp, type Page } from "../../context/AppContext";
+import { Zap } from "lucide-react";
+import { useApp } from "../../context/AppContext";
 
 const C = {
   navy:   "#1B1E2B",
@@ -9,24 +9,13 @@ const C = {
   coral:  "#FF6B4A",
 };
 
-const PAGE_LABELS: Record<Page, string> = {
-  login: "Login", role: "Choose Role", lobby: "Battle Lobby", battle: "Live Battle",
-  results: "Battle Results", dashboard: "Dashboard", sections: "My Sections",
-  questions: "Question Bank", aigen: "AI Generator",
-  matchmaking: "Matchmaking", analyzer: "Solution Analyzer",
-  student_dashboard: "Dashboard", history: "History", classes: "Classes", profile: "Profile",
-};
-
-export function StudentTopBar() {
-  const { user, page, navigate, logout } = useApp();
-
-  const FLOW: Page[] = ["lobby", "battle", "results"];
-  const pageIdx = FLOW.indexOf(page as Page);
+export function StudentTopBar({ mode = "Live Battle" }: { mode?: string }) {
+  const { user } = useApp();
 
   return (
     <div style={{
       position: "fixed", top: 0, left: 0, right: 0, zIndex: 800,
-      background: "rgba(27,30,43,0.92)", backdropFilter: "blur(10px)",
+      background: "rgba(19,21,36,0.96)", backdropFilter: "blur(10px)",
       borderBottom: "1px solid rgba(255,255,255,0.08)",
       padding: "8px 20px", display: "flex", alignItems: "center", gap: 10,
     }}>
@@ -36,32 +25,12 @@ export function StudentTopBar() {
         🏆 QuizArena
       </span>
 
-      {/* Back to Dashboard */}
-      <button type="button" onClick={() => navigate("student_dashboard")}
-        title="Back to Dashboard"
-        style={{ display: "flex", alignItems: "center", justifyContent: "center",
-          width: 28, height: 28, borderRadius: 8, flexShrink: 0,
-          background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
-          cursor: "pointer" }}>
-        <Home size={13} color="rgba(255,255,255,0.6)" strokeWidth={2.25} />
-      </button>
-
-      {/* Breadcrumb */}
-      <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, marginLeft: 8 }}>
-        {FLOW.map((p, i) => (
-          <span key={p} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            {i > 0 && <ChevronRight size={12} color="rgba(255,255,255,0.25)" strokeWidth={2}/>}
-            <span style={{
-              fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: i === pageIdx ? 700 : 500,
-              color: i === pageIdx ? "#fff" : i < pageIdx ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.25)",
-              cursor: i < pageIdx ? "pointer" : "default",
-              textDecoration: i < pageIdx ? "underline" : "none",
-            }}
-              onClick={() => i < pageIdx && navigate(p)}>
-              {PAGE_LABELS[p]}
-            </span>
-          </span>
-        ))}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
+        <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, color: "rgba(255,255,255,0.42)" }}>Battle Arena</span>
+        <span style={{ color: "rgba(255,255,255,0.25)" }}>/</span>
+        <strong style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "7px 12px", borderRadius: 10, background: "rgba(91,61,246,0.18)", border: "1px solid rgba(91,61,246,0.6)", color: "#A98CFF", fontFamily: "Manrope, sans-serif", fontSize: 12, letterSpacing: "0.07em", textTransform: "uppercase", boxShadow: "0 0 18px rgba(91,61,246,0.2)" }}>
+          <Zap size={13} fill="currentColor" /> {mode}
+        </strong>
       </div>
 
       {/* User badge */}
@@ -81,17 +50,6 @@ export function StudentTopBar() {
         </div>
       )}
 
-      {/* Logout */}
-      <button type="button" onClick={logout}
-        style={{ display: "flex", alignItems: "center", gap: 6,
-          background: "rgba(255,71,87,0.1)", border: "1px solid rgba(255,71,87,0.25)",
-          borderRadius: 20, padding: "6px 12px", cursor: "pointer",
-          fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: "#FF4757",
-          transition: "background 0.15s", flexShrink: 0 }}
-        onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "rgba(255,71,87,0.2)"}
-        onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "rgba(255,71,87,0.1)"}>
-        <LogOut size={13} strokeWidth={2.5}/> Logout
-      </button>
     </div>
   );
 }

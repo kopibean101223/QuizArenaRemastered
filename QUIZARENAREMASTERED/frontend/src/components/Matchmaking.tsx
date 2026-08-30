@@ -12,6 +12,7 @@ import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
 import { useBotSimulator } from "@/hooks/useBotSimulator";
 import { CountdownDisplay } from "./studentONLY/ComponentsLobby/CountdownDisplay";
+import { ProfBingoMonitor } from "./profonly/ProfBingoMonitor";
 import { ProfBossRaid } from "./gamemodes/ProfBossRaid";
 import { ProfEndlessMode } from "./gamemodes/ProfEndlessMode";
 import { BattleSocketProvider } from "@/lib/student/battle/useBattleSocketProvider";
@@ -36,12 +37,14 @@ interface Student {
 }
 
 // ─── Lobby Type ────────────────────────────────────────────────────────────────
-type LobbyType = "individual" | "team" | "royale" | "bossraid" | "endless";
+type LobbyType = "individual" | "team" | "royale" | "bossraid" | "endless" | "chaosclash" | "bingo";
 
 const LOBBY_TYPES: { id: LobbyType; label: string; emoji: string; desc: string }[] = [
   { id: "individual", label: "Individual", emoji: "⚡", desc: "Solo play — go live now or schedule for later." },
   { id: "team", label: "Team", emoji: "🛡️", desc: "Students are grouped into teams of a fixed size." },
   { id: "royale", label: "Battle Royale", emoji: "👑", desc: "Elimination mode. Always live — no scheduling." },
+  { id: "chaosclash", label: "ChaosClash", emoji: "💥", desc: "Fast elimination chaos. Always live — no scheduling." },
+  { id: "bingo", label: "Bingo Arena", emoji: "🎯", desc: "Interactive grid-based matrix challenge mode." },
   { id: "bossraid", label: "Boss Raid", emoji: "🐉", desc: "Class vs Teacher. Drag and drop questions." },
   { id: "endless", label: "Endless", emoji: "♾️", desc: "Survival mode. Keep answering to stay alive." },
 ];
@@ -292,7 +295,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   // Battle Royale is always live — force it and clear any scheduled deadline whenever selected.
   // Endless Mode is always async — force isLive to false.
   useEffect(() => {
-    if (lobbyType === "royale") {
+    if (lobbyType === "royale" || lobbyType === "chaosclash") {
       setIsLive(true);
       setDeadline('');
     } else if (lobbyType==="bossraid"){
@@ -316,10 +319,15 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [joinedStudents, setJoinedStudents] = useState<Student[]>([]);
   const [copied, setCopied] = useState(false);
   const [battleStarted, setBattleStarted] = useState(false);
+  const [professorView, setProfessorView] = useState<"lobby" | "bingo-monitor">("lobby");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [activeCustomQuestion, setActiveCustomQuestion] = useState<any>(null);
   const [timeRemaining, setTimeRemaining] = useState(30);
   const [liveFeed, setLiveFeed] = useState<any[]>([]);
+  const [bingoState, setBingoState] = useState({ phase: 'rolling', phaseSeconds: 0, round: 0, rolledNumber: null as number | null, eligiblePlayerIds: [] as string[], answeredPlayerIds: [] as string[], question: null as any });
+  const [bingoAnswers, setBingoAnswers] = useState<any[]>([]);
+  const [bingoQuestions, setBingoQuestions] = useState<any[]>([]);
+  const [bingoChat, setBingoChat] = useState<any[]>([]);
   const [finalLeaderboard, setFinalLeaderboard] = useState<any[]>([]);
 
   // ─── PROFESSOR GROUP MANAGEMENT STATE (ONLY FOR TEAM MODE) ───
@@ -557,8 +565,8 @@ const handleRemoveGroup = (groupName: string) => {
           console.log("[TEAM][prof] onopen, lobbyType =", lobbyType);
 
 
-                if (lobbyType === 'team') {
-                      console.log("[TEAM][prof] sending JOIN_TEAM_LOBBY", { battleId: sessionId });
+         if (lobbyType === 'team') {
+          console.log("[TEAM][prof] sending JOIN_TEAM_LOBBY", { battleId: sessionId });
 
           ws?.send(JSON.stringify({
             type: 'JOIN_TEAM_LOBBY',
@@ -574,14 +582,20 @@ const handleRemoveGroup = (groupName: string) => {
             teamSize,
           }));
         }
-        else if (lobbyType === 'royale') {
-          console.log("[ROYALE][prof] sending JOIN_ROYALE", { battleId: sessionId });
+        else if (lobbyType === 'royale' || lobbyType === 'chaosclash') {
+          console.log("[ROYALE][prof] sending JOIN_ROYALE", { battleId: sessionId, lobbyType });
 
           ws?.send(JSON.stringify({
             type: 'JOIN_ROYALE',
             mode: 'ROYALE',
             battleId: sessionId,
-            playerData: { id: 'professor', name: 'Professor', initials: 'PR', color: '#5B3DF6' },
+          }));
+        } else if (lobbyType === 'bingo') {
+          // ENSURE THIS EXPLICITLY SENDS JOIN_BINGO AND MODE BINGO
+          ws?.send(JSON.stringify({
+            type: 'JOIN_BINGO',
+            mode: 'BINGO',
+            battleId: sessionId,
           }));
         }
       };
@@ -709,6 +723,40 @@ const handleRemoveGroup = (groupName: string) => {
                 }];
               });
             } 
+          } else if (data.type === 'BINGO_STATE_SYNC' && Array.isArray(data.players)) {
+            setIsSyncing(false);
+            if (data.status === 'active') {
+              setBattleStarted(true);
+              setProfessorView("bingo-monitor");
+            }
+            setBingoState({
+              phase: data.phase || 'rolling',
+              phaseSeconds: Number(data.phaseEndsAt || 0) > 0 ? Math.max(0, Math.ceil((Number(data.phaseEndsAt) - Date.now()) / 1000)) : Number(data.phaseSeconds || 0),
+              round: Number(data.round || 0),
+              rolledNumber: typeof data.rolledNumber === 'number' ? data.rolledNumber : null,
+              eligiblePlayerIds: Array.isArray(data.eligiblePlayerIds) ? data.eligiblePlayerIds : [],
+              answeredPlayerIds: Array.isArray(data.answeredPlayerIds) ? data.answeredPlayerIds : [],
+              question: data.question || null,
+            });
+            if (data.question && data.round) {
+              setBingoQuestions(prev => prev.some(item => item.round === data.round) ? prev : [...prev, { round: data.round, number: data.rolledNumber, question: data.question, timestamp: Date.now() }]);
+            }
+            setJoinedStudents(data.players
+              .filter((player: any) => player.id && player.id !== 'professor')
+              .map((player: any, index: number) => ({
+                id: player.id,
+                name: player.name || player.id,
+                initials: player.initials || String(player.name || player.id).substring(0, 2).toUpperCase(),
+                perfLevel: 'Medium' as const,
+                score: player.score || 0,
+                team: 0,
+                avatarColor: player.color || AVATAR_COLORS[index % AVATAR_COLORS.length],
+                isReady: true,
+              })));
+          } else if (data.type === 'BINGO_ANSWER_RESULT') {
+            setBingoAnswers(prev => [...prev.slice(-99), { playerId: data.playerId, isCorrect: Boolean(data.isCorrect), timestamp: Date.now() }]);
+          } else if (data.type === 'BINGO_CHAT') {
+            setBingoChat(prev => [...prev.slice(-99), { sender: data.sender || 'Student', message: data.message, timestamp: Date.now() }]);
           }else if (data.type === 'TEAM_LOBBY_STATE_SYNC')   {
             if (Array.isArray(data.groups)) setGroups(data.groups);
             if (typeof data.teamSize === 'number') setTeamSize(data.teamSize); // NEW
@@ -860,7 +908,7 @@ async function handleConfirmAndDeploy() {
         const fallbackResponse = await supabase
           .from('quiz_sessions')
           .insert([payload])
-          .select('id')
+          .select('id') 
           .maybeSingle();
           
         sessionData = fallbackResponse.data;
@@ -878,7 +926,7 @@ async function handleConfirmAndDeploy() {
         setActiveSessionExists(true);
         setInLobby(true);
         setJoinedStudents([]); 
-        const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "team" ? "Team" : "Live";
+        const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "chaosclash" ? "ChaosClash" : lobbyType === "team" ? "Team" : "Individual" || "Live";
         toast.success(`${modeLabel} Live Session initialized using bank: ${selectedBank.name}! Session Locked.`);
       } else if (sessionData) {
         // For Async/Endless modes, seed the questions into Redis so students can fetch them
@@ -905,19 +953,21 @@ async function handleConfirmAndDeploy() {
 
      const handleStartBattle = () => {
     setBattleStarted(true);
+      if (lobbyType === 'bingo') setProfessorView("bingo-monitor");
     setCurrentIndex(0);
+    const startType = lobbyType === 'bingo' ? 'PROF_START_BINGO' : lobbyType === 'royale' || lobbyType === 'chaosclash' ? 'PROF_START_ROYALE' : lobbyType === 'team' ? 'PROF_START_TEAM' : 'PROF_START_BATTLE';
+    
     if (wsRef.current?.readyState === WebSocket.OPEN) {
        wsRef.current.send(JSON.stringify({
-        type: 'PROF_START_BATTLE',
-           mode: lobbyType.toUpperCase(),
+         type: startType,
+         mode: lobbyType.toUpperCase(),
          battleId: sessionId,
          bankId: selectedBank.id,
          forceReset: true,
          questions: randomizedQuestions,
-         startingHp: 3,
        }));
     }
- };
+  };
 
   const handleNextQuestion = (customQ?: any) => {
     if (isAdvancingRef.current) return;
@@ -965,6 +1015,7 @@ async function handleConfirmAndDeploy() {
        if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'PROF_END_BATTLE', // server resolves TEAM/ROYALE from the room's registered mode
+        mode: lobbyType === 'royale' || lobbyType === 'chaosclash' ? 'ROYALE' : undefined,
         battleId: sessionId,
       }));
     }
@@ -979,6 +1030,7 @@ async function handleConfirmAndDeploy() {
       setInLobby(false);
       setActiveSessionExists(false);
       setBattleStarted(false);
+      setProfessorView("lobby");
       setQuizCompleted(false);
       setFinalLeaderboard([]);
       setCountdown(null);
@@ -1138,7 +1190,7 @@ async function handleConfirmAndDeploy() {
               <h2 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 24, color: "#fff" }}>Syncing Live Session...</h2>
               <p style={{ color: "rgba(255,255,255,0.6)", marginTop: 8 }}>Reconnecting to the active arena.</p>
             </div>
-          ) : !battleStarted ? (
+          ) : !battleStarted || (lobbyType === 'bingo' && professorView === "lobby") ? (
             <div style={{ maxWidth: 900, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 24 }}>
               <style>{`
                 @keyframes popIn { 0%{opacity:0;transform:scale(0.4)} 100%{opacity:1;transform:scale(1)} }
@@ -1282,6 +1334,20 @@ async function handleConfirmAndDeploy() {
               </button>
               {countdown !== null && countdown > 0 && <CountdownDisplay count={countdown} />}
             </div>
+          ) : lobbyType === 'bingo' ? (
+            <ProfBingoMonitor
+              roomCode={roomCode}
+              players={joinedStudents}
+              phase={bingoState.phase}
+              phaseSeconds={bingoState.phaseSeconds}
+              round={bingoState.round}
+              rolledNumber={bingoState.rolledNumber}
+              eligiblePlayerIds={bingoState.eligiblePlayerIds}
+              answeredPlayerIds={bingoState.answeredPlayerIds}
+              question={bingoState.question}
+              answerEvents={bingoAnswers}
+              questionEvents={bingoQuestions}
+              chatEvents={bingoChat}
           ) : lobbyType === 'bossraid' ? (
             <ProfBossRaid
               students={joinedStudents.map(s => ({ ...s, isActive: true, score: s.score || 0, avatarColor: s.avatarColor || '#FFC93C' }))}
@@ -1520,7 +1586,7 @@ async function handleConfirmAndDeploy() {
                 )}
 
                 {/* Battle Royale: always live, nothing to configure — just a status note */}
-                {lobbyType === "royale" && (
+                {(lobbyType === "royale" || lobbyType === "chaosclash") && (
                   <div style={{ background: C.yellowLight, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${C.yellowBorder}`, display: "flex", flexDirection: "column", gap: 6, justifyContent: "center" }}>
                     <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Execution Mode</span>
                     <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: C.navy }}>👑 Always Live — cannot be scheduled</span>
