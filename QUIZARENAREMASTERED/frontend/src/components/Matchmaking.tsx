@@ -554,7 +554,6 @@ const handleRemoveGroup = (groupName: string) => {
             type: 'JOIN_ROYALE',
             mode: 'ROYALE',
             battleId: sessionId,
-            playerData: { id: 'professor', name: 'Professor', initials: 'PR', color: '#5B3DF6' },
           }));
         } else if (lobbyType === 'bingo') {
           // ENSURE THIS EXPLICITLY SENDS JOIN_BINGO AND MODE BINGO

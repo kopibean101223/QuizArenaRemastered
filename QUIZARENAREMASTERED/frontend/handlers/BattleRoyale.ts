@@ -282,7 +282,7 @@ class BattleRoyaleHandler {
     redisPublisher: Redis,
     redisSubscriber: Redis
   ): Promise<void> {
-    const { type, battleId, roomCode, startingHp = 3, playerData, optionKey, correctAnswer, isLastQuestion, sender, message, userId } = payload;
+    const { type, battleId, roomCode, startingHp = 100, playerData, optionKey, correctAnswer, isLastQuestion, sender, message, userId } = payload;
     console.log(`[ROYALE][server] handleMessage type=${type} battleId=${battleId}`);
 
     if (!battleId) {
@@ -319,10 +319,13 @@ class BattleRoyaleHandler {
           questionIndex: '0',
         };
         await redisPublisher.hset(sKey, roomState);
+      } else if (roomState.status === 'waiting' && Number(roomState.startingHp) !== 100) {
+        roomState.startingHp = '100';
+        await redisPublisher.hset(sKey, { startingHp: '100' });
       }
       await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
 
-      if (playerData && playerData.id) {
+      if (playerData && playerData.id && playerData.id !== 'professor') {
         const initialPlayer: RoyalePlayerData = {
           ...playerData,
           lives: Number(roomState.startingHp),

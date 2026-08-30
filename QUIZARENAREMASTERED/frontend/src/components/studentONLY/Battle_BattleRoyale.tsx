@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Skull, Heart, Zap, ChevronRight } from 'lucide-react';
+import { Skull, Zap, ChevronRight } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
   formatBattleQuestions,
@@ -14,6 +14,9 @@ import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProv
 import { CountdownBar } from './LiveBattleCOMPONENTONLY/CountdownBar';
 import { AnswerInput } from './battle/Answer_Input';
 import { BattleChat, BattleChatMessage } from './battle/BattleChat';
+import { PowerCard } from './PowerCards/PowerCard';
+import { CARD_CATALOG } from './PowerCards/CardCatalog';
+import type { PowerCardData } from './PowerCards/types';
 
 export interface Survivor {
   id: string;
@@ -65,6 +68,10 @@ export interface BattleRoyaleProps {
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
 const DEFAULT_TIME_LIMIT = 20;
 
+function drawBattleCards(count: number): PowerCardData[] {
+  return [...CARD_CATALOG].sort(() => Math.random() - 0.5).slice(0, count);
+}
+
 /**
  * No longer owns a WebSocket (useBattleSocket) — connection now lives in
  * BattleSocketProvider, mounted with mode="ROYALE" above this component
@@ -76,7 +83,7 @@ const DEFAULT_TIME_LIMIT = 20;
  * context — same logic, same message types, just re-triggered whenever the
  * provider sees a new message instead of via a callback.
  */
-export function BattleRoyale({ battleId = '', initialStartingHp = 3, onLeaveBattle, battleName = 'Battle Royale' }: BattleRoyaleProps) {
+export function BattleRoyale({ battleId = '', initialStartingHp = 100, onLeaveBattle, battleName = 'Battle Royale' }: BattleRoyaleProps) {
   const { user, navigate } = useApp();
 const { send, lastMessage, questions: contextQuestions } = useBattleSocketContext();
 
@@ -87,6 +94,8 @@ const { send, lastMessage, questions: contextQuestions } = useBattleSocketContex
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [timeLimit, setTimeLimit] = useState<number>(DEFAULT_TIME_LIMIT);
   const [timeLeft, setTimeLeft] = useState<number>(DEFAULT_TIME_LIMIT);
+  const [powerCards] = useState<PowerCardData[]>(() => drawBattleCards(3));
+  const [revealedPowerCards, setRevealedPowerCards] = useState<Set<string>>(() => new Set());
 
   const [startingHp, setStartingHp] = useState<number>(initialStartingHp);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
@@ -101,7 +110,7 @@ const { send, lastMessage, questions: contextQuestions } = useBattleSocketContex
 
   function applyPlayers(players: any[]) {
     setSurvivors(
-      players.map((p, idx) => ({
+      players.filter((p) => p.id !== 'professor').map((p, idx) => ({
         id: p.id,
         name: p.id === myId ? myName : p.name || `Player ${idx + 1}`,
         initials: (p.initials || p.name || 'P').substring(0, 2).toUpperCase(),
@@ -294,8 +303,40 @@ useEffect(() => {
         </div>
       </header>
 
+                 <div className="fixed left-[30px] top-60 z-30">
+        <div className="relative flex h-44 w-64 items-center">
+          {powerCards.map((card, index) => {
+            const mid = (powerCards.length - 1) / 2;
+            const isRevealed = revealedPowerCards.has(card.id);
+            return (
+              <div
+                key={card.id}
+                className="absolute left-0 top-1/2 transition-all duration-500"
+                style={{
+                  transform: `translateY(-50%) rotate(${90 + (isRevealed ? 0 : (index - mid) * 12)}deg) translateX(${isRevealed ? 16 : index * 20}px)`,
+                  transformOrigin: 'left center',
+                  zIndex: isRevealed ? 50 : powerCards.length - index,
+                }}
+              >
+                <PowerCard
+                  card={card}
+                  state={isRevealed ? 'revealed' : 'locked'}
+                  size="md"
+                  onClick={() => setRevealedPowerCards((previous) => {
+                    const next = new Set(previous);
+                    if (next.has(card.id)) next.delete(card.id);
+                    else next.add(card.id);
+                    return next;
+                  })}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Main Grid */}
-      <div className="flex-1 p-5 grid grid-cols-[1fr_280px] gap-5 min-h-0">
+      <div className="flex-1 p-5 pl-5 lg:pl-44 grid grid-cols-[1fr_280px] gap-5 min-h-0">
         <div className="flex flex-col gap-4">
           {/* Round Header */}
           <div className="flex items-center justify-between px-2">
@@ -413,14 +454,7 @@ useEffect(() => {
                     </div>
                     <span className="text-[10px] text-[#8F93A8] font-bold">{s.name}</span>
                     <div className="flex gap-0.5">
-                      {Array.from({ length: startingHp }).map((_, i) => (
-                        <Heart
-                          key={i}
-                          size={8}
-                          fill={i < s.lives ? '#FF4757' : 'transparent'}
-                          color={i < s.lives ? '#FF4757' : 'rgba(255,255,255,0.2)'}
-                        />
-                      ))}
+                      <span className="text-[10px] font-black text-[#FF4757]">{s.lives} HP</span>
                     </div>
                   </div>
                 );
