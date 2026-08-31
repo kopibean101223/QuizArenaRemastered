@@ -885,8 +885,7 @@ def process_and_generate_quiz(
         # MCQ Validation and Duplicate Detection
         valid_mcqs = []
         seen_questions = set()
-        for q_data, chunk in critic_items:
-            q_text = q_data.get("question", q_data.get("text", ""))
+        for q_data, chunk in all_generated:
             
             # Duplicate detection (exact string matching for now)
             if q_text in seen_questions:
