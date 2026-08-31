@@ -443,5 +443,5 @@
       </div>
     );
     }
-  }
+  
   export default BattleRoyale;  
