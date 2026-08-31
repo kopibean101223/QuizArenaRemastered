@@ -6,6 +6,7 @@ import Redis, { RedisOptions } from 'ioredis';
 
 import roomPresenceHandler, { PresencePayload } from './handlers/RoomPresence';
 import liveBattleHandler, { BattlePayload } from './handlers/LiveBattle';
+import BossRaidHandler, { BossBattlePayload } from './handlers/BossRaid';
 import BattleRoyaleHandler, { RoyalePayload } from './handlers/BattleRoyale';
 import TeamBattleHandler, { TeamBattlePayload } from './handlers/TeamBattle';
 import selfPacedBattleHandler, { SelfPacedPayload } from './handlers/OwnPace';
@@ -24,12 +25,14 @@ const AMBIGUOUS_TYPES: Record<string, { TEAM?: string; ROYALE?: string; BINGO?: 
   PROF_END_BATTLE: { TEAM: 'END_TEAM_BATTLE', ROYALE: 'PROF_END_ROYALE', BINGO: 'END_BINGO_BATTLE' },
   ADVANCE_QUESTION: {},
   CHAT_MESSAGE: {},
+  JOIN_BATTLE: {},
 };
 // RoomPresenceHandler owns battle:{battleId} — the shared join/roster
 // channel every mode rides on. Init this FIRST.
 roomPresenceHandler.initSubscriber(redisSubscriber);
-liveBattleHandler.registerAbandonHook(); // wires LiveBattle's Supabase close-out into presence's grace-period timer
+liveBattleHandler.initSubscriber(redisSubscriber); // wires LiveBattle's Supabase close-out into presence's grace-period timer
 bingoBattleHandler.initSubscriber(redisSubscriber);
+BossRaidHandler.initSubscriber(redisSubscriber);
 selfPacedBattleHandler.initSubscriber(redisSubscriber);
 TeamBattleHandler.initSubscriber(redisSubscriber);
 BattleRoyaleHandler.initSubscriber(redisSubscriber);
@@ -71,9 +74,12 @@ wss.on('connection', (ws: WebSocket) => {
         await TeamBattleHandler.handleMessage(ws, payload as TeamBattlePayload, redisPublisher, redisSubscriber);
       } else if (payload.mode === 'BINGO' || payload.type?.includes('BINGO')) { // <--- ADD THIS BLOCK
         await bingoBattleHandler.handleMessage(ws, payload as BingoPayload, redisPublisher, redisSubscriber);
-      } else {
+      } else if (payload.mode === "BOSSRAID" || payload.mode === "BOSS_RAID" || payload.type?.includes('BOSS')) {
+        await BossRaidHandler.handleMessage(ws, payload as BossBattlePayload, redisPublisher, redisSubscriber);
+
+      }else {
         await liveBattleHandler.handleMessage(ws, payload as BattlePayload, redisPublisher, redisSubscriber);
-      }
+      }  
     } catch (err) {
       console.error('Failed to parse WS message:', err);
     }

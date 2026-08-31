@@ -393,16 +393,18 @@ export function BattleSocketProvider({
         }
       }
 
-      if (data.type === 'BATTLE_ACTION' && data.message) {
-        setChatMessages((prev) => [
-          ...prev,
-          {
-            id: `${data.userId || data.sender}-${data.timestamp || Date.now()}`,
-            sender: data.sender || 'Anonymous',
-            text: data.message,
-            isMe: data.userId === resolvedUserId,
-          },
-        ]);
+      if (data.type === 'BATTLE_ACTION') {
+        const newMsg = {
+          id: data.id || `${data.userId}-${Date.now()}-${Math.random()}`,
+          sender: data.sender || 'Anonymous',
+          text: data.message,
+          isMe: data.userId === resolvedUserId,
+          timestamp: data.timestamp || Date.now(),
+        };
+        setChatMessages((prev) => {
+          if (prev.some(m => m.id === newMsg.id)) return prev;
+          return [...prev, newMsg].slice(-50);
+        });
       }
       // Note: QUIZ_COMPLETED / TEAM_BATTLE_COMPLETED / ROYALE_MATCH_ENDED are
       // intentionally left for each screen to read via `lastMessage` and

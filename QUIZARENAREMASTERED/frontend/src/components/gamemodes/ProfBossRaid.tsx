@@ -57,7 +57,7 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
 
 
   useEffect(() => {
-    if (lastMessage?.type === 'BOSS_ACTION' || lastMessage?.type === 'ROOM_STATE_SYNC') {
+    if (lastMessage?.type === 'BOSS_ACTION' || lastMessage?.type === 'ROOM_STATE_SYNC' || lastMessage?.type === 'BOSSRAID_TIME_UP') {
       console.log("[ProfBossRaid] Received", lastMessage.type, lastMessage);
       if (lastMessage.bossHp !== undefined) {
         setLocalBossHp(prev => {
@@ -68,7 +68,15 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
           return lastMessage.bossHp;
         });
       }
-      if (lastMessage.classHp !== undefined) setLocalClassHp(lastMessage.classHp);
+      if (lastMessage.classHp !== undefined) {
+        setLocalClassHp(lastMessage.classHp);
+        if (lastMessage.type === 'BOSSRAID_TIME_UP') {
+          toast.error("Time's up! The boss attacked the class!", {
+            position: 'top-center',
+            style: { background: 'red', color: 'white' }
+          });
+        }
+      }
       if (lastMessage.bossEnergy !== undefined) {
         setEnergy(lastMessage.bossEnergy); // Absolute override from prof
       }

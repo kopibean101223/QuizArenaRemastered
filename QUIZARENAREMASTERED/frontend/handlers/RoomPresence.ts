@@ -50,13 +50,19 @@ class RoomPresenceHandler {
   private onHostAbandoned?: (battleId: string) => Promise<void>;
 
   /** LiveBattleHandler (or whoever cares) plugs in what "abandoned room" means for it. */
-  public setAbandonHook(fn: (battleId: string) => Promise<void>): void {
-    this.onHostAbandoned = fn;
+  public setAbandonHook(hook: (battleId: string) => Promise<void>): void {
+    this.onHostAbandoned = hook;
   }
-  public setBattleMode(battleId: string, mode: 'LIVE' | 'TEAM' | 'ROYALE'| 'BINGO'): void {
+
+  public getPlayerCount(battleId: string): number {
+    const clients = this.activeRooms.get(battleId);
+    return clients ? clients.size : 0;
+  }
+
+  public setBattleMode(battleId: string, mode: 'LIVE' | 'TEAM' | 'ROYALE' | 'BINGO' | 'BOSSRAID' | 'ENDLESS'): void {
     this.battleModes.set(battleId, mode);
   }
-  public getBattleMode(battleId: string): 'LIVE' | 'TEAM' | 'ROYALE'| 'BINGO' {
+  public getBattleMode(battleId: string): 'LIVE' | 'TEAM' | 'ROYALE'| 'BINGO' | 'BOSSRAID' | 'ENDLESS' {
     return this.battleModes.get(battleId) || 'LIVE';
   }
   public initSubscriber(redisSubscriber: Redis): void {

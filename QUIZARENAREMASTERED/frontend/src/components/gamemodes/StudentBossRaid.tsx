@@ -6,6 +6,7 @@ import { Zap } from 'lucide-react';
 import { cn } from '@/components/ui/utils';
 import { StreakRewardCard } from './StreakRewardCard';
 import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProvider';
+import { toast } from 'sonner';
 
 const POWER_UP_SLOTS = [
   { name: 'Shield',        icon: '🛡️' },
@@ -30,10 +31,19 @@ interface StudentBossRaidProps {
 
 
 
+import { useApp } from "../../context/AppContext";
+
 export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth = 1000, bossMaxHealth = 1000, activeStudentsCount = 1, bossCardEffect = null, totalQuestions = 10, onAnswer, lastMessage: propLastMessage }: StudentBossRaidProps) {
   const socketCtx = useBattleSocketContext();
   const send = socketCtx?.send;
   const lastMessage = propLastMessage || socketCtx?.lastMessage;
+  const { navigate } = useApp();
+
+  useEffect(() => {
+    if (lastMessage?.type === 'ROOM_COMPLETED' || lastMessage?.type === 'QUIZ_COMPLETED') {
+      navigate("results");
+    }
+  }, [lastMessage, navigate]);
   
   // Use currentQuestion from props if available, otherwise get it from socketCtx
   const activeQuestion = currentQuestion || (socketCtx?.questions && socketCtx.questions[socketCtx.currentIndex]) || null;
@@ -43,16 +53,19 @@ export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth =
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
   
   // Timer State
-  const [timeLeft, setTimeLeft] = useState(30);
+  const [timeLeft, setTimeLeft] = useState(60);
 
   useEffect(() => {
-    if (socketCtx?.startedAt) {
-      const limit = socketCtx.lastMessage?.timeLimit || 30;
+    if (!socketCtx?.startedAt) {
+      setTimeLeft(60);
+      return;
+    }
+    const timer = setInterval(() => {
+      const limit = socketCtx.lastMessage?.timeLimit || 60;
       const elapsed = Math.floor((Date.now() - socketCtx.startedAt) / 1000);
       setTimeLeft(Math.max(0, limit - elapsed));
-    } else {
-      setTimeLeft(30);
-    }
+    }, 500);
+    return () => clearInterval(timer);
   }, [socketCtx?.startedAt, socketCtx?.lastMessage?.timeLimit, activeQuestion]);
 
   // Stagger Meter
@@ -81,6 +94,16 @@ export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth =
           return lastMessage.classHp;
         });
       }
+    } else if (lastMessage?.type === 'BOSSRAID_TIME_UP') {
+      if (lastMessage.classHp !== undefined) {
+        setLocalClassHp(lastMessage.classHp);
+        setSlashed(true);
+        setTimeout(() => setSlashed(false), 300);
+      }
+      toast.error(lastMessage.message || "Time's up! BRACE FOR IMPACT!", {
+        position: 'top-center',
+        style: { background: 'red', color: 'white', fontWeight: 'bold' }
+      });
     }
   }, [lastMessage]);
 
@@ -124,34 +147,18 @@ export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth =
   const [streak, setStreak] = useState(0);
   const [showStreakCard, setShowStreakCard] = useState(false);
 
-  // Timer Tick
+  // Timeout State Watcher
   useEffect(() => {
-    if (timeLeft > 0 && !answered) {
-      const timer = setTimeout(() => setTimeLeft(prev => prev - 1), 1000);
-      return () => clearTimeout(timer);
-    } else if (timeLeft === 0 && !answered) {
-      // Timer ran out! Penalize.
+    if (timeLeft === 0 && !answered) {
+      // Just mark it locally so the UI updates
       setAnswered(true);
       setIsCorrect(false);
       setStreak(0);
       setStaggerProgress(0);
       setMissStreak(m => m + 1);
-      
-      const newClassHp = Math.max(0, localClassHp - 25);
-      setLocalClassHp(newClassHp);
-      if (send) {
-        send({
-          type: 'BOSS_ACTION',
-          battleId,
-          classHp: newClassHp,
-          addBossEnergy: 3 // Add 3% energy to prof
-        });
-      }
-      
-      setSlashed(true);
-      setTimeout(() => setSlashed(false), 300);
+      // The server will handle computing and dispatching the Class HP penalty via BOSSRAID_TIME_UP!
     }
-  }, [timeLeft, answered, send, localClassHp]);
+  }, [timeLeft, answered]);
 
   // Reset selected when question changes
   useEffect(() => {

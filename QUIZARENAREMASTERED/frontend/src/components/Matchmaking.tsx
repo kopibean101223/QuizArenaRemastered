@@ -614,7 +614,9 @@ const handleRemoveGroup = (groupName: string) => {
               setActiveCustomQuestion(null);
             }
             if (data.startedAt) {
-              const limit = data.timeLimit || 30;
+              startedAtRef.current = data.startedAt;
+              const limit = data.timeLimit || 60;
+              timeLimitRef.current = limit;
               const elapsed = Math.floor((Date.now() - data.startedAt) / 1000);
               setTimeRemaining(Math.max(0, limit - elapsed));
             }
@@ -817,20 +819,32 @@ const handleRemoveGroup = (groupName: string) => {
     };
   }, [inLobby, sessionId, randomizedQuestions.length]);
 
+  const startedAtRef = useRef<number | null>(null);
+  const timeLimitRef = useRef<number>(60);
+
   useEffect(() => {
     if (!battleStarted || quizCompleted) return;
     const timer = setInterval(() => {
-      setTimeRemaining(prev => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          if (isAdvancingRef.current) return 0;
-          
-        }
-        return prev - 1;
-      });
-    }, 1000);
+      if (startedAtRef.current) {
+        const elapsed = Math.floor((Date.now() - startedAtRef.current) / 1000);
+        setTimeRemaining(Math.max(0, timeLimitRef.current - elapsed));
+      } else {
+        setTimeRemaining(prev => Math.max(0, prev - 1));
+      }
+    }, 500); // 500ms ensures it recovers fast when tab is switched back
     return () => clearInterval(timer);
   }, [battleStarted, currentIndex, randomizedQuestions.length, quizCompleted]);
+
+  useEffect(() => {
+    if (battleStarted && !quizCompleted && timeRemaining === 0) {
+      if (!isAdvancingRef.current) {
+        // Only auto-advance if we are NOT in Boss Raid mode (Boss Raid is manually dragged)
+        if (lobbyType !== 'bossraid') {
+          handleNextQuestion();
+        }
+      }
+    }
+  }, [timeRemaining, battleStarted, quizCompleted, lobbyType]);
    
 async function handleConfirmAndDeploy() {
     if (activeSessionExists) {
@@ -951,10 +965,11 @@ async function handleConfirmAndDeploy() {
     }
   }
 
-     const handleStartBattle = () => {
+   const handleStartBattle = () => {
     setBattleStarted(true);
       if (lobbyType === 'bingo') setProfessorView("bingo-monitor");
     setCurrentIndex(0);
+    setTimeRemaining(60);
     const startType = lobbyType === 'bingo' ? 'PROF_START_BINGO' : lobbyType === 'royale' || lobbyType === 'chaosclash' ? 'PROF_START_ROYALE' : lobbyType === 'team' ? 'PROF_START_TEAM' : 'PROF_START_BATTLE';
     
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -973,6 +988,11 @@ async function handleConfirmAndDeploy() {
     if (isAdvancingRef.current) return;
     setIsAdvancing(true);
 
+    // If customQ is a React event, ignore it to prevent circular JSON errors
+    if (customQ && (customQ.nativeEvent || customQ.preventDefault || customQ.target)) {
+      customQ = undefined;
+    }
+
     const totalQCount = randomizedQuestions.length || 1;
     const nextIdx = currentIndex + 1;
 
@@ -988,12 +1008,12 @@ async function handleConfirmAndDeploy() {
           type: 'ADVANCE_QUESTION',
           battleId: sessionId,
           currentIndex: nextIdx,
-          nextTimeLimit: 30,
+          nextTimeLimit: 60,
           isLastQuestion: false,
           customQuestion: customQ
         }));
       }
-      setTimeRemaining(30);
+      setTimeRemaining(60);
       setTimeout(() => setIsAdvancing(false), 500);
     } else {
       if (wsRef.current?.readyState === WebSocket.OPEN) {

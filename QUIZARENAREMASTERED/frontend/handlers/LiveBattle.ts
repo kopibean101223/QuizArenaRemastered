@@ -1,10 +1,17 @@
 import { WebSocket } from 'ws';
 import Redis from 'ioredis';
 import { finalizeAndSaveBattle, PlayerResult } from '../src/lib/student/battle/battleSync';
-import roomPresenceHandler from './RoomPresence';
 
-const COMPLETED_ROOM_TTL_SECONDS = 7 * 24 * 3600;
-const ACTIVE_ROOM_TTL_SECONDS = 7 * 24 * 3600;
+const MAX_HISTORY_LIMIT = 100;
+const COMPLETED_ROOM_TTL_SECONDS = 3600; // Retain room state for 1 hour so results linger
+// FIX (2.3): waiting/active room state previously had NO expiry at all, so an
+// abandoned lobby sat in Redis forever. Give it a generous TTL, refreshed on
+// activity, so it self-cleans if nothing else catches it.
+const ACTIVE_ROOM_TTL_SECONDS = 4 * 60 * 60; // 4 hours
+// FIX (2.2): grace period before a host disconnect is treated as "gone for
+// good" — covers brief refreshes/network drops instead of instantly killing
+// the room the moment the professor's socket blips.
+const HOST_DISCONNECT_GRACE_MS = 20_000;
 
 function roomChannel(battleId: string): string {
   return `battle:${battleId}`;
@@ -35,8 +42,6 @@ export interface BattlePayload {
   roomCode?: string;
   message?: string;
   sender?: string;
-  userId?: string;
-  isJoinEvent?: boolean;
   isLastQuestion?: boolean;
   totalQuestions?: number;
   nextTimeLimit?: number;
@@ -44,38 +49,47 @@ export interface BattlePayload {
   forceReset?: boolean;
   questions?: unknown[];
   playerData?: PlayerData;
+  mode?: string; // ADDED: required for mode validation
+  // FIX (2.2): lets a client identify itself as the professor/host on join.
   role?: 'host' | 'student';
-  mode?: string;
-  customQuestion?: unknown;
-  currentIndex?: number;
-  // Boss Raid Sync Fields
-  bossHp?: number;
-  classHp?: number;
-  bossEnergy?: number;
-  addBossEnergy?: number;
-  bossCardEffect?: string;
 }
 
-/**
- * Individual Live Quiz mode ONLY. Connection registry, JOIN_BATTLE,
- * BATTLE_ACTION, and host-disconnect handling now live in
- * RoomPresenceHandler (shared by every mode) — this class only owns
- * quiz-progression mechanics: starting, advancing, scoring, ending.
- */
 class LiveBattleHandler {
+  private activeRooms: Map<string, Set<WebSocket>>;
+  private clientRoomMap: Map<WebSocket, string>;
+  // FIX (2.2): tracks which socket(s) in a room are the host, and any pending
+  // "host disconnected, waiting to see if they reconnect" timers.
+  private hostSockets: Map<string, Set<WebSocket>>;
+  private hostDisconnectTimers: Map<string, NodeJS.Timeout>;
+  // FIX (2.2): the grace-period timer in handleLeave() fires later, outside
+  // of any handleMessage() call, so it needs its own reference to Redis.
   private redisPublisherRef: Redis | null = null;
 
-  public initSubscriber(_redisSubscriber: Redis): void {
-    // No-op now — RoomPresenceHandler owns the battle:{battleId} subscription
-    // and fan-out. Kept as a method so server.ts's init loop doesn't need
-    // special-casing.
+  constructor() {
+    this.activeRooms = new Map<string, Set<WebSocket>>();
+    this.clientRoomMap = new Map<WebSocket, string>();
+    this.hostSockets = new Map<string, Set<WebSocket>>();
+    this.hostDisconnectTimers = new Map<string, NodeJS.Timeout>();
   }
 
-  /** Wires this handler's completion logic into RoomPresenceHandler's grace-period timer. */
-  public registerAbandonHook(): void {
-    roomPresenceHandler.setAbandonHook((battleId) => this.completeAbandonedRoom(battleId));
+  public initSubscriber(redisSubscriber: Redis): void {
+    redisSubscriber.on('message', (channel: string, message: string) => {
+      const battleId = channel.replace('battle:', '');
+      const clientsInRoom = this.activeRooms.get(battleId);
+
+      if (clientsInRoom) {
+        clientsInRoom.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(message);
+          }
+        });
+      }
+    });
   }
 
+  /**
+   * Helper function to extract players from Redis and trigger Supabase sync
+   */
   public async syncBattleToSupabase(
     redisPublisher: Redis,
     battleId: string,
@@ -85,9 +99,11 @@ class LiveBattleHandler {
       const lKey = leaderboardKey(battleId);
       const sKey = stateKey(battleId);
 
+      // 1. Fetch raw leaderboard data from Redis
       const rawScores = await redisPublisher.hgetall(lKey);
       const roomState = await redisPublisher.hgetall(sKey);
 
+      // 2. Format players for finalizeAndSaveBattle
       const players: PlayerResult[] = Object.values(rawScores || {}).map((item) => {
         const parsed = JSON.parse(item) as PlayerData;
         return {
@@ -99,6 +115,7 @@ class LiveBattleHandler {
         };
       });
 
+      // 3. Commit to database via helper
       await finalizeAndSaveBattle({
         battleId,
         roomCode: roomCode || roomState.roomCode || 'LIVE_ROOM',
@@ -122,8 +139,12 @@ class LiveBattleHandler {
       type,
       battleId,
       roomCode,
+      message,
+      sender,
       isLastQuestion,
+      totalQuestions,
       nextTimeLimit,
+      timeLimit,
       playerData,
     } = payload;
 
@@ -132,6 +153,14 @@ class LiveBattleHandler {
       return;
     }
 
+    // NEW VALIDATION: Drop any packets not intended for LIVE mode
+    if (payload.mode && payload.mode !== 'LIVE' && payload.mode !== 'INDIVIDUAL') {
+      console.warn(`[LiveBattle] Ignoring payload for mode: ${payload.mode}`);
+      return;
+    }
+
+    // FIX (2.2): keep a live reference so handleLeave()'s grace-period timer
+    // can talk to Redis after this call has already returned.
     this.redisPublisherRef = redisPublisher;
 
     const channel = roomChannel(battleId);
@@ -139,38 +168,78 @@ class LiveBattleHandler {
     const hKey = historyKey(battleId);
     const lKey = leaderboardKey(battleId);
 
-    // JOIN_BATTLE additionally sends back ROOM_STATE_SYNC (mode-specific
-    // payload shape: leaderboard + questions) on top of what
-    // RoomPresenceHandler already registered/seeded for this socket.
+    // ── ACTION A: JOIN A SPECIFIC BATTLE ROOM & SYNC STATE ──
     if (type === 'JOIN_BATTLE') {
-      const roomState = await redisPublisher.hgetall(sKey);
+      if (!this.activeRooms.has(battleId)) {
+        this.activeRooms.set(battleId, new Set<WebSocket>());
+        redisSubscriber.subscribe(channel, (err) => {
+          if (err) console.error(`Failed to subscribe to ${channel}`, err);
+          else console.log(`Subscribed to Redis channel: ${channel}`);
+        });
+      }
+
+      this.activeRooms.get(battleId)!.add(ws);
+      this.clientRoomMap.set(ws, battleId);
+
+      // FIX (2.2): remember host sockets so handleLeave() can tell a professor
+      // disconnecting apart from a student disconnecting. Reconnecting also
+      // cancels any pending "host is gone" grace-period timer for this room.
+      if (payload.role === 'host') {
+        if (!this.hostSockets.has(battleId)) this.hostSockets.set(battleId, new Set<WebSocket>());
+        this.hostSockets.get(battleId)!.add(ws);
+
+        const pendingTimer = this.hostDisconnectTimers.get(battleId);
+        if (pendingTimer) {
+          clearTimeout(pendingTimer);
+          this.hostDisconnectTimers.delete(battleId);
+          console.log(`Host reconnected to Battle Room ${battleId} — cancelled scheduled auto-completion.`);
+        }
+      }
+
+      let roomState = await redisPublisher.hgetall(sKey);
+
+      if (!roomState || !roomState.currentIndex || payload.forceReset) {
+        roomState = {
+          currentIndex: '0',
+          startedAt: String(Date.now()),
+          status: 'waiting',
+          totalQuestions: String(totalQuestions || 10),
+          timeLimit: String(timeLimit || 60),
+          roomCode: roomCode || '',
+        };
+        await redisPublisher.hset(sKey, roomState);
+        await redisPublisher.del(hKey);
+      }
+      // FIX (2.3): give the room state a TTL while it's waiting/active too,
+      // refreshed on every join, so an abandoned lobby eventually expires
+      // instead of sitting in Redis forever.
+      await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
+
       const history = await redisPublisher.lrange(hKey, 0, -1);
       const rawScores = await redisPublisher.hgetall(lKey);
+
       const leaderboard = Object.values(rawScores || {}).map((item) => JSON.parse(item));
+      const questionsStr = await redisPublisher.get(`battle:${battleId}:questions`);
 
       ws.send(
         JSON.stringify({
           type: 'ROOM_STATE_SYNC',
           battleId,
-          currentIndex: parseInt(roomState.currentIndex || roomState.questionIndex || '0', 10),
-          startedAt: parseInt(roomState.startedAt || String(Date.now()), 10),
+          currentIndex: parseInt(roomState.currentIndex, 10),
+          startedAt: parseInt(roomState.startedAt, 10),
           timeLimit: parseInt(roomState.timeLimit || '60', 10),
           status: roomState.status || 'waiting',
           history: history.map((item) => JSON.parse(item)),
           leaderboard,
-          questions: JSON.parse((await redisPublisher.get(`battle:${battleId}:questions`)) || '[]'),
-          bossHp: roomState.bossHp ? parseInt(roomState.bossHp, 10) : undefined,
-          classHp: roomState.classHp ? parseInt(roomState.classHp, 10) : undefined,
-          bossEnergy: roomState.bossEnergy ? parseInt(roomState.bossEnergy, 10) : undefined,
-          mode: roomState.mode || 'LIVE',
-          customQuestion: roomState.customQuestion ? JSON.parse(roomState.customQuestion) : undefined,
+          questions: JSON.parse(questionsStr || '[]'),
         })
       );
 
-      console.log(`[LiveBattle] Sent ROOM_STATE_SYNC for ${battleId} at question index ${roomState.currentIndex || roomState.questionIndex}, mode: ${roomState.mode}`);
+      console.log(`Client joined Battle Room ${battleId} at question index ${roomState.currentIndex}`);
       return;
     }
 
+    // ── ACTION: SUBMIT SCORE & BROADCAST LEADERBOARD UPDATE ──
     if (type === 'SUBMIT_SCORE' || type === 'UPDATE_PLAYER_PROGRESS') {
       if (!playerData || (!playerData.id && !playerData.userId)) return;
 
@@ -185,23 +254,26 @@ class LiveBattleHandler {
 
       await redisPublisher.publish(
         channel,
-        JSON.stringify({ type: 'SCORE_UPDATED', battleId, leaderboard })
+        JSON.stringify({
+          type: 'SCORE_UPDATED',
+          battleId,
+          leaderboard,
+        })
       );
       return;
     }
 
+    // ── ACTION: PROFESSOR STARTS THE BATTLE ──
     if (type === 'PROF_START_BATTLE') {
       const startedAt = Date.now();
-      const mode = payload.mode || 'LIVE';
-      const initialIndex = mode === 'BOSSRAID' ? -1 : 0;
 
       await redisPublisher.hset(sKey, {
-        currentIndex: String(initialIndex),
+        currentIndex: '0',
         status: 'active',
         startedAt: String(startedAt),
         roomCode: roomCode || '',
-        mode,
       });
+      // FIX (2.3): refresh the TTL on activity so an active room doesn't expire mid-battle.
       await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
 
       if (payload.forceReset) {
@@ -221,20 +293,28 @@ class LiveBattleHandler {
         JSON.stringify({
           type: 'PROF_START_BATTLE',
           battleId,
-          mode,
-          currentIndex: initialIndex,
+          mode: 'LIVE',
+          currentIndex: 0,
           startedAt,
+          timeLimit: 60,
           questions: parsedQuestions,
         })
       );
 
-      console.log(`[LiveBattle] Started ${battleId} with ${parsedQuestions.length} synchronized questions.`);
+      console.log(`Professor started Battle Room ${battleId} with ${parsedQuestions.length} synchronized questions.`);
       return;
     }
 
+    // ── ACTION B: ADVANCE QUESTION INDEX ──
     if (type === 'ADVANCE_QUESTION') {
+      const nextIndex = await redisPublisher.hincrby(sKey, 'currentIndex', 1);
       const startedAt = Date.now();
       const newLimit = nextTimeLimit || 15;
+
+      await redisPublisher.hset(sKey, {
+        startedAt: String(startedAt),
+        timeLimit: String(newLimit),
+      });
 
       if (isLastQuestion) {
         await redisPublisher.hset(sKey, { status: 'completed' });
@@ -244,39 +324,16 @@ class LiveBattleHandler {
         const rawScores = await redisPublisher.hgetall(lKey);
         const leaderboard = Object.values(rawScores).map((item) => JSON.parse(item));
 
+        // 1. Trigger Supabase Sync
         await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
 
+        // 2. Notify Clients
         await redisPublisher.publish(
           channel,
           JSON.stringify({ type: 'QUIZ_COMPLETED', battleId, leaderboard })
         );
       } else {
-        const nextIndex = await redisPublisher.hincrby(sKey, 'currentIndex', 1);
-        const updateData: Record<string, string> = {
-          startedAt: String(startedAt),
-          timeLimit: String(newLimit),
-        };
-        if (payload.customQuestion) {
-          updateData.customQuestion = JSON.stringify(payload.customQuestion);
-          
-          // Remove the dragged question from the Redis bank so it doesn't reappear on refresh
-          const qKey = `battle:${battleId}:questions`;
-          const rawBank = await redisPublisher.get(qKey);
-          if (rawBank) {
-            let bank = JSON.parse(rawBank);
-            const customQ = payload.customQuestion as any;
-            bank = bank.filter((q: any) => {
-              const qText = q.text || q.question;
-              const customText = customQ.text || customQ.question;
-              return qText !== customText;
-            });
-            await redisPublisher.set(qKey, JSON.stringify(bank));
-            await redisPublisher.expire(qKey, ACTIVE_ROOM_TTL_SECONDS);
-          }
-        } else {
-          updateData.customQuestion = ""; // clear it if not provided
-        }
-        await redisPublisher.hset(sKey, updateData);
+        // FIX (2.3): keep refreshing the TTL as the battle progresses.
         await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
         await redisPublisher.publish(
           channel,
@@ -286,13 +343,13 @@ class LiveBattleHandler {
             currentIndex: Number(nextIndex),
             startedAt,
             timeLimit: Number(newLimit),
-            customQuestion: payload.customQuestion,
           })
         );
       }
       return;
     }
 
+    // ── ACTION C: PROFESSOR MANUALLY ENDS BATTLE ──
     if (type === 'END_BATTLE' || type === 'PROF_END_BATTLE') {
       await redisPublisher.hset(sKey, { status: 'completed' });
       await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
@@ -301,8 +358,10 @@ class LiveBattleHandler {
       const rawScores = await redisPublisher.hgetall(lKey);
       const leaderboard = Object.values(rawScores).map((item) => JSON.parse(item));
 
+      // 1. Sync to Supabase
       await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
 
+      // 2. Notify Room
       await redisPublisher.publish(
         channel,
         JSON.stringify({
@@ -315,6 +374,7 @@ class LiveBattleHandler {
       return;
     }
 
+    // ── ACTION D: RESET ROOM BACK TO QUESTION 1 ──
     if (type === 'RESET_ROOM') {
       const startedAt = Date.now();
       await redisPublisher.hset(sKey, {
@@ -333,24 +393,75 @@ class LiveBattleHandler {
       return;
     }
 
-    if (type === 'BOSS_ACTION') {
-      const updates: Record<string, string> = {};
-      if (payload.bossHp !== undefined) updates.bossHp = String(payload.bossHp);
-      if (payload.classHp !== undefined) updates.classHp = String(payload.classHp);
-      if (payload.bossEnergy !== undefined) updates.bossEnergy = String(payload.bossEnergy);
-      
-      if (Object.keys(updates).length > 0) {
-        await redisPublisher.hset(sKey, updates);
-      }
+    // ── ACTION E: CHAT / GAME ACTIONS ──
+    if (type === 'BATTLE_ACTION') {
+      const eventData = JSON.stringify({
+        type: 'BATTLE_ACTION',
+        battleId,
+        sender: sender || 'Anonymous',
+        message,
+        timestamp: new Date().toISOString(),
+      });
 
-      await redisPublisher.publish(
-        channel,
-        JSON.stringify(payload)
-      );
+      await redisPublisher.rpush(hKey, eventData);
+      await redisPublisher.ltrim(hKey, -MAX_HISTORY_LIMIT, -1);
+      await redisPublisher.publish(channel, eventData);
       return;
     }
   }
 
+  public handleLeave(ws: WebSocket, redisSubscriber: Redis): void {
+    const battleId = this.clientRoomMap.get(ws);
+    if (!battleId) return;
+
+    const roomClients = this.activeRooms.get(battleId);
+    if (roomClients) {
+      roomClients.delete(ws);
+
+      if (roomClients.size === 0) {
+        this.activeRooms.delete(battleId);
+        const channel = roomChannel(battleId);
+
+        redisSubscriber.unsubscribe(channel, (err) => {
+          if (err) console.error(`Failed to unsubscribe from ${channel}`, err);
+          else console.log(`Unsubscribed from empty channel: ${channel}`);
+        });
+      }
+    }
+
+    // FIX (2.2): if the socket that just left was the host, don't treat it
+    // like an ordinary student disconnect (which the old code did — nothing
+    // about the room changed). Start a short grace period in case it's just a
+    // refresh/network blip; if the host hasn't reconnected by the time it
+    // fires, mark the room completed the same way END_BATTLE does.
+    const hostsInRoom = this.hostSockets.get(battleId);
+    if (hostsInRoom?.has(ws)) {
+      hostsInRoom.delete(ws);
+
+      if (hostsInRoom.size === 0 && !this.hostDisconnectTimers.has(battleId)) {
+        const timer = setTimeout(() => {
+          this.hostDisconnectTimers.delete(battleId);
+          this.completeAbandonedRoom(battleId).catch((err) =>
+            console.error(`[LiveBattle] Failed to auto-complete abandoned room ${battleId}:`, err)
+          );
+        }, HOST_DISCONNECT_GRACE_MS);
+        this.hostDisconnectTimers.set(battleId, timer);
+        console.log(`Host left Battle Room ${battleId}. Auto-completing in ${HOST_DISCONNECT_GRACE_MS / 1000}s unless they reconnect.`);
+      }
+    }
+
+    this.clientRoomMap.delete(ws);
+    console.log(`Client left Battle Room ${battleId}`);
+  }
+
+  /**
+   * FIX (2.1 + 2.2): best-effort close-out for a room the host walked away
+   * from (closed the tab, navigated off Matchmaking without clicking "End
+   * Session") instead of leaving it stuck in "waiting"/"active" forever.
+   * Needs its own Redis connection references, so callers pass them in via
+   * the same redisPublisher/redisSubscriber the rest of the handler uses —
+   * see the note in server.ts wiring below.
+   */
   private async completeAbandonedRoom(battleId: string): Promise<void> {
     if (!this.redisPublisherRef) return;
     const redisPublisher = this.redisPublisherRef;
@@ -361,7 +472,7 @@ class LiveBattleHandler {
     const channel = roomChannel(battleId);
 
     const roomState = await redisPublisher.hgetall(sKey);
-    if (!roomState || roomState.status === 'completed') return;
+    if (!roomState || roomState.status === 'completed') return; // already handled
 
     await redisPublisher.hset(sKey, { status: 'completed' });
     await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
