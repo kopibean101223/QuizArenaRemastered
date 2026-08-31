@@ -1,0 +1,78 @@
+// ============================================================================
+// ADD THESE MODELS TO YOUR EXISTING prisma/schema.prisma
+// (paste at the end, inside the "public" schema — same pattern as your
+// existing GeneratedQuestion / SyllabusDoc models)
+// ============================================================================
+
+// Per-student, per-topic BKT mastery state.
+model StudentMastery {
+  id                    Int      @id @default(autoincrement())
+  studentId             String   @db.Uuid
+  knowledgeComponentId  String   // topic string, matches GeneratedQuestion.topic
+  pLt                   Float    @default(0.5) // P(L_t)
+  responseCount         Int      @default(0)
+  updatedAt             DateTime @default(now()) @updatedAt
+
+  @@unique([studentId, knowledgeComponentId])
+  @@index([studentId])
+  @@schema("public")
+}
+
+// Per-student IRT ability estimate.
+model StudentAbility {
+  id             Int      @id @default(autoincrement())
+  studentId      String   @db.Uuid @unique
+  theta          Float    @default(0)
+  responseCount  Int      @default(0)
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  @@schema("public")
+}
+
+// Per-question IRT item parameters — this is what eventually REPLACES the
+// LLM's provisional difficulty label once responseCount is high enough.
+model ItemParameters {
+  id                  Int      @id @default(autoincrement())
+  questionId          Int      @unique
+  bI                  Float    @default(0)      // difficulty
+  aI                  Float?   // discrimination (2PL, optional)
+  cI                  Float?   // guessing (3PL, optional)
+  responseCount       Int      @default(0)
+  llmDifficultyLabel  String   // "Easy" | "Medium" | "Hard"
+  isCalibrated        Boolean  @default(false)
+  updatedAt           DateTime @default(now()) @updatedAt
+
+  question GeneratedQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+}
+
+// Append-only response log — needed both for BKT/IRT updates AND for the
+// offline recalibration pass (recalibrateItemDifficulty in irt.ts).
+model StudentResponseLog {
+  id            Int      @id @default(autoincrement())
+  studentId     String   @db.Uuid
+  questionId    Int
+  battleId      String?
+  isCorrect     Boolean
+  thetaAtTime   Float    // student's theta snapshot at time of response
+  bIAtTime      Float    // item's b_i snapshot at time of response
+  answeredAt    DateTime @default(now())
+
+  question GeneratedQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([questionId])
+  @@schema("public")
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// You'll also need to add these two back-relations to your EXISTING
+// GeneratedQuestion model:
+//
+// model GeneratedQuestion {
+//   ...existing fields...
+//   itemParameters      ItemParameters?
+//   responseLogs        StudentResponseLog[]
+// }
+// ────────────────────────────────────────────────────────────────────────
