@@ -1,25 +1,25 @@
 ﻿'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check, ChevronRight, CircleHelp, Clock3, Grid3X3,
-  RefreshCcw, Send as SendIcon, Shield, Trophy, X, Zap,
+  RefreshCcw, Shield, Trophy, X, Zap,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { getStudentIdentity } from '@/lib/student/battle/useBattleConnection';
 import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProvider';
 import { CountdownBar } from './LiveBattleCOMPONENTONLY/CountdownBar';
 import { BattleChat, BattleChatMessage } from './battle/BattleChat';
-import { PowerCard } from './PowerCards/PowerCard';
-import type { PowerCardData } from './PowerCards/types';
+import { PowerCardTray } from './PowerCards/PowerCardTray';
+import { ChoosePowerUp } from './PowerCards/ChoosePowerUp';
+import { usePowerDeck } from './PowerCards/UsePowerDeck';
+import { BINGO_CARDS } from './PowerCards/CardCatalog';
 
 type CellStatus = 'unanswered' | 'correct' | 'wrong';
 type BingoCell = { value: number; status: CellStatus };
 type BingoPlayer = { id: string; name: string; initials?: string; color?: string; wins?: number; stealBuffs?: number; retakeBuffs?: number; bingo?: boolean };
 type BingoQuestion = { id?: string | number; text?: string; question?: string; answer?: string; choices?: string[]; options?: string[] };
 
-// Approximate per-phase durations, only used to drive the header progress
-// bar — the server is still the source of truth for phaseSeconds itself.
 const PHASE_DURATIONS: Record<string, number> = {
   rolling: 5,
   question: 15,
@@ -65,9 +65,13 @@ export function BattleBingo({ battleId }: { battleId: string }) {
   const [discardValue, setDiscardValue] = useState('');
   const [retakeValue, setRetakeValue] = useState('');
   const [winner, setWinner] = useState<BingoPlayer | null>(null);
-  const [retakeStarted, setRetakeStarted] = useState(false);   // ADD
-  const [retakeUsed, setRetakeUsed] = useState(false);          // ADD
-  const [retakeChoiceIndex, setRetakeChoiceIndex] = useState<number | null>(null); // ADD
+  const [retakeStarted, setRetakeStarted] = useState(false);
+  const [retakeUsed, setRetakeUsed] = useState(false);
+  const [retakeChoiceIndex, setRetakeChoiceIndex] = useState<number | null>(null);
+
+  // Power Deck Hook Integration
+  const { myDeck, drawnCards, showCardModal, triggerCardDraw, handleAddToDeck } = usePowerDeck();
+  const lastProcessedCorrectCount = useRef<number>(0);
 
   const me = players.find((player) => player.id === currentUserId);
   const currentQuestionText = question?.text || question?.question || '';
@@ -75,27 +79,19 @@ export function BattleBingo({ battleId }: { battleId: string }) {
     typeof choice === 'string' ? choice : choice?.text || choice?.label || choice?.value || String(choice)
   );
 
-  const buffCards: PowerCardData[] = [
-    ...Array.from({ length: (me?.stealBuffs || 0) }, (_, i) => ({
-      id: `steal-${i}`,
-      category: 'shield' as const,
-      name: 'Steal',
-      description: 'Blindly swap a number with another player.',
-      cost: 0,
-      rarity: 'rare' as const,
-      effect: { category: 'shield' as const, target: 'enemy' as const },
-    })),
-    ...Array.from({ length: (me?.retakeBuffs || 0)}, (_, i ) => ({
-      id: `retake-${i}`,
-      category: 'hp' as const,
-      name: 'Retake',
-      description: 'Recover one of your incorrect numbers.',
-      cost: 0,
-      rarity: 'rare' as const,
-      effect: { category: 'hp' as const, target: 'self' as const },
-    })),
-  ];
-  
+  // Trigger Power Card selection when player accumulates 2 correct cells
+  const correctCellsCount = useMemo(() => {
+    return cells.filter((c) => c.status === 'correct').length;
+  }, [cells]);
+
+  useEffect(() => {
+    if (correctCellsCount > 0 && correctCellsCount % 2 === 0 && correctCellsCount !== lastProcessedCorrectCount.current) {
+      lastProcessedCorrectCount.current = correctCellsCount;
+      // Offer the imported Battle Bingo cards for selection
+      triggerCardDraw(BINGO_CARDS);
+    }
+  }, [correctCellsCount, triggerCardDraw]);
+
   const bingoProgress = useMemo(() => {
     const green = new Set(cells.filter((cell) => cell.status === 'correct').map((cell) => cell.value));
     const lines = [
@@ -144,8 +140,6 @@ export function BattleBingo({ battleId }: { battleId: string }) {
       setWinner(data.winner || null);
       setPhase('finished');
     }
-    // FIX: carry userId through so the chat panel can tell "You" apart
-    // from everyone else, matching how the other battle modes tag isMe.
     if (data.type === 'BINGO_CHAT') {
       setChatMessages((previous) => [
         ...previous,
@@ -171,8 +165,6 @@ export function BattleBingo({ battleId }: { battleId: string }) {
     setAnswerFeedback(null);
   }, [round, rolledNumber]);
 
-  // One retake attempt per retake phase — re-arm everything the moment a
-  // new retake phase starts, and lock it the instant useRetake() fires.
   useEffect(() => {
     if (phase === 'retake') {
       setRetakeStarted(false);
@@ -203,7 +195,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
     setDiscardValue('');
   }
 
-    function useRetake() {
+  function useRetake() {
     if (phase !== 'retake' || !answer || retakeUsed) return;
     send({ type: 'USE_BINGO_RETAKE', mode: 'BINGO', battleId, answer, retakeValue: Number(retakeValue) });
     setRetakeUsed(true);
@@ -227,7 +219,12 @@ export function BattleBingo({ battleId }: { battleId: string }) {
 
   return (
     <div className="min-h-screen bg-[#131524] text-white flex flex-col font-sans">
-      {/* Header Bar — same shell as every other battle mode */}
+      {/* Power Card Selection Modal */}
+      {showCardModal && (
+        <ChoosePowerUp drawnCards={drawnCards} onSelectCard={handleAddToDeck} />
+      )}
+
+      {/* Header Bar */}
       <header className="px-6 py-3 flex items-center justify-between border-b border-white/10">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 font-black text-lg">
@@ -253,31 +250,10 @@ export function BattleBingo({ battleId }: { battleId: string }) {
         </div>
       </header>
 
-      {buffCards.length > 0 && (
-        <div className="fixed left-[30px] top-60 z-30">
-          <div className="relative flex h-44 w-64 items-center">
-            {buffCards.map((card, index) => {
-              const mid = (buffCards.length - 1) / 2;
-              return (
-                <div
-                  key={card.id}
-                  className="absolute left-0 top-1/2 transition-all duration-500"
-                  style={{
-                    transform: `translateY(-50%) rotate(${90 + (index - mid) * 12}deg) translateX(${index * 20}px)`,
-                    transformOrigin: 'left center',
-                    zIndex: buffCards.length - index,
-                  }}
-                >
-                  <PowerCard card={card} state="revealed" size="md" />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* Renders the student's chosen deck using PowerCardTray */}
+      {myDeck.length > 0 && <PowerCardTray cards={myDeck} topClassName="top-60" />}
 
-
-      {/* Main Grid — same two-column shape as Royale/TeamMode */}
+      {/* Main Grid */}
       <div className="flex-1 p-5 pl-5 lg:pl-44 grid grid-cols-[1fr_280px] gap-5 min-h-0">
         <div className="flex flex-col gap-4">
           {/* Round row */}
@@ -316,8 +292,8 @@ export function BattleBingo({ battleId }: { battleId: string }) {
             )}
           </div>
 
-          {/* Bingo Board — takes the visual slot the "Question Box" fills in Royale */}
-                    <div className="bg-[#5B3DF6]/10 border border-[#5B3DF6]/30 rounded-2xl p-4">
+          {/* Bingo Board */}
+          <div className="bg-[#5B3DF6]/10 border border-[#5B3DF6]/30 rounded-2xl p-4">
             <div className="flex gap-2 mb-2">
               <span className="bg-[#5B3DF6]/20 text-[#A98CFF] text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
                 Your Board
@@ -370,7 +346,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
             </div>
           </div>
 
-          {/* Phase-driven action area — same visual slot as the "Options" section in Royale */}
+          {/* Phase Question */}
           {phase === 'question' && (
             <div className="flex flex-col gap-3">
               <div className="bg-[#1C1F33] border border-white/10 rounded-2xl p-5">
@@ -433,6 +409,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
             </div>
           )}
 
+          {/* Stealing Phase */}
           {phase === 'stealing' && (
             <div className="bg-[#1C1F33] border border-white/10 rounded-2xl p-5">
               <span className="text-[10px] font-extrabold text-[#8F93A8] uppercase">10-second steal phase</span>
@@ -466,13 +443,14 @@ export function BattleBingo({ battleId }: { battleId: string }) {
                   disabled={!targetId || !discardValue}
                   className="bg-[#4DA3FF] disabled:opacity-40 disabled:cursor-not-allowed text-black font-extrabold px-4 py-2 rounded-xl flex items-center gap-2"
                 >
-                  <Shield size={16} /> Use Steal ({me?.stealBuffs || 0})
+                  <Shield size={16} /> Use Steal ({myDeck.filter(c => c.name === 'Steal').length})
                 </button>
               </div>
             </div>
           )}
 
-                   {phase === 'retake' && (
+          {/* Retake Phase */}
+          {phase === 'retake' && (
             <div className="bg-[#1C1F33] border border-white/10 rounded-2xl p-5">
               <span className="text-[10px] font-extrabold text-[#8F93A8] uppercase">Retake phase</span>
               <h2 className="m-0 mt-1 mb-1 text-lg font-extrabold">Recover a red answer</h2>
@@ -487,7 +465,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
                   <select
                     value={retakeValue}
                     onChange={(e) => setRetakeValue(e.target.value)}
-                    disabled={retakeUsed || (me?.retakeBuffs || 0) <= 0}
+                    disabled={retakeUsed || myDeck.filter(c => c.name === 'Retake').length === 0}
                     className="flex-1 min-w-[150px] bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white disabled:opacity-40"
                   >
                     <option value="">Choose a red number</option>
@@ -498,10 +476,10 @@ export function BattleBingo({ battleId }: { battleId: string }) {
                   <button
                     type="button"
                     onClick={() => setRetakeStarted(true)}
-                    disabled={retakeUsed || !retakeValue || (me?.retakeBuffs || 0) <= 0}
+                    disabled={retakeUsed || !retakeValue || myDeck.filter(c => c.name === 'Retake').length === 0}
                     className="bg-[#2ED47A] disabled:opacity-40 disabled:cursor-not-allowed text-black font-extrabold px-4 py-2 rounded-xl flex items-center gap-2"
                   >
-                    <RefreshCcw size={16} /> Retake ({me?.retakeBuffs || 0})
+                    <RefreshCcw size={16} /> Retake ({myDeck.filter(c => c.name === 'Retake').length})
                   </button>
                 </div>
               ) : (
@@ -555,7 +533,7 @@ export function BattleBingo({ battleId }: { battleId: string }) {
           )}
         </div>
 
-        {/* Right Sidebar — same shell as Royale's Survivors panel */}
+        {/* Right Sidebar */}
         <div className="bg-[#1C1F33] border border-white/10 rounded-2xl p-4 flex flex-col gap-4">
           <div className="flex items-center justify-between border-b border-white/10 pb-3">
             <span className="text-xs font-extrabold flex items-center gap-1.5">
@@ -588,17 +566,13 @@ export function BattleBingo({ battleId }: { battleId: string }) {
             )}
           </div>
 
-          {/* Buffs — Bingo's own steal/retake economy, shown in the same
-              visual weight the other modes give HP/points */}
-          {/* Global match chat — reuses the same BattleChat component as
-              Royale/LiveQuiz/TeamMode instead of Bingo's old bespoke form */}
           <div className="border-t border-white/10 pt-4">
             <BattleChat mode="free" title="Match Chat" messages={chatMessages} onSend={handleSendChat} height={220} placeholder="Say something…" />
           </div>
 
           <div className="flex items-start gap-2 text-[11px] text-white/40 leading-relaxed">
             <CircleHelp size={14} className="flex-shrink-0 mt-0.5" />
-            <span>Every 2 wins grants a random buff. Retakes open every 3 rounds.</span>
+            <span>Every 2 correct cells allows you to choose 1 power-up. Retakes open every 3 rounds.</span>
           </div>
         </div>
       </div>

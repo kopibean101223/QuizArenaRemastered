@@ -1,6 +1,5 @@
 import type { PowerCardData } from './types';
 
-/** damage category — hurts the enemy (team, opponent, or boss depending on mode). */
 export const DAMAGE_CARDS: PowerCardData[] = [
   {
     id: 'dmg-double-trouble',
@@ -31,7 +30,6 @@ export const DAMAGE_CARDS: PowerCardData[] = [
   },
 ];
 
-/** shield category — absorbs incoming damage before it touches HP. */
 export const SHIELD_CARDS: PowerCardData[] = [
   {
     id: 'shd-iron-wall',
@@ -62,7 +60,6 @@ export const SHIELD_CARDS: PowerCardData[] = [
   },
 ];
 
-/** hp category — restores the student's own health. */
 export const HP_CARDS: PowerCardData[] = [
   {
     id: 'hp-second-wind',
@@ -93,7 +90,6 @@ export const HP_CARDS: PowerCardData[] = [
   },
 ];
 
-/** points category — adds directly to the student's score. */
 export const POINTS_CARDS: PowerCardData[] = [
   {
     id: 'pts-bonus-bounty',
@@ -124,7 +120,6 @@ export const POINTS_CARDS: PowerCardData[] = [
   },
 ];
 
-/** selfTimer category — extends the student's own answer timer. */
 export const SELF_TIMER_CARDS: PowerCardData[] = [
   {
     id: 'time-extra-seconds',
@@ -146,7 +141,6 @@ export const SELF_TIMER_CARDS: PowerCardData[] = [
   },
 ];
 
-/** enemyTimer category — shortens the enemy's answer timer. */
 export const ENEMY_TIMER_CARDS: PowerCardData[] = [
   {
     id: 'time-freeze',
@@ -168,7 +162,6 @@ export const ENEMY_TIMER_CARDS: PowerCardData[] = [
   },
 ];
 
-/** removeChoices category — a 50/50-style lifeline on the student's own question. */
 export const REMOVE_CHOICES_CARDS: PowerCardData[] = [
   {
     id: 'rc-fifty-fifty',
@@ -217,7 +210,29 @@ export const PROF_CARDS: PowerCardData[] = [
     cost: 25,
     rarity: 'rare',
     effect: { category: 'profTime', target: 'enemy', amount: 20 },
-  }
+  },
+];
+
+/** Battle Bingo specific cards */
+export const BINGO_CARDS: PowerCardData[] = [
+  {
+    id: 'steal-buff',
+    category: 'shield',
+    name: 'Steal',
+    description: 'Blindly swap a number with another player.',
+    cost: 0,
+    rarity: 'rare',
+    effect: { category: 'shield', target: 'enemy' },
+  },
+  {
+    id: 'retake-buff',
+    category: 'hp',
+    name: 'Retake',
+    description: 'Recover one of your incorrect numbers.',
+    cost: 0,
+    rarity: 'rare',
+    effect: { category: 'hp', target: 'self' },
+  },
 ];
 
 export const CARD_CATALOG: PowerCardData[] = [
@@ -229,6 +244,7 @@ export const CARD_CATALOG: PowerCardData[] = [
   ...ENEMY_TIMER_CARDS,
   ...REMOVE_CHOICES_CARDS,
   ...PROF_CARDS,
+  ...BINGO_CARDS,
 ];
 
 export const CARD_CATALOG_BY_CATEGORY = {

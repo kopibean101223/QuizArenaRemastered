@@ -8,6 +8,8 @@ export function usePowerDeck() {
 
   // Call this when you want to pop open the modal with specific cards
   const triggerCardDraw = (cards: PowerCardData[]) => {
+      console.log('[PowerDeck] triggerCardDraw called with', cards);
+
     setDrawnCards(cards);
     setShowCardModal(true);
   };
@@ -15,6 +17,8 @@ export function usePowerDeck() {
   
 
   const handleAddToDeck = (selectedCard: PowerCardData) => {
+      console.log('[PowerDeck] handleAddToDeck called with', selectedCard);
+
     // Clone the card and give it a truly unique ID so duplicates don't crash React
     const uniqueCardInstance = { 
       ...selectedCard, 
