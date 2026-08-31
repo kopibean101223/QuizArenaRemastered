@@ -19,8 +19,7 @@ export async function GET() {
 
     const docs = await prisma.syllabusDoc.findMany({
       where: { userId },
-      orderBy: { id: 'desc' },
-      include: { choices: true, citation: true }
+      orderBy: { id: 'desc' }
     });
     
     const questions = await prisma.generatedQuestion.findMany({
@@ -31,6 +30,7 @@ export async function GET() {
 
     return NextResponse.json({ docs, questions });
   } catch (error) {
+    console.error("Database fetch error:", error);
     return NextResponse.json({ error: 'Failed to fetch database records' }, { status: 500 });
   }
 }

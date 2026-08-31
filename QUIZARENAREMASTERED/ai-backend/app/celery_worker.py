@@ -83,6 +83,7 @@ GROQ_RPM = int(os.getenv("GROQ_RPM", "6"))
 INTER_REQUEST_DELAY = float(os.getenv("INTER_REQUEST_DELAY", "12"))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "3"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
+GROUNDING_SIMILARITY_THRESHOLD = float(os.getenv("GROUNDING_SIMILARITY_THRESHOLD", "0.45"))
 
 # Celery App
 celery_app = Celery("tasks", broker=REDIS_URL, backend=REDIS_URL)
@@ -394,7 +395,7 @@ def _call_groq(prompt: str, temperature: float, prefill: str) -> str:
 
 
 def _call_gemini(prompt: str, temperature: float, prefill: str = "") -> str:
-    """Call Gemini API with rate limiting."""
+    """Call Gemini API with rate limiting. Uses gemini-2.0-flash for higher free-tier RPD (1500 vs 20)."""
     if not os.getenv("GEMINI_API_KEY"):
         raise Exception("No GEMINI_API_KEY configured")
 
@@ -402,7 +403,7 @@ def _call_gemini(prompt: str, temperature: float, prefill: str = "") -> str:
     from google import genai
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     response = client.models.generate_content(
-        model=GEMINI_MODEL,
+        model="gemini-2.0-flash",
         contents=prompt,
     )
     if response and response.text:
@@ -576,27 +577,42 @@ IMPORTANT: Return exactly {len(chunks) * 2} question objects. chunk_index is 0-b
                 {"role": "system", "content": "You are a helpful assistant. Output exactly the requested JSON."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3
+        temperature=0.3
         )
         # Convert pydantic models back to dicts for downstream compatibility
         return [q.model_dump() for q in batch_res.questions]
     except Exception as e:
-        logger.warning(f"[Actor] Groq failed, trying OpenAI fallback: {e}")
+        logger.warning(f"[Actor] Groq failed, trying Gemini fallback: {e}")
         try:
-            openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), max_retries=1)
-            patched_openai = instructor.from_openai(openai_client)
-            batch_res = patched_openai.chat.completions.create(
-                model=OPENAI_MODEL,
-                response_model=BatchQuestions,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant. Output exactly the requested JSON."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3
-            )
-            return [q.model_dump() for q in batch_res.questions]
-        except Exception as e2:
-            logger.error(f"[Actor] All structured output providers failed: {e2}")
+            from google import genai
+            gemini_fallback_model = "gemini-2.0-flash"
+            client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            
+            # Retry up to 3 times with delay for rate limits
+            for attempt in range(3):
+                try:
+                    response = client.models.generate_content(
+                        model=gemini_fallback_model,
+                        contents=prompt,
+                        config={
+                            'response_mime_type': 'application/json',
+                            'response_schema': BatchQuestions,
+                            'temperature': 0.3
+                        },
+                    )
+                    data = json.loads(response.text)
+                    return data.get("questions", [])
+                except Exception as rate_err:
+                    err_str = str(rate_err)
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        delay = _parse_retry_delay(err_str) or (15 * (attempt + 1))
+                        logger.warning(f"[Gemini] Rate limited, retrying in {delay:.0f}s (attempt {attempt+1}/3)")
+                        time.sleep(delay)
+                    else:
+                        raise rate_err
+            raise Exception("Gemini rate limit retries exhausted")
+        except Exception as e3:
+            logger.error(f"[Actor] All structured output providers failed: {e3}")
             return []
 
 
@@ -739,12 +755,12 @@ def process_and_generate_quiz(
             
             # Call Supabase RPC for Hybrid Search (Dense + Sparse with RRF)
             rpc_response = supabase.rpc(
-                'match_document_chunks',
+                'match_document_chunks_v2',
                 {
                     'query_text': query,
                     'query_embedding': query_embedding,
                     'match_count': 30,
-                    'doc_id_filter': str(doc_id)
+                    'filter_doc_id': str(doc_id)
                 }
             ).execute()
             
@@ -865,6 +881,28 @@ def process_and_generate_quiz(
                 )
                 time.sleep(INTER_REQUEST_DELAY)
 
+        
+        # MCQ Validation and Duplicate Detection
+        valid_mcqs = []
+        seen_questions = set()
+        for q_data, chunk in critic_items:
+            q_text = q_data.get("question", q_data.get("text", ""))
+            
+            # Duplicate detection (exact string matching for now)
+            if q_text in seen_questions:
+                continue
+            seen_questions.add(q_text)
+            
+            # MCQ validation
+            if q_data.get("type", "") == "Multiple Choice":
+                choices = q_data.get("choices", [])
+                ans = q_data.get("answer", "")
+                if len(choices) != 4 or ans not in choices or len(set(choices)) != 4:
+                    logger.warning("MCQ Validation failed: Choices invalid.")
+                    continue
+            valid_mcqs.append((q_data, chunk))
+        critic_items = valid_mcqs
+        
         # Filter by critic verdict
         critic_passed: List[Tuple[Dict, Dict]] = []
         for idx, (q_data, chunk) in enumerate(all_generated):
