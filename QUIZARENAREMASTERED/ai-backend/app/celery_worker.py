@@ -74,7 +74,7 @@ if not REDIS_URL:
 
 # Model Configuration — easily swappable via .env
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # Rate Limiting Configuration
@@ -403,7 +403,7 @@ def _call_gemini(prompt: str, temperature: float, prefill: str = "") -> str:
     from google import genai
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-3.5-flash",
         contents=prompt,
     )
     if response and response.text:
@@ -585,7 +585,7 @@ IMPORTANT: Return exactly {len(chunks) * 2} question objects. chunk_index is 0-b
         logger.warning(f"[Actor] Groq failed, trying Gemini fallback: {e}")
         try:
             from google import genai
-            gemini_fallback_model = "gemini-2.0-flash"
+            gemini_fallback_model = "gemini-3.5-flash"
             client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
             
             # Retry up to 3 times with delay for rate limits
