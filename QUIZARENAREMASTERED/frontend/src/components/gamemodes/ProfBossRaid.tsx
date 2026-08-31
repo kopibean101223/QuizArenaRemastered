@@ -5,9 +5,12 @@ import { ChibiAvatar } from './ChibiAvatar';
 import { Users, Clock, Zap, TrendingUp, Shield, Send, Swords, AlertTriangle } from 'lucide-react';
 import { cn } from '@/components/ui/utils';
 import { toast } from 'sonner';
+import { ChoosePowerUp } from '../studentONLY/PowerCards/ChoosePowerUp';
+import { PowerCardTray } from '../studentONLY/PowerCards/PowerCardTray';
 import { PowerCard } from '../studentONLY/PowerCards/PowerCard';
 import { PROF_CARDS } from '../studentONLY/PowerCards/CardCatalog';
 import type { PowerCardData } from '../studentONLY/PowerCards/types';
+import { usePowerDeck } from '../studentONLY/PowerCards/UsePowerDeck';
 
 interface QuestionItem {
   id?: string | number;
@@ -47,8 +50,11 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
   const [localBossHp, setLocalBossHp] = useState(bossHealth);
   const [localClassHp, setLocalClassHp] = useState(1000);
   const classMaxHp = 1000;
+
+
   
-  // Removed bossHealth effect because we sync directly via socket now
+
+
 
   useEffect(() => {
     if (lastMessage?.type === 'BOSS_ACTION' || lastMessage?.type === 'ROOM_STATE_SYNC') {
@@ -97,9 +103,10 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
   const [energy, setEnergy] = useState(0);
   const [ultimateReady, setUltimateReady] = useState(false);
   
-  // Card Modal State
-  const [showCardModal, setShowCardModal] = useState(false);
-  const [drawnCards, setDrawnCards] = useState<{ id: string; card: PowerCardData; revealed: boolean }[]>([]);
+
+
+const { myDeck, drawnCards, showCardModal, triggerCardDraw, handleAddToDeck } = usePowerDeck();
+
 
   // Stagger State
   const [isStaggered, setIsStaggered] = useState(false);
@@ -177,24 +184,14 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
     }
   };
 
-  const triggerUltimate = () => {
-    if (ultimateReady) {
-      // Draw 3 random cards from PROF_CARDS
-      const shuffled = [...PROF_CARDS].sort(() => 0.5 - Math.random());
-      const selected = shuffled.slice(0, 3).map((c, i) => ({
-        id: `drawn-${Date.now()}-${i}`,
-        card: c,
-        revealed: false
-      }));
-      setDrawnCards(selected);
-      setShowCardModal(true);
-    }
-  };
-
-  const revealCard = (id: string) => {
-    setDrawnCards(prev => prev.map(c => c.id === id ? { ...c, revealed: true } : c));
-  };
-
+const triggerUltimate = () => {
+  if (ultimateReady) {
+    const shuffled = [...PROF_CARDS].sort(() => 0.5 - Math.random());
+    triggerCardDraw(shuffled.slice(0, 3));
+    setEnergy(0); 
+    setUltimateReady(false);
+  }
+};
   const triggerSlash = () => {
     setSlashed(true);
     setTimeout(() => setSlashed(false), 300);
@@ -546,38 +543,14 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
       </div>
 
       {/* Card Selection Modal */}
-      {showCardModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md">
-          <div className="flex flex-col items-center">
-            <h2 className="text-3xl font-[Fredoka] font-bold text-[var(--gm-yellow)] mb-2 uppercase animate-[gm-pulse_1s_infinite]">
-              Select Ultimate Protocol
-            </h2>
-            <p className="text-[var(--gm-muted)] mb-8">Click a mystery card to reveal it, then apply to the class.</p>
-            
-            <div className="flex gap-8 items-center justify-center">
-              {drawnCards.map((c) => (
-                <div key={c.id} className="flex flex-col items-center gap-4">
-                  <div onClick={() => revealCard(c.id)}>
-                    <PowerCard
-                      card={c.card}
-                      state={c.revealed ? 'revealed' : 'locked'}
-                      size="lg"
-                    />
-                  </div>
-                  {c.revealed && (
-                    <button
-                      onClick={() => useSkill(c.card)}
-                      className="bg-[var(--gm-coral)] hover:bg-[var(--gm-red)] text-white font-bold px-6 py-2 rounded-xl transition-colors cursor-pointer animate-[gm-float-up_0.5s_ease-out]"
-                    >
-                      Apply Globally
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+     <PowerCardTray cards={myDeck} />
+
+    {showCardModal && (
+      <ChoosePowerUp 
+        drawnCards={drawnCards} 
+        onSelectCard={handleAddToDeck} 
+      />
+    )}
     </div>
   );
 }

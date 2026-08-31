@@ -109,20 +109,18 @@
 
     const { studentName: myName, currentUserId: myId } = getStudentIdentity(user);
 
-    function applyPlayers(players: any[]) {
-      setSurvivors(
-        players.filter((p) => p.id !== 'professor').map((p, idx) => ({
-          id: p.id,
-          name: p.id === myId ? myName : p.name || `Player ${idx + 1}`,
-          initials: (p.initials || p.name || 'P').substring(0, 2).toUpperCase(),
-          color: p.color || AVATAR_COLORS[idx % AVATAR_COLORS.length],
-          isYou: p.id === myId,
-          lives: p.lives ?? 0,
-        }))
-      );
-    if (data.type === 'ROYALE_MATCH_ENDED') {
-      if (Array.isArray(data.players)) applyPlayers(data.players);
-    }
+   function applyPlayers(players: any[]) {
+    setSurvivors(
+      players.filter((p) => p.id !== 'professor').map((p, idx) => ({
+        id: p.id,
+        name: p.id === myId ? myName : p.name || `Player ${idx + 1}`,
+        initials: (p.initials || p.name || 'P').substring(0, 2).toUpperCase(),
+        color: p.color || AVATAR_COLORS[idx % AVATAR_COLORS.length],
+        isYou: p.id === myId,
+        lives: p.lives ?? 0,
+      }))
+    );
+  }
 
     function applyRoyaleQuestions(rawQuestions: unknown[]) {
       setQuestions(formatBattleQuestions(rawQuestions));

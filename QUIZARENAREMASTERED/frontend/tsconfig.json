@@ -15,7 +15,7 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "jsx": "react-jsx",
+    "jsx": "preserve",
     "incremental": true,
     "plugins": [
       {
@@ -24,7 +24,6 @@
     ],
     "baseUrl": ".",
     "ignoreDeprecations": "5.0",
-    
     "paths": {
       "@/*": [
         "./src/*"
@@ -44,4 +43,3 @@
     "node_modules"
   ]
 }
-
