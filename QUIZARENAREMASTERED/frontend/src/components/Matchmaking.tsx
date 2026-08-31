@@ -1348,6 +1348,7 @@ async function handleConfirmAndDeploy() {
               answerEvents={bingoAnswers}
               questionEvents={bingoQuestions}
               chatEvents={bingoChat}
+              />
           ) : lobbyType === 'bossraid' ? (
             <ProfBossRaid
               students={joinedStudents.map(s => ({ ...s, isActive: true, score: s.score || 0, avatarColor: s.avatarColor || '#FFC93C' }))}
