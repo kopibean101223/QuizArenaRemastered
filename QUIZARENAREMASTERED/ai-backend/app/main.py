@@ -184,7 +184,7 @@ import tempfile
 
 @fastapi_app.post("/ingest")
 async def ingest_file(file: UploadFile = File(...), docId: str = Form(...)):
-    """Extracts text from PDF synchronously and returns chunks for the frontend to save."""
+    """Extracts text from PDF, applies structure-aware chunking, and stores ALL chunks in pgvector."""
     try:
         contents = await file.read()
         import tempfile, os
@@ -201,35 +201,31 @@ async def ingest_file(file: UploadFile = File(...), docId: str = Form(...)):
         markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
         md_header_splits = markdown_splitter.split_text(md_text)
         
-        passages = []
+        # We index ALL meaningful chunks.
+        # Structure-aware chunking + Chunk Context Injection.
         for i, chunk in enumerate(md_header_splits):
-            if len(chunk.page_content.strip()) > 100:
-                passages.append({
-                    "id": str(i),
-                    "text": chunk.page_content,
-                    "meta": chunk.metadata
-                })
+            if len(chunk.page_content.strip()) > 50: # Avoid tiny fragments
+                # Context injection
+                context_header = f"Document: {file.filename}\nSection: {chunk.metadata.get('Header 1', 'General')}\n"
+                full_content = context_header + chunk.page_content
                 
-        from flashrank import Ranker, RerankRequest
-        ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2")
-        query = "mathematical equations, formulas, definitions, theorems, and worked examples"
-        rerankrequest = RerankRequest(query=query, passages=passages)
-        reranked = ranker.rerank(rerankrequest)
+                # Store in Supabase 'documents' table
+                # We assume supabase_client is available
+                if supabase_client and embeddings:
+                    emb = embeddings.embed_query(full_content)
+                    supabase_client.table('documents').insert({
+                        "id": f"{docId}_{i}",
+                        "content": full_content,
+                        "metadata": chunk.metadata,
+                        "embedding": emb
+                    }).execute()
         
-        # Sanitize chunks to avoid numpy.float32 JSON serialization errors
-        top_chunks = []
-        for c in reranked[:10]:
-            top_chunks.append({
-                "id": str(c.get("id", "")),
-                "text": str(c.get("text", ""))
-            })
-
         return {
             "status": "success", 
-            "message": "File processed.",
+            "message": "File processed and entirely indexed.",
             "docId": docId, 
             "filename": file.filename,
-            "chunks": top_chunks,
+            "chunks": [], # No longer return chunks to frontend
             "pages": 1
         }
     except Exception as e:
@@ -298,7 +294,7 @@ async def generate_questions(req: GenerateRequest):
     is_running = redis_client.get(task_key)
     if is_running:
         raise HTTPException(
-            status_code=404, 
+            status_code=202, 
             detail="The AI is still reading your document and crafting questions. This usually takes about 30-45 seconds. Please wait a moment and click Generate again!"
         )
         
@@ -318,8 +314,8 @@ async def generate_questions(req: GenerateRequest):
     process_and_generate_quiz.delay(doc_key, req.filename, req.chunks, config)
     
     raise HTTPException(
-        status_code=404, 
-        detail="The AI is still reading your document and crafting questions. This usually takes about 30-45 seconds. Please wait a moment and click Generate again!"
+        status_code=202, 
+            detail="The AI is still reading your document and crafting questions. This usually takes about 30-45 seconds. Please wait a moment and click Generate again!"
     )
 
 app = socketio.ASGIApp(sio, other_asgi_app=fastapi_app)

@@ -20,11 +20,13 @@ export async function GET() {
     const docs = await prisma.syllabusDoc.findMany({
       where: { userId },
       orderBy: { id: 'desc' },
+      include: { choices: true, citation: true }
     });
     
     const questions = await prisma.generatedQuestion.findMany({
       where: { userId },
       orderBy: { id: 'desc' },
+      include: { choices: true, citation: true }
     });
 
     return NextResponse.json({ docs, questions });

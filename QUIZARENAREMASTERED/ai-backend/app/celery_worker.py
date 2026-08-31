@@ -513,12 +513,38 @@ def get_embedding(text: str) -> np.ndarray:
 # BATCH_SIZE chunks into a single prompt and ask the LLM to generate one
 # question per chunk. This reduces total Actor calls from ~10 to ~4.
 # ═══════════════════════════════════════════════════════════════════════════════
+import instructor
+from pydantic import BaseModel, Field
+
+class QuestionChoice(BaseModel):
+    label: str
+    text: str
+    isCorrect: bool
+
+class StepWeight(BaseModel):
+    stepDescription: str
+    pointsAwarded: int
+    commonMistake: str
+
+class GeneratedQuestion(BaseModel):
+    chunk_index: int
+    text: str
+    type: str
+    difficulty: str
+    answer: str
+    choices: Optional[List[QuestionChoice]] = None
+    stepWeights: Optional[List[StepWeight]] = None
+    partialCreditRules: Optional[str] = None
+
+class BatchQuestions(BaseModel):
+    questions: List[GeneratedQuestion]
+
 def generate_batch_questions(
     chunks: List[Dict],
     filename: str,
     config: dict
 ) -> List[Dict]:
-    """Generate questions for multiple chunks in a single LLM call."""
+    """Generate questions for multiple chunks using native structured outputs."""
     difficulty = config.get('difficulty', 'Medium')
     types_list = config.get('types', ['Multiple Choice'])
     types_str = ', '.join(types_list)
@@ -538,57 +564,40 @@ Each question must strictly be derived from formulas and concepts in its corresp
 
 {chunks_text}
 
-Return ONLY a valid JSON array of objects with no additional text.
-If type is "Multiple Choice", include "choices" array (4 options, 1 correct).
-If type is "Step-by-step Solution", include "stepWeights" (array of {{"stepDescription": "...", "pointsAwarded": 2, "commonMistake": "..."}}) and "partialCreditRules".
-Example JSON output:
-[
-  {{
-    "chunk_index": 0,
-    "text": "The mathematical problem statement",
-    "type": "Multiple Choice",
-    "difficulty": "{difficulty}",
-    "answer": "The correct answer text",
-    "choices": [
-      {{"label": "A", "text": "Option A text", "isCorrect": true}},
-      {{"label": "B", "text": "Option B text", "isCorrect": false}},
-      {{"label": "C", "text": "Option C text", "isCorrect": false}},
-      {{"label": "D", "text": "Option D text", "isCorrect": false}}
-    ]
-  }},
-  {{
-    "chunk_index": 0,
-    "text": "Another problem statement",
-    "type": "Step-by-step Solution",
-    "difficulty": "{difficulty}",
-    "answer": "Final answer",
-    "stepWeights": [
-      {{"stepDescription": "Setup formula", "pointsAwarded": 2, "commonMistake": "Wrong sign"}}
-    ],
-    "partialCreditRules": "Deduct 1 point for arithmetic error"
-  }}
-]
-
 IMPORTANT: Return exactly {len(chunks) * 2} question objects. chunk_index is 0-based."""
 
-
-    raw = generate_with_fallback(prompt, temperature=0.3)
-    if not raw:
-        return []
-
-    parsed = clean_and_parse_json(raw)
-
-    if isinstance(parsed, list):
-        return parsed
-    elif isinstance(parsed, dict):
-        # Handle LLM wrapping response in {"questions": [...]}
-        if "questions" in parsed:
-            return parsed["questions"]
-        # Single question returned as object — wrap in list
-        return [parsed]
-
-    logger.warning(f"[Actor] Could not parse batch response: {raw[:200]}...")
-    return []
+    # Using Instructor with Groq as primary (using JSON mode)
+    try:
+        patched_client = instructor.from_openai(groq_client, mode=instructor.Mode.JSON)
+        batch_res = patched_client.chat.completions.create(
+            model=GROQ_MODEL,
+            response_model=BatchQuestions,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant. Output exactly the requested JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3
+        )
+        # Convert pydantic models back to dicts for downstream compatibility
+        return [q.model_dump() for q in batch_res.questions]
+    except Exception as e:
+        logger.warning(f"[Actor] Groq failed, trying OpenAI fallback: {e}")
+        try:
+            openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), max_retries=1)
+            patched_openai = instructor.from_openai(openai_client)
+            batch_res = patched_openai.chat.completions.create(
+                model=OPENAI_MODEL,
+                response_model=BatchQuestions,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant. Output exactly the requested JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3
+            )
+            return [q.model_dump() for q in batch_res.questions]
+        except Exception as e2:
+            logger.error(f"[Actor] All structured output providers failed: {e2}")
+            return []
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -710,8 +719,61 @@ def process_and_generate_quiz(
 
     try:
         # Use chunks passed from frontend
-        top_chunks = chunks[:10]
-        logger.info(f"  Received {len(chunks)} chunks from frontend, using top {len(top_chunks)}")
+        # Stage 7: Dynamic Retrieval & Hybrid Search
+        logger.info(f"[Stage 7] Performing Dynamic Hybrid Retrieval for docId={doc_id} topic={config.get('types')}")
+        top_chunks = []
+        # Attempt to retrieve from Supabase
+        try:
+            from supabase import create_client
+            supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+            
+            query = f"{config.get('difficulty')} {config.get('category', '')} {config.get('types')}"
+            
+            # Embed the query
+            from app.main import get_embedding_model
+            embedding_model = get_embedding_model()
+            if not embedding_model:
+                raise Exception("No embedding model available")
+            
+            query_embedding = embedding_model.embed_query(query)
+            
+            # Call Supabase RPC for Hybrid Search (Dense + Sparse with RRF)
+            rpc_response = supabase.rpc(
+                'match_document_chunks',
+                {
+                    'query_text': query,
+                    'query_embedding': query_embedding,
+                    'match_count': 30,
+                    'doc_id_filter': str(doc_id)
+                }
+            ).execute()
+            
+            if rpc_response.data and len(rpc_response.data) > 0:
+                candidates = [{"id": str(i), "text": chunk["content"], "metadata": chunk["metadata"]} for i, chunk in enumerate(rpc_response.data)]
+                # Phase 1.1: Cross-Encoder Reranking
+                from flashrank import RerankRequest
+                rerankreq = RerankRequest(query=query, passages=candidates)
+                reranked = ranker.rerank(rerankreq)
+                top_chunks = reranked[:10]
+            elif len(chunks) > 0:
+                top_chunks = chunks[:10]
+            else:
+                raise Exception("RPC returned no results and no fallback chunks provided")
+                
+        except Exception as e:
+            logger.warning(f"Failed hybrid search, using fallback chunks: {e}")
+            top_chunks = chunks[:10]
+            
+        if not top_chunks:
+             logger.warning("No context chunks retrieved!")
+             # Do not generate if no context found
+             r = _get_redis_client()
+             r.set(
+                 f"generated_questions:{doc_id}",
+                 json.dumps([{"error": "No relevant context found in document."}])
+             )
+             return {"status": "failed", "error": "No context"}
+
 
 
         # ── Stage 4: Batch Question Generation (Actor) ───────────────────
@@ -833,7 +895,7 @@ def process_and_generate_quiz(
                 c_emb = get_embedding(context_text)
                 sim = cosine_similarity([q_emb], [c_emb])[0][0]
 
-                if sim < 0.45:
+                if sim < 0.75:
                     logger.info(
                         f"  ✗ Similarity too low ({sim:.3f}): "
                         f"{question_text[:60]}..."
@@ -905,8 +967,4 @@ def process_and_generate_quiz(
             pass
         return {"status": "error", "message": str(e)}
 
-    finally:
-        # Cleanup temporary PDF file
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            logger.info(f"  Cleaned up temp file: {file_path}")
+

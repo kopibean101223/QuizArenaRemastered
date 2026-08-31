@@ -84,10 +84,25 @@ export async function POST(req: Request) {
             difficulty: q.difficulty || difficulty || 'Medium',
             topic: category && category !== 'General' ? category : (doc.filename || 'General'),
             answer: q.answer || '',
-            choices: q.choices || [],
-            citation: q.citation || {},
             status: 'PENDING',
+            choices: {
+                create: (q.choices || []).map((c: any) => ({
+                    label: c.label || '',
+                    text: c.text || '',
+                    isCorrect: !!c.isCorrect,
+                }))
+            },
+            citation: q.citation ? {
+                create: {
+                    docName: q.citation.docName || doc.filename || '',
+                    section: q.citation.section || '',
+                    pageRange: q.citation.pageRange || '',
+                    excerpt: q.citation.excerpt || '',
+                    confidence: q.citation.confidence || 'medium'
+                }
+            } : undefined
           },
+          include: { choices: true, citation: true }
         })
       )
     );

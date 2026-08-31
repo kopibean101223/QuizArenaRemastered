@@ -9,11 +9,16 @@ interface ChoosePowerUpProps {
 }
 
 export function ChoosePowerUp({ drawnCards, onSelectCard }: ChoosePowerUpProps) {
-  // Track which cards have been clicked/revealed by their IDs
-  const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
 
-  const revealCard = (id: string) => {
-    setRevealedIds((prev) => new Set(prev).add(id));
+  const handleCardClick = (card: PowerCardData) => {
+    if (selectedCardId) return; // Prevent multiple clicks
+    setSelectedCardId(card.id);
+    
+    // Wait for the reveal animation and transition to finish before adding to deck
+    setTimeout(() => {
+      onSelectCard(card);
+    }, 1200);
   };
 
   return (
@@ -22,28 +27,28 @@ export function ChoosePowerUp({ drawnCards, onSelectCard }: ChoosePowerUpProps) 
         <h2 className="text-3xl font-[Fredoka] font-bold text-[var(--gm-yellow)] mb-2 uppercase animate-[gm-pulse_1s_infinite]">
           Select Ultimate Protocol
         </h2>
-        <p className="text-[var(--gm-muted)] mb-8">Click a mystery card to reveal it, then add to your deck.</p>
+        <p className="text-[var(--gm-muted)] mb-8">Click a mystery card.</p>
         
-        <div className="flex gap-8 items-center justify-center">
+        <div className="flex gap-8 items-center justify-center relative">
           {drawnCards.map((card) => {
-            const isRevealed = revealedIds.has(card.id);
+            const isSelected = selectedCardId === card.id;
+            const isOther = selectedCardId && !isSelected;
+
             return (
-              <div key={card.id} className="flex flex-col items-center gap-4">
-                <div onClick={() => revealCard(card.id)}>
+              <div 
+                key={card.id} 
+                className={`flex flex-col items-center gap-4 transition-all duration-700 ease-in-out cursor-pointer
+                  ${isSelected ? 'scale-125 z-50 translate-y-32 opacity-0 delay-500' : ''}
+                  ${isOther ? 'scale-75 opacity-0' : 'hover:scale-105'}
+                `}
+              >
+                <div onClick={() => handleCardClick(card)}>
                   <PowerCard
                     card={card}
-                    state={isRevealed ? 'revealed' : 'locked'}
+                    state={isSelected ? 'revealed' : 'locked'}
                     size="lg"
                   />
                 </div>
-                {isRevealed && (
-                  <button
-                    onClick={() => onSelectCard(card)}
-                    className="bg-[var(--gm-coral)] hover:bg-[var(--gm-red)] text-white font-bold px-6 py-2 rounded-xl transition-colors cursor-pointer animate-[gm-float-up_0.5s_ease-out]"
-                  >
-                    Add to Deck
-                  </button>
-                )}
               </div>
             );
           })}

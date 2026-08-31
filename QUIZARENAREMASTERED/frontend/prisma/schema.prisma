@@ -43,8 +43,8 @@ model GeneratedQuestion {
   difficulty      String
   topic           String?
   answer          String?
-  choices         Json
-  citation        Json?
+  choices         QuestionChoice[]
+  citation        QuestionCitation?
   status          QuestionStatus @default(PENDING)
   timeLimit       Int            @default(60)
   testCases       Json?
@@ -52,6 +52,30 @@ model GeneratedQuestion {
   updatedAt       DateTime       @default(now()) @updatedAt
   profiles        profiles?      @relation(fields: [profilesUser_id], references: [user_id])
   profilesUser_id String?        @db.Uuid
+
+  @@schema("public")
+}
+
+model QuestionChoice {
+  id          Int               @id @default(autoincrement())
+  questionId  Int
+  question    GeneratedQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  label       String
+  text        String
+  isCorrect   Boolean
+
+  @@schema("public")
+}
+
+model QuestionCitation {
+  id          Int               @id @default(autoincrement())
+  questionId  Int               @unique
+  question    GeneratedQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  docName     String
+  section     String?
+  pageRange   String?
+  excerpt     String?
+  confidence  String?
 
   @@schema("public")
 }
