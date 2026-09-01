@@ -120,6 +120,10 @@ class EndlessBattleHandler {
       return;
     }
 
+    if (payload.mode && payload.mode !== 'ENDLESS') {
+      console.warn(`[EndlessBattle] Ignoring payload for mode: ${payload.mode}`);
+      return;
+    }
     this.redisPublisherRef = redisPublisher;
 
     const channel = roomChannel(battleId);
