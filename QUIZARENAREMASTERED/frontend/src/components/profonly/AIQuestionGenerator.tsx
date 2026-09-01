@@ -413,8 +413,8 @@ function GeneratePanel({
           <button type="button" onClick={() => setSelectedDoc("all")} style={{ background: selectedDoc === "all" ? C.indigoLight : C.offWhite, border: `1.5px solid ${selectedDoc === "all" ? C.indigo : C.border}`, borderRadius: 10, padding: "7px 12px", cursor: "pointer", textAlign: "left", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: selectedDoc === "all" ? C.indigo : C.muted }}>
             All ready documents ({readyDocs.length})
           </button>
-          {readyDocs.map(d => (
-            <button key={d.id} type="button" onClick={() => setSelectedDoc(d.id)} style={{ background: selectedDoc === d.id ? C.indigoLight : "transparent", border: `1.5px solid ${selectedDoc === d.id ? C.indigo : C.border}`, borderRadius: 10, padding: "7px 12px", cursor: "pointer", textAlign: "left", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600, color: selectedDoc === d.id ? C.indigo : C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {readyDocs.map((d, i) => (
+            <button key={d.id || `ready-${i}`} type="button" onClick={() => setSelectedDoc(d.id)} style={{ background: selectedDoc === d.id ? C.indigoLight : "transparent", border: `1.5px solid ${selectedDoc === d.id ? C.indigo : C.border}`, borderRadius: 10, padding: "7px 12px", cursor: "pointer", textAlign: "left", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600, color: selectedDoc === d.id ? C.indigo : C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {d.filename}
             </button>
           ))}
@@ -827,8 +827,8 @@ export function AIQuestionGenerator() {
 
               <div style={{ flex: 1, overflowY: "auto", padding: "12px" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {docs.map(doc => (
-                    <div key={doc.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", background: C.offWhite, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                  {docs.map((doc, i) => (
+                    <div key={doc.id || `doc-${i}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", background: C.offWhite, border: `1px solid ${C.border}`, borderRadius: 10 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
                         <FileText size={16} color={C.indigo} style={{ flexShrink: 0 }} />
                         <span style={{ fontSize: 12, fontWeight: 600, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.filename}</span>

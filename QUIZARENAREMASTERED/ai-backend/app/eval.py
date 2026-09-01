@@ -201,6 +201,15 @@ def run_evaluation():
     print(result)
     print("=" * 50 + "\n")
     
+    # Save raw results
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    os.makedirs("evaluation/results", exist_ok=True)
+    df = result.to_pandas()
+    csv_path = f"evaluation/results/eval_{timestamp}.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"Saved raw results to {csv_path}\n")
+    
     thresholds = {
         "faithfulness": 0.90,
         "answer_relevancy": 0.85,
@@ -210,8 +219,11 @@ def run_evaluation():
     
     passed = True
     for metric, threshold in thresholds.items():
-        score = result.get(metric, 0)
-        if score < threshold:
+        score = result[metric]
+        if pd.isna(score):
+            print(f"[FAIL] {metric.upper()}: NaN (Threshold: {threshold})")
+            passed = False
+        elif score < threshold:
             print(f"[FAIL] {metric.upper()}: {score:.4f} (Threshold: {threshold})")
             passed = False
         else:

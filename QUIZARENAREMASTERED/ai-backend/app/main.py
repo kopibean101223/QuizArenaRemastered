@@ -92,7 +92,7 @@ def get_embedding_model():
     if gemini_key:
         try:
             return GoogleGenerativeAIEmbeddings(
-                model="text-embedding-004", 
+                model="models/gemini-embedding-2", 
                 google_api_key=gemini_key
             )
         except Exception as gemini_err:
@@ -213,8 +213,8 @@ async def ingest_file(file: UploadFile = File(...), docId: str = Form(...)):
                 # We assume supabase_client is available
                 if supabase_client and embeddings:
                     emb = embeddings.embed_query(full_content)
-                    supabase_client.table('documents').insert({
-                        "id": f"{docId}_{i}",
+                    supabase_client.table('document_chunks').insert({
+                        "document_id": docId,
                         "content": full_content,
                         "metadata": chunk.metadata,
                         "embedding": emb
@@ -300,7 +300,7 @@ async def generate_questions(req: GenerateRequest):
         
     # Start generation
     if not req.chunks:
-        raise HTTPException(status_code=400, detail="No chunks provided for generation.")
+        req.chunks = []
         
     redis_client.setex(task_key, 300, "running")
     
