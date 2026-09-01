@@ -64,7 +64,22 @@ export async function POST(req: Request) {
         difficulty: body.difficulty,
         topic: body.topic,
         answer: body.answer,
-     choices: body.choices || [],
+        choices: {
+          create: (body.choices || []).map((choice: any, index: number) => {
+            if (typeof choice === 'string') {
+              return {
+                label: String.fromCharCode(65 + index),
+                text: choice,
+                isCorrect: choice === body.answer,
+              };
+            }
+            return {
+              label: choice.label || String.fromCharCode(65 + index),
+              text: choice.text || "",
+              isCorrect: choice.isCorrect ?? (choice.text === body.answer),
+            };
+          }),
+        },
         testCases: body.testCases || [],
         timeLimit: Number(body.timeLimit) || 60,
         status: "APPROVED",
@@ -105,7 +120,23 @@ export async function PUT(req: Request) {
         difficulty: body.difficulty,
         topic: body.topic,
         answer: body.answer,
-       choices: body.choices || [],
+        choices: {
+          deleteMany: {},
+          create: (body.choices || []).map((choice: any, index: number) => {
+            if (typeof choice === 'string') {
+              return {
+                label: String.fromCharCode(65 + index),
+                text: choice,
+                isCorrect: choice === body.answer,
+              };
+            }
+            return {
+              label: choice.label || String.fromCharCode(65 + index),
+              text: choice.text || "",
+              isCorrect: choice.isCorrect ?? (choice.text === body.answer),
+            };
+          }),
+        },
         testCases: body.testCases || [],
         timeLimit: Number(body.timeLimit) || 60,
       },
