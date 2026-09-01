@@ -1,7 +1,7 @@
   'use client';
 
   import React, { useState, useEffect } from 'react';
-  import { Skull, Zap, ChevronRight } from 'lucide-react';
+  import { Skull, Zap, ChevronRight, Sparkles } from 'lucide-react';
   import { useApp } from '../../context/AppContext';
   import {
     formatBattleQuestions,
@@ -15,7 +15,7 @@
   import { AnswerInput } from './battle/Answer_Input';
   import { BattleChat, BattleChatMessage } from './battle/BattleChat';
   import { PowerCard } from './PowerCards/PowerCard';
-  import { CARD_CATALOG } from './PowerCards/CardCatalog';
+  import { CARD_CATALOG, BATTLE_ROYALE_CARDS } from './PowerCards/CardCatalog';
   import type { PowerCardData } from './PowerCards/types';
   import { PowerCardTray } from './PowerCards/PowerCardTray';
 
@@ -70,7 +70,7 @@
   const DEFAULT_TIME_LIMIT = 20;
 
   function drawBattleCards(count: number): PowerCardData[] {
-    return [...CARD_CATALOG].sort(() => Math.random() - 0.5).slice(0, count);
+    return [...BATTLE_ROYALE_CARDS].sort(() => Math.random() - 0.5).slice(0, count);
   }
 
   /**
@@ -106,6 +106,12 @@
     const [eliminated, setEliminated] = useState(false);
 
     const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
+    
+    // Power-up card system states
+    const [collectedPowerCards, setCollectedPowerCards] = useState<PowerCardData[]>([]);
+    const [availablePowerChoices, setAvailablePowerChoices] = useState<PowerCardData[]>([]);
+    const [showChoosePowerUP, setShowChoosePowerUP] = useState(false);
+    const [correctAnswersCount, setCorrectAnswersCount] = useState(0);
 
     const { studentName: myName, currentUserId: myId } = getStudentIdentity(user);
 
@@ -171,6 +177,17 @@
         }
         if (data.playerId === myId && typeof data.isCorrect === 'boolean') {
           setAnswerFeedback(data.isCorrect);
+          
+          // Every 2 correct answers grants a random Royale power-up.
+          if (data.isCorrect) {
+            const newCount = correctAnswersCount + 1;
+            setCorrectAnswersCount(newCount);
+            if (newCount >= 2) {
+              setAvailablePowerChoices(drawBattleCards(3));
+              setShowChoosePowerUP(true);
+              setCorrectAnswersCount(0);
+            }
+          }
         }
       }
 
@@ -245,6 +262,13 @@
       });
     };
 
+    const handleChoosePowerUP = (card: PowerCardData) => {
+      setCollectedPowerCards((prev) => [...prev, { ...card, id: `${card.id}-${Date.now()}` }]);
+      setShowChoosePowerUP(false);
+      setAvailablePowerChoices([]);
+      setCorrectAnswersCount(0);
+    };
+
     const activeSurvivorsCount = survivors.filter((s) => s.lives > 0).length;
     const me = survivors.find((s) => s.isYou);
     const myLives = me?.lives ?? startingHp;
@@ -304,7 +328,7 @@
           </div>
         </header>
 
-                        <PowerCardTray topClassName="top-60" />
+                        <PowerCardTray cards={collectedPowerCards} topClassName="top-60" />
 
                         
         {/* Main Grid */}
@@ -440,6 +464,39 @@
             </div>
           </div>
         </div>
+
+        {showChoosePowerUP && availablePowerChoices.length > 0 && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="bg-[#1C1F33] border border-white/10 rounded-3xl p-8 max-w-2xl w-full mx-4">
+              <div className="text-center mb-8">
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <Sparkles size={28} className="text-[#FFC93C]" />
+                  <h2 className="text-2xl font-black text-white">Power-Up Earned!</h2>
+                  <Sparkles size={28} className="text-[#FFC93C]" />
+                </div>
+                <p className="text-sm text-white/60">You’ve won 2 rounds! Choose a random power-up card for your deck.</p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-6" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+                {availablePowerChoices.map((card, index) => (
+                  <button
+                    key={`${card.id}-${index}`}
+                    onClick={() => handleChoosePowerUP(card)}
+                    className="group relative flex flex-col items-center gap-4 p-6 rounded-2xl border border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/40 transition-all text-left"
+                  >
+                    <div className="flex items-start justify-between w-full">
+                      <div className="flex-1">
+                        <h3 className="font-extrabold text-white mb-2">{card.name}</h3>
+                        <p className="text-xs text-white/60 leading-snug">{card.description}</p>
+                      </div>
+                      <span className="ml-4 px-3 py-1 bg-white/10 rounded-lg text-xs font-bold text-white/70">{card.rarity}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
     }

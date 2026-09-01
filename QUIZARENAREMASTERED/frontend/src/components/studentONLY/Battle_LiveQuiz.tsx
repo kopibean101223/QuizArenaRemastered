@@ -5,7 +5,7 @@ import { useApp } from "../../context/AppContext";
 import { StudentTopBar } from "../shared/StudentTopBar";
 import {
   Crown, Zap, Star, Trophy, Flame, MessageCircle,
-  CheckCircle2, Wifi, WifiOff, Volume2, VolumeX, ArrowRight
+  CheckCircle2, Wifi, WifiOff, Volume2, VolumeX, ArrowRight, Sparkles
 } from "lucide-react";
 
 import {
@@ -17,7 +17,9 @@ import { AnswerBtn } from "./LiveBattleCOMPONENTONLY/AnswerButton";
 import { AnswerInput } from "./battle/Answer_Input";
 import { BattleChat } from "./battle/BattleChat";
 import { LeaderRow } from "./LiveBattleCOMPONENTONLY/LeaderRow";
-import { PowerCardTray } from "./PowerCards/PowerCardTray";   // <-- ADD THIS LINE
+import { PowerCardTray } from "./PowerCards/PowerCardTray";
+import { LIVE_QUIZ_CARDS } from "./PowerCards/CardCatalog";
+import type { PowerCardData } from "./PowerCards/types";
 import {
   getStudentIdentity,
   computeTimeLeft,
@@ -113,6 +115,11 @@ export function LiveBattle({ battleId }: { battleId: string }) {
   const [mode, setMode] = useState<"solo" | "discussion">("discussion");
   const [speedMode] = useState(true);
   const [reactionBursts, setReactionBursts] = useState<{ id: number; emoji: string; x: number; y: number }[]>([]);
+  
+  // Power-up card system states
+  const [collectedPowerCards, setCollectedPowerCards] = useState<PowerCardData[]>([]);
+  const [showChoosePowerUP, setShowChoosePowerUP] = useState(false);
+  const [correctAnswersCount, setCorrectAnswersCount] = useState(0);
 
   const { studentName, currentUserId } = getStudentIdentity(user);
 
@@ -180,7 +187,7 @@ export function LiveBattle({ battleId }: { battleId: string }) {
     if (myVote !== null) processAnswer(myVote);
   }
 
-  function processAnswer(userAnswer: any) {
+  async function processAnswer(userAnswer: any) {
     setRevealed(true);
     const isCorrect = checkAnswer(currentQuestion, userAnswer);
     setLastCorrect(isCorrect);
@@ -188,6 +195,15 @@ export function LiveBattle({ battleId }: { battleId: string }) {
 
     // FIX: track the running correct-answer count ourselves.
     if (isCorrect) correctCountRef.current += 1;
+
+    // Track correct answers for power-up system
+    if (isCorrect) {
+      const newCount = correctAnswersCount + 1;
+      setCorrectAnswersCount(newCount);
+      if (newCount === 2) {
+        setShowChoosePowerUP(true);
+      }
+    }
 
     // Send answer to professor chat stream
     send({
@@ -214,6 +230,34 @@ export function LiveBattle({ battleId }: { battleId: string }) {
         accuracy: questions.length > 0 ? Math.round((correctCountRef.current / questions.length) * 100) : 0,
       }
     });
+
+    // ADAPTIVE ALGORITHM INTEGRATION (LIVE mode only)
+    // Update student's adaptive state (BKT mastery & IRT ability) based on this answer
+    try {
+      const submitAnswerRes = await fetch('/api/adaptive/submit-answer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: currentUserId,
+          questionId: currentQuestion.id,
+          battleId: battleId || "room_101",
+          isCorrect,
+        }),
+      });
+
+      if (!submitAnswerRes.ok) {
+        console.warn('[LiveBattle] Adaptive submit-answer failed:', submitAnswerRes.status);
+      } else {
+        const adaptiveData = await submitAnswerRes.json();
+        console.log('[LiveBattle] Adaptive state updated:', {
+          mastery: adaptiveData.mastery?.pLt?.toFixed(4),
+          ability: adaptiveData.ability?.theta?.toFixed(4),
+        });
+      }
+    } catch (err) {
+      console.error('[LiveBattle] Error calling adaptive submit-answer:', err);
+      // Continue gracefully — adaptive failure shouldn't block the quiz
+    }
   }
 
   const totalVotes = votes.reduce((a, v) => a + v.count, 0);
@@ -229,6 +273,14 @@ export function LiveBattle({ battleId }: { battleId: string }) {
       sender: studentName,
       message: text,
     });
+  }
+
+  function handleChoosePowerUP(cardIndex: number) {
+    const selectedCard = LIVE_QUIZ_CARDS[cardIndex];
+    setCollectedPowerCards((prev) => [...prev, { ...selectedCard, id: `${selectedCard.id}-${Date.now()}` }]);
+    setShowChoosePowerUP(false);
+    // Reset counter for next power-up opportunity
+    setCorrectAnswersCount(0);
   }
 
   if (!currentQuestion) {
@@ -280,7 +332,7 @@ export function LiveBattle({ battleId }: { battleId: string }) {
           </div>
         </div>
 
- <PowerCardTray topClassName="top-60" />
+ <PowerCardTray cards={collectedPowerCards} topClassName="top-60" size="md" />
 
 
         <div style={{ flex: 1, display: "flex", gap: 0, overflow: "hidden" }}>
@@ -358,6 +410,40 @@ export function LiveBattle({ battleId }: { battleId: string }) {
           </div>
         )}
       </div>
+
+      {/* Choose Power-Up Modal */}
+      {showChoosePowerUP && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#1C1F33] border border-white/10 rounded-3xl p-8 max-w-2xl w-full mx-4">
+            <div className="text-center mb-8">
+              <div className="flex items-center justify-center gap-2 mb-3">
+                <Sparkles size={28} className="text-[#FFC93C]" />
+                <h2 className="text-2xl font-black text-white">Power-Up Earned!</h2>
+                <Sparkles size={28} className="text-[#FFC93C]" />
+              </div>
+              <p className="text-sm text-white/60">You've answered 2 questions correctly! Choose a power-up card for your deck.</p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+              {LIVE_QUIZ_CARDS.slice(0, 3).map((card, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleChoosePowerUP(idx)}
+                  className="group relative flex flex-col items-center gap-4 p-6 rounded-2xl border border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/40 transition-all text-left"
+                >
+                  <div className="flex items-start justify-between w-full">
+                    <div className="flex-1">
+                      <h3 className="font-extrabold text-white mb-2">{card.name}</h3>
+                      <p className="text-xs text-white/60 leading-snug">{card.description}</p>
+                    </div>
+                    <span className="ml-4 px-3 py-1 bg-white/10 rounded-lg text-xs font-bold text-white/70">{card.rarity}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

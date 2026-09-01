@@ -54,6 +54,7 @@ import {
   computeTimeLeft,
   type BattleQuestion,
 } from '@/lib/student/battle/useBattleConnection';
+import { requestAdaptiveQuestion, isAdaptiveDistributionMode } from '@/lib/battle/questionDistribution';
 
 // Leaderboard entry shape used during the battle (score/streak/isMe).
 // Kept distinct from LobbyPlayerT (the lobby roster) — they represent
@@ -196,6 +197,7 @@ export function BattleSocketProvider({
           type: 'JOIN_TEAM_LOBBY',
           mode: 'TEAM',
           battleId: sessionId,
+          userId: resolvedUserId,
           ...extraJoinPayload,
         }));
         socket.send(JSON.stringify({
@@ -203,6 +205,7 @@ export function BattleSocketProvider({
           mode: 'TEAM',
           battleId: sessionId,
           userId: resolvedUserId,
+          teamId: extraJoinPayload?.teamId ?? null,
           ...extraJoinPayload,
         }));
       } else if (mode === 'ROYALE' || mode === 'CHAOS_CLASH') {
@@ -355,8 +358,36 @@ export function BattleSocketProvider({
 
       // ---- Battle-phase routing (from useBattleSocket / LiveBattle) ----
 
+      const adaptiveMode = isAdaptiveDistributionMode(data.distributionMode ?? data.adaptive ?? data.mode);
       const rawQuestions = data.questions || data.roomState?.questions || data.payload?.questions;
-      if (Array.isArray(rawQuestions) && rawQuestions.length > 0) {
+
+      if (data.type === 'ADAPTIVE_QUESTION_SERVED' && data.question) {
+        setQuestions(formatBattleQuestions([data.question]));
+        if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
+      } else if (adaptiveMode && (data.type === 'PROF_START_BATTLE' || data.type === 'QUESTION_ADVANCED' || data.type === 'ROOM_STATE_SYNC')) {
+        const selectedQuestionFallback = Array.isArray(rawQuestions) && rawQuestions.length > 0
+          ? rawQuestions[typeof data.currentIndex === 'number' ? data.currentIndex : 0] ?? rawQuestions[0]
+          : null;
+
+        void requestAdaptiveQuestion({
+          adaptive: true,
+          studentId: resolvedUserId,
+          battleId: sessionId,
+          questions: Array.isArray(rawQuestions) ? rawQuestions : [],
+          fallbackQuestion: selectedQuestionFallback,
+          docId: data.docId ?? null,
+        }).then((selectedQuestion) => {
+          if (selectedQuestion) {
+            setQuestions(formatBattleQuestions([selectedQuestion]));
+          } else if (selectedQuestionFallback) {
+            setQuestions(formatBattleQuestions([selectedQuestionFallback]));
+          }
+        }).catch(() => {
+          if (selectedQuestionFallback) {
+            setQuestions(formatBattleQuestions([selectedQuestionFallback]));
+          }
+        });
+      } else if (Array.isArray(rawQuestions) && rawQuestions.length > 0) {
         setQuestions(formatBattleQuestions(rawQuestions));
       }
 

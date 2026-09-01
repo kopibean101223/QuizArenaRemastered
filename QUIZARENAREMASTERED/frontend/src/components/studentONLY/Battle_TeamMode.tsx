@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Trophy, MessageSquare, Crown, CheckCircle, Zap } from 'lucide-react';
+import { Trophy, MessageSquare, Crown, CheckCircle, Zap, Sparkles } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
   formatBattleQuestions,
@@ -14,6 +14,8 @@ import { CountdownBar } from './LiveBattleCOMPONENTONLY/CountdownBar';
 import { AnswerInput } from './battle/Answer_Input';
 import { BattleChat, BattleChatMessage } from './battle/BattleChat';
 import { PowerCardTray } from './PowerCards/PowerCardTray';
+import { TEAM_MODE_CARDS } from './PowerCards/CardCatalog';
+import type { PowerCardData } from './PowerCards/types';
 export interface TeamMemberAnswer {
   memberId: string;
   memberName: string;
@@ -33,6 +35,79 @@ type TeamQuestion = BattleQuestion;
 function stringifyAnswerValue(value: any): string {
   if (typeof value === 'boolean') return value ? 'True' : 'False';
   return String(value ?? '');
+}
+
+function getMajorityVote(answers: TeamMemberAnswer[]): string {
+  if (!answers.length) return '';
+
+  const counts: Record<string, number> = {};
+  answers.forEach((entry) => {
+    const normalized = String(entry.selectedOption || '').trim();
+    if (!normalized) return;
+    counts[normalized] = (counts[normalized] || 0) + 1;
+  });
+
+  let bestValue = '';
+  let bestCount = 0;
+  Object.entries(counts).forEach(([value, count]) => {
+    if (count > bestCount) {
+      bestValue = value;
+      bestCount = count;
+    }
+  });
+
+  return bestValue;
+}
+
+function doesAnswerMatchQuestion(question: TeamQuestion | undefined, answer: string): boolean {
+  if (!question || !answer) return false;
+
+  const normalizedAnswer = answer.trim();
+
+  if (question.type === 'Multiple Choice') {
+    const optionIndex = Number(question.correct ?? 0);
+    if (Array.isArray(question.options) && question.options[optionIndex]) {
+      return (
+        String(question.options[optionIndex]) === normalizedAnswer ||
+        String(optionIndex) === normalizedAnswer ||
+        OPTION_KEYS[optionIndex] === normalizedAnswer
+      );
+    }
+    return String(optionIndex) === normalizedAnswer || OPTION_KEYS[optionIndex] === normalizedAnswer;
+  }
+
+  if (question.type === 'True / False') {
+    return stringifyAnswerValue(question.correct) === normalizedAnswer;
+  }
+
+  if (question.type === 'Mathematics') {
+    return normalizeChoiceText(question.correctExpression) === normalizeChoiceText(normalizedAnswer);
+  }
+
+  if (question.type === 'Short Answer' || question.type === 'Identification') {
+    return question.acceptedAnswers.some((value) => normalizeChoiceText(value) === normalizeChoiceText(normalizedAnswer));
+  }
+
+  if (question.type === 'Numerical Input') {
+    const expected = Number(question.correctValue);
+    const submitted = Number(normalizedAnswer);
+    return Number.isFinite(expected) && Number.isFinite(submitted) && Math.abs(expected - submitted) <= (question.tolerance ?? 0);
+  }
+
+  return false;
+}
+
+function normalizeChoiceText(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function estimatePowerupBoost(card: PowerCardData): number {
+  const effect = card.effect;
+  if (!effect) return 0;
+  if (effect.category === 'points') return Number(effect.amount ?? 0);
+  if (effect.category === 'removeChoices') return 10;
+  if (effect.category === 'selfTimer') return Number(effect.amount ?? 0);
+  return 5;
 }
 
 export interface TeamBattleProps {
@@ -73,6 +148,16 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
   const [teamMemberAnswers, setTeamMemberAnswers] = useState<TeamMemberAnswer[]>([]);
 
   const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
+  
+  // Power-up card system states
+  const [collectedPowerCards, setCollectedPowerCards] = useState<PowerCardData[]>([]);
+  const [showChoosePowerUP, setShowChoosePowerUP] = useState(false);
+  const [correctAnswersCount, setCorrectAnswersCount] = useState(0);
+  const [teamWins, setTeamWins] = useState(0);
+  const [teamScore, setTeamScore] = useState(0);
+  const [lastResolvedQuestionIndex, setLastResolvedQuestionIndex] = useState<number | null>(null);
+  const [roundOutcome, setRoundOutcome] = useState('');
+  const [opponentTeamName, setOpponentTeamName] = useState('Rival Squad');
 
   const { studentName: memberName, currentUserId: memberId } = getStudentIdentity(user);
 
@@ -197,6 +282,14 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
       questionIndex,
       answer: myAnswer,
     });
+
+    const newCount = correctAnswersCount + 1;
+    setCorrectAnswersCount(newCount);
+
+    if (newCount >= 2) {
+      setShowChoosePowerUP(true);
+      setCorrectAnswersCount(0);
+    }
   };
 
   const handleAnswerInputSubmit = (value: any) => {
@@ -218,6 +311,14 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
       questionIndex,
       answer: myAnswer,
     });
+
+    const newCount = correctAnswersCount + 1;
+    setCorrectAnswersCount(newCount);
+
+    if (newCount >= 2) {
+      setShowChoosePowerUP(true);
+      setCorrectAnswersCount(0);
+    }
   };
 
   const getOptionPercentage = (optionKey: string) => {
@@ -225,6 +326,43 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
     const count = teamMemberAnswers.filter((a) => a.selectedOption === optionKey).length;
     return Math.round((count / teamMemberAnswers.length) * 100);
   };
+
+  const majorityVote = getMajorityVote(teamMemberAnswers);
+  const roundResultLabel = majorityVote
+    ? `Team vote: ${majorityVote}${currentQuestion ? ` • ${doesAnswerMatchQuestion(currentQuestion, majorityVote) ? 'Round won' : 'Round challenge'}` : ''}`
+    : 'Waiting for team vote…';
+
+  useEffect(() => {
+    if (!currentQuestion || teamMemberAnswers.length === 0 || lastResolvedQuestionIndex === questionIndex) return;
+
+    const winningTeamAnswer = getMajorityVote(teamMemberAnswers);
+    if (!winningTeamAnswer) return;
+
+    const resolvedWin = doesAnswerMatchQuestion(currentQuestion, winningTeamAnswer);
+    setRoundOutcome(
+      resolvedWin
+        ? `Majority voted ${winningTeamAnswer}. Your team takes the round.`
+        : `Majority voted ${winningTeamAnswer}. This round needs a recalibration.`
+    );
+
+    setLastResolvedQuestionIndex(questionIndex);
+
+    if (resolvedWin) {
+      setTeamWins((prev) => {
+        const nextWins = prev + 1;
+        if (nextWins > 0 && nextWins % 2 === 0) {
+          setShowChoosePowerUP(true);
+        }
+        return nextWins;
+      });
+      setTeamScore((prev) => prev + 25);
+    }
+  }, [currentQuestion, questionIndex, teamMemberAnswers, lastResolvedQuestionIndex]);
+
+  useEffect(() => {
+    const bracketName = teamId === null || teamId === undefined ? 'Team Blue' : `Team ${teamId}`;
+    setOpponentTeamName(bracketName === 'Team 1' ? 'Team 2' : 'Team 1');
+  }, [teamId]);
 
   const handleSendChat = (text: string) => {
     send({
@@ -236,6 +374,17 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
       message: text,
     });
   };
+
+  function handleChoosePowerUP(cardIndex: number) {
+    const selectedCard = TEAM_MODE_CARDS[cardIndex];
+    if (!selectedCard) return;
+
+    setCollectedPowerCards((prev) => [...prev, { ...selectedCard, id: `${selectedCard.id}-${Date.now()}` }]);
+    setTeamScore((prev) => prev + estimatePowerupBoost(selectedCard));
+    setRoundOutcome(`${selectedCard.name} activated for the team. Auto-applied via majority vote.`);
+    setShowChoosePowerUP(false);
+    setCorrectAnswersCount(0);
+  }
 
   if (!currentQuestion) {
     return (
@@ -270,8 +419,27 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
         </div>
       </header>
 
+      <div className="flex items-center justify-between gap-3 px-6 py-3 border-b border-white/10 bg-[#181b2d]">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.2em] text-[#8F93A8]">Bracket</div>
+          <div className="text-sm font-black text-white">{teamId ? `Team ${teamId}` : 'Team Blue'} vs {opponentTeamName}</div>
+        </div>
+        <div className="flex items-center gap-3 text-right">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-[#8F93A8]">Team wins</div>
+            <div className="text-lg font-black text-[#2ED47A]">{teamWins}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-[#8F93A8]">Points</div>
+            <div className="text-lg font-black text-[#FFC93C]">{teamScore}</div>
+          </div>
+        </div>
+      </div>
 
- <PowerCardTray topClassName="top-60" />
+      <PowerCardTray
+        topClassName="top-60"
+        cards={collectedPowerCards.length > 0 ? collectedPowerCards : TEAM_MODE_CARDS.slice(0, 3)}
+      />
 
 
       {/* Content */}
@@ -282,6 +450,11 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
               {currentQuestion.subject}
             </span>
             <h2 className="mt-2 text-xl font-bold">{currentQuestion.text}</h2>
+          </div>
+
+          <div className="bg-[#12182b] border border-[#5B3DF6]/30 rounded-xl px-3 py-2 text-xs font-bold text-[#D8D9F5]">
+            <span className="text-[#8F93A8] uppercase tracking-[0.16em]">Team majority</span>
+            <div className="mt-1 text-base text-white">{roundResultLabel}</div>
           </div>
 
           {isMultipleChoice ? (
@@ -379,6 +552,43 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
           </div>
         </div>
       </div>
+    {showChoosePowerUP && (
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+        <div className="w-full max-w-4xl rounded-3xl border border-[#5B3DF6]/40 bg-[#171b2d] p-6 shadow-[0_0_30px_rgba(91,61,246,0.3)]">
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <div>
+              <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#8F93A8]">Team power-up</div>
+              <h3 className="mt-1 text-2xl font-black text-white">2 wins unlocked</h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowChoosePowerUP(false)}
+              className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-white/80"
+            >
+              Skip
+            </button>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {TEAM_MODE_CARDS.map((card, index) => (
+              <button
+                key={card.id}
+                type="button"
+                onClick={() => handleChoosePowerUP(index)}
+                className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition hover:border-[#5B3DF6] hover:bg-[#5B3DF6]/10"
+              >
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[#A98CFF]">{card.rarity}</div>
+                <div className="mt-2 text-lg font-black text-white">{card.name}</div>
+                <p className="mt-2 text-sm text-white/70">{card.description}</p>
+                <div className="mt-4 inline-flex rounded-full bg-[#5B3DF6]/20 px-2.5 py-1 text-xs font-black text-[#A98CFF]">
+                  +{estimatePowerupBoost(card)} team points
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    )}
     </div>
   );
 }

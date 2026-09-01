@@ -606,9 +606,16 @@ class TeamBattleHandler {
     if (type === 'TEAM_CHAT_MESSAGE') {
       if (!message) return;
 
-      // Prefer the remembered team for this socket; fall back to whatever
-      // teamId came with the message itself.
-      const senderTeamId = this.clientTeamMap.get(ws) || (teamId != null ? String(teamId) : null);
+      let senderTeamId = this.clientTeamMap.get(ws) || (teamId != null ? String(teamId) : null);
+
+      if (!senderTeamId && userId) {
+        const storedTeamId = await redisPublisher.hget(tKey, userId);
+        if (storedTeamId) {
+          senderTeamId = String(storedTeamId);
+          this.clientTeamMap.set(ws, senderTeamId);
+        }
+      }
+
       if (!senderTeamId) {
         console.warn('[TEAM][CHAT] dropped message — sender has no known teamId', { battleId, userId });
         return;

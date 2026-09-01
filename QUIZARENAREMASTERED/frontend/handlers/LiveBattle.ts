@@ -50,8 +50,14 @@ export interface BattlePayload {
   questions?: unknown[];
   playerData?: PlayerData;
   mode?: string; // ADDED: required for mode validation
+  distributionMode?: 'adaptive' | 'uniform';
+  adaptive?: boolean;
   // FIX (2.2): lets a client identify itself as the professor/host on join.
   role?: 'host' | 'student';
+  // ADAPTIVE: additional fields for adaptive algorithm
+  currentIndex?: number;
+  studentId?: string;
+  docId?: string;
 }
 
 class LiveBattleHandler {
@@ -229,6 +235,8 @@ class LiveBattleHandler {
           startedAt: parseInt(roomState.startedAt, 10),
           timeLimit: parseInt(roomState.timeLimit || '60', 10),
           status: roomState.status || 'waiting',
+          distributionMode: roomState.distributionMode || 'uniform',
+          adaptive: roomState.distributionMode === 'adaptive',
           history: history.map((item) => JSON.parse(item)),
           leaderboard,
           questions: JSON.parse(questionsStr || '[]'),
@@ -267,11 +275,14 @@ class LiveBattleHandler {
     if (type === 'PROF_START_BATTLE') {
       const startedAt = Date.now();
 
+      const distributionMode = payload.distributionMode || (payload.adaptive ? 'adaptive' : 'uniform');
+
       await redisPublisher.hset(sKey, {
         currentIndex: '0',
         status: 'active',
         startedAt: String(startedAt),
         roomCode: roomCode || '',
+        distributionMode,
       });
       // FIX (2.3): refresh the TTL on activity so an active room doesn't expire mid-battle.
       await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
@@ -294,6 +305,8 @@ class LiveBattleHandler {
           type: 'PROF_START_BATTLE',
           battleId,
           mode: 'LIVE',
+          distributionMode: payload.distributionMode || 'uniform',
+          adaptive: payload.adaptive ?? (payload.distributionMode === 'adaptive'),
           currentIndex: 0,
           startedAt,
           timeLimit: 60,
@@ -305,47 +318,69 @@ class LiveBattleHandler {
       return;
     }
 
-    // ── ACTION B: ADVANCE QUESTION INDEX ──
+    // ── ACTION B: PROFESSOR ADVANCES QUESTION (synchronous for all students) ──
     if (type === 'ADVANCE_QUESTION') {
-      const nextIndex = await redisPublisher.hincrby(sKey, 'currentIndex', 1);
-      const startedAt = Date.now();
-      const newLimit = nextTimeLimit || 15;
+      const nextIndex = payload.currentIndex ?? 0;
+      const isLastQuestion = payload.isLastQuestion ?? false;
+      const roomState = await redisPublisher.hgetall(sKey);
+      const distributionMode = roomState.distributionMode || 'uniform';
 
       await redisPublisher.hset(sKey, {
-        startedAt: String(startedAt),
-        timeLimit: String(newLimit),
+        currentIndex: String(nextIndex),
+        startedAt: String(Date.now()),
+        distributionMode,
+      });
+      await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
+
+      const rawQuestions = await redisPublisher.get(`battle:${battleId}:questions`);
+      const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
+
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({
+          type: 'QUESTION_ADVANCED',
+          battleId,
+          distributionMode,
+          adaptive: distributionMode === 'adaptive',
+          currentIndex: nextIndex,
+          startedAt: Date.now(),
+          timeLimit: payload.nextTimeLimit || 60,
+          isLastQuestion,
+          questions: distributionMode === 'uniform' ? questions : [],
+        })
+      );
+
+      console.log(`[LiveBattle] Advanced question in ${distributionMode} mode to ${nextIndex}/${questions.length || 'adaptive'}`, {
+        battleId,
+        isLastQuestion,
+      });
+      return;
+    }
+
+    // ── ACTION B2: REQUEST NEXT ADAPTIVE QUESTION (per-student) ──
+    if (type === 'REQUEST_NEXT_ADAPTIVE_QUESTION') {
+      const { studentId } = payload as any;
+      console.log(`[LiveBattle] REQUEST_NEXT_ADAPTIVE_QUESTION`, { battleId, studentId });
+
+      const res = await fetch(`${process.env.NEXTAUTH_URL}/api/adaptive/next-question`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId, battleId, docId: payload.docId }),
+      });
+      const data = await res.json();
+
+      console.log(`[LiveBattle] adaptive selection result`, {
+        studentId,
+        mode: data.mode,
+        selectedQuestionId: data.selected?.questionId,
       });
 
-      if (isLastQuestion) {
-        await redisPublisher.hset(sKey, { status: 'completed' });
-        await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
-        await redisPublisher.expire(hKey, COMPLETED_ROOM_TTL_SECONDS);
-
-        const rawScores = await redisPublisher.hgetall(lKey);
-        const leaderboard = Object.values(rawScores).map((item) => JSON.parse(item));
-
-        // 1. Trigger Supabase Sync
-        await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
-
-        // 2. Notify Clients
-        await redisPublisher.publish(
-          channel,
-          JSON.stringify({ type: 'QUIZ_COMPLETED', battleId, leaderboard })
-        );
-      } else {
-        // FIX (2.3): keep refreshing the TTL as the battle progresses.
-        await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
-        await redisPublisher.publish(
-          channel,
-          JSON.stringify({
-            type: 'QUESTION_ADVANCED',
-            battleId,
-            currentIndex: Number(nextIndex),
-            startedAt,
-            timeLimit: Number(newLimit),
-          })
-        );
-      }
+      ws.send(JSON.stringify({
+        type: 'ADAPTIVE_QUESTION_SERVED',
+        battleId,
+        question: data.selected,
+        mode: data.mode,
+      }));
       return;
     }
 
