@@ -87,32 +87,34 @@ def run_real_evaluation():
         "question": [
             "What year was Antigravity AI released?",
             "What is the primary database used by Antigravity?",
-            "How does the core communication protocol work?"
+            "How does the core communication protocol work?",
+            "What is the name of the CEO of Antigravity AI?", # Unanswerable
+            "How does Antigravity integrate with the Apple Vision Pro?" # Unanswerable
         ],
         "ground_truth": [
             "2024",
             "Supabase pgvector",
-            "Asynchronous message passing over Redis"
-        ]
+            "Asynchronous message passing over Redis",
+            "Insufficient Context",
+            "Insufficient Context"
+        ],
+        "is_answerable": [True, True, True, False, False]
     }
     
-    # We must generate the "answer" and "contexts" using the REAL RAG pipeline.
-    # We will invoke celery_worker's generate task or similar if available, or write a mini-chain here.
-    # Because we don't have time to debug celery, let's call the vector db directly.
     from app.main import supabase_client, get_embedding_model
     embeddings = get_embedding_model()
     
     answers = []
     contexts = []
+    retrieval_recalls = []
+    retrieval_mrrs = []
     
     gemini_key = os.getenv("GEMINI_API_KEY")
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=gemini_key)
     
-    for q in eval_data["question"]:
+    for idx, q in enumerate(eval_data["question"]):
         print(f"Querying: {q}")
         
-        # Real Hybrid Search Simulator (since main.py ingestion puts it into supabase)
-        # We query supabase `match_document_chunks`
         vec = embeddings.embed_query(q)
         try:
             res = supabase_client.rpc(
@@ -126,8 +128,21 @@ def run_real_evaluation():
             
         retrieved_texts = [d.get("content", "") for d in docs] if docs else ["No context found."]
         
-        # Generator
-        prompt = f"Context: {retrieved_texts}\n\nQuestion: {q}\n\nAnswer:"
+        # Calculate Mock MRR and Recall
+        # In a real system, we'd check if the retrieved chunk contains the ground truth
+        is_ans = eval_data["is_answerable"][idx]
+        gt = eval_data["ground_truth"][idx]
+        
+        chunk_hits = [i for i, text in enumerate(retrieved_texts) if gt.lower() in text.lower()]
+        
+        if is_ans:
+            recall = 1.0 if len(chunk_hits) > 0 else 0.0
+            mrr = 1.0 / (chunk_hits[0] + 1) if len(chunk_hits) > 0 else 0.0
+            retrieval_recalls.append(recall)
+            retrieval_mrrs.append(mrr)
+        
+        # Generator with Abstention logic
+        prompt = f"Context: {retrieved_texts}\n\nQuestion: {q}\n\nAnswer (If the context does not contain the answer, reply ONLY with 'Insufficient Context'):"
         ans = llm.invoke(prompt).content
         
         contexts.append(retrieved_texts)
@@ -136,7 +151,19 @@ def run_real_evaluation():
     eval_data["answer"] = answers
     eval_data["contexts"] = contexts
     
-    print("\nBenchmark generation complete. Running RAGAS...")
+    # Print Retrieval Metrics
+    avg_recall = sum(retrieval_recalls) / len(retrieval_recalls) if retrieval_recalls else 0
+    avg_mrr = sum(retrieval_mrrs) / len(retrieval_mrrs) if retrieval_mrrs else 0
+    print(f"\nRetrieval Metrics - Recall@5: {avg_recall:.2f}, MRR: {avg_mrr:.2f}")
+    
+    # Calculate Abstention / False Acceptance Rate
+    unanswerable_indices = [i for i, ans in enumerate(eval_data["is_answerable"]) if not ans]
+    correct_abstentions = sum(1 for i in unanswerable_indices if "insufficient" in answers[i].lower())
+    false_acceptance_rate = 1.0 - (correct_abstentions / len(unanswerable_indices)) if unanswerable_indices else 0
+    print(f"Abstention Performance - Correct Abstentions: {correct_abstentions}/{len(unanswerable_indices)}")
+    print(f"False Acceptance Rate: {false_acceptance_rate:.2f}\n")
+    
+    print("Benchmark generation complete. Running RAGAS...")
     
     dataset = Dataset.from_dict(eval_data)
     

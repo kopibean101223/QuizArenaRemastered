@@ -16,18 +16,18 @@ export async function PATCH(req: Request) {
     }
 
     const userId = user.id;
-    const { questionId, status } = await req.json(); 
-
-    if (status === 'REJECTED') {
-      await prisma.generatedQuestion.delete({
-        where: { id: Number(questionId), userId },
-      });
-      return NextResponse.json({ status: 'REJECTED', deleted: true });
-    }
+    const { questionId, status, reject_reason, rejected_by, reject_note } = await req.json(); 
 
     const updated = await prisma.generatedQuestion.update({
       where: { id: Number(questionId), userId },
-      data: { status },
+      data: { 
+        status,
+        ...(status === 'REJECTED' && {
+          reject_reason,
+          rejected_by: rejected_by || 'human',
+          reject_note,
+        })
+      },
     });
 
     return NextResponse.json(updated);

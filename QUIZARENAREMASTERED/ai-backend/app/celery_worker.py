@@ -81,7 +81,7 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 GEMINI_RPM = int(os.getenv("GEMINI_RPM", "10"))
 GROQ_RPM = int(os.getenv("GROQ_RPM", "6"))
 INTER_REQUEST_DELAY = float(os.getenv("INTER_REQUEST_DELAY", "12"))
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", "3"))
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "1"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 GROUNDING_SIMILARITY_THRESHOLD = float(os.getenv("GROUNDING_SIMILARITY_THRESHOLD", "0.45"))
 
@@ -385,6 +385,11 @@ def _call_groq(prompt: str, temperature: float, prefill: str) -> str:
         temperature=temperature,
         max_tokens=4096
     )
+    finish_reason = response.choices[0].finish_reason
+    if finish_reason == "length":
+        logger.warning(f"[Groq] Output truncated (finish_reason=length). Consider reducing prompt size.")
+        raise Exception("Output truncated by max_tokens limit")
+
     content = response.choices[0].message.content
     
     # Re-attach the prefilled start if it succeeded
@@ -401,10 +406,15 @@ def _call_gemini(prompt: str, temperature: float, prefill: str = "") -> str:
 
     gemini_limiter.wait()
     from google import genai
+    from google.genai import types as genai_types
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     response = client.models.generate_content(
         model="gemini-3.5-flash",
         contents=prompt,
+        config=genai_types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=4096,
+        ),
     )
     if response and response.text:
         return response.text.strip()
@@ -420,8 +430,14 @@ def _call_openai(prompt: str, temperature: float, prefill: str = "") -> str:
     response = openai_client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[{"role": "user", "content": prompt}],
-        temperature=temperature
+        temperature=temperature,
+        max_tokens=4096
     )
+    finish_reason = response.choices[0].finish_reason
+    if finish_reason == "length":
+        logger.warning(f"[OpenAI] Output truncated (finish_reason=length).")
+        raise Exception("Output truncated by max_tokens limit")
+
     content = response.choices[0].message.content
     return content.strip() if content else ""
 
@@ -490,7 +506,7 @@ def get_embedding(text: str) -> np.ndarray:
         if os.getenv("GEMINI_API_KEY"):
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
             emb = GoogleGenerativeAIEmbeddings(
-                model="text-embedding-004",
+                model="models/embedding-001",
                 google_api_key=os.getenv("GEMINI_API_KEY")
             )
             return np.array(emb.embed_query(text))
@@ -531,8 +547,10 @@ class GeneratedQuestion(BaseModel):
     chunk_index: int
     text: str
     type: str
-    difficulty: str
+    difficulty: str  # Keep as str for backward compat but will contain numeric string
     answer: str
+    estimated_difficulty: Optional[float] = None  # 0.00-1.00 normalized
+    bloom_level: Optional[str] = None  # REMEMBER, UNDERSTAND, APPLY, ANALYZE, EVALUATE, CREATE
     choices: Optional[List[QuestionChoice]] = None
     stepWeights: Optional[List[StepWeight]] = None
     partialCreditRules: Optional[str] = None
@@ -546,7 +564,6 @@ def generate_batch_questions(
     config: dict
 ) -> List[Dict]:
     """Generate questions for multiple chunks using native structured outputs."""
-    difficulty = config.get('difficulty', 'Medium')
     types_list = config.get('types', ['Multiple Choice'])
     types_str = ', '.join(types_list)
     
@@ -557,11 +574,27 @@ def generate_batch_questions(
 
     prompt = f"""You are an expert Mathematics Professor.
 Based on the following {len(chunks)} text chunks from "{filename}", generate exactly {len(chunks) * 2} mathematical test questions (TWO per chunk).
-Target Difficulty: {difficulty}
+
 Allowed Question Types: {types_str}
 
 Each question MUST be one of the Allowed Question Types.
 Each question must strictly be derived from formulas and concepts in its corresponding chunk.
+
+IMPORTANT DIFFICULTY INSTRUCTIONS:
+Generate a MIXED-DIFFICULTY set of questions. Do NOT target a single difficulty level.
+Vary cognitive demand naturally according to the information available in the source document.
+Use Bloom's Taxonomy as a guide: Remember, Understand, Apply, Analyze, Evaluate, Create.
+Do NOT introduce information not supported by the document.
+Do NOT make a question artificially difficult through confusing wording.
+Difficulty should reflect cognitive demand.
+
+For every question, return:
+- question type
+- bloom_level: one of REMEMBER, UNDERSTAND, APPLY, ANALYZE, EVALUATE, CREATE
+- estimated_difficulty: a normalized number from 0.00 (very easy) to 1.00 (very difficult)
+- difficulty: a human-readable label derived from estimated_difficulty (Easy if <0.33, Medium if 0.33-0.66, Hard if >0.66)
+
+Preserve the requested question-type distribution.
 
 {chunks_text}
 
@@ -569,7 +602,7 @@ IMPORTANT: Return exactly {len(chunks) * 2} question objects. chunk_index is 0-b
 
     # Using Instructor with Groq as primary (using JSON mode)
     try:
-        patched_client = instructor.from_openai(groq_client, mode=instructor.Mode.JSON)
+        patched_client = instructor.from_openai(groq_client, mode=instructor.Mode.MD_JSON)
         batch_res = patched_client.chat.completions.create(
             model=GROQ_MODEL,
             response_model=BatchQuestions,
@@ -577,7 +610,8 @@ IMPORTANT: Return exactly {len(chunks) * 2} question objects. chunk_index is 0-b
                 {"role": "system", "content": "You are a helpful assistant. Output exactly the requested JSON."},
                 {"role": "user", "content": prompt}
             ],
-        temperature=0.3
+            temperature=0.3,
+            max_tokens=4096
         )
         # Convert pydantic models back to dicts for downstream compatibility
         return [q.model_dump() for q in batch_res.questions]
@@ -728,6 +762,7 @@ def process_and_generate_quiz(
     config: dict
 ):
     """Generate quiz questions using dynamic configs passed from frontend."""
+    attempt = config.get('_attempt', 1)
     logger.info(f"{'═' * 60}")
     logger.info(f"Starting pipeline for '{filename}' (doc_id={doc_id})")
     logger.info(f"Config: model={GROQ_MODEL}, count={config.get('count')}, difficulty={config.get('difficulty')}")
@@ -790,6 +825,20 @@ def process_and_generate_quiz(
              )
              return {"status": "failed", "error": "No context"}
 
+        # Evidence Sufficiency Gate (AIRAG Part 2.1)
+        requested_count = config.get('count', 5)
+        min_chunks_needed = max(2, requested_count // 2)
+        if len(top_chunks) < min_chunks_needed:
+            logger.warning(
+                f"[Evidence Gate] INSUFFICIENT_CONTEXT: Only {len(top_chunks)} chunks "
+                f"retrieved, need at least {min_chunks_needed} for {requested_count} questions"
+            )
+            r = _get_redis_client()
+            r.set(
+                f"generated_questions:{doc_id}",
+                json.dumps([{"error": "INSUFFICIENT_CONTEXT: Not enough relevant content found in the document to generate grounded questions. The AI abstained rather than risk generating ungrounded content."}])
+            )
+            return {"status": "abstained", "reason": "INSUFFICIENT_CONTEXT"}
 
 
         # ── Stage 4: Batch Question Generation (Actor) ───────────────────
@@ -888,6 +937,7 @@ def process_and_generate_quiz(
         for q_data, chunk in all_generated:
             
             # Duplicate detection (exact string matching for now)
+            q_text = q_data.get("text", "")
             if q_text in seen_questions:
                 continue
             seen_questions.add(q_text)
@@ -917,11 +967,40 @@ def process_and_generate_quiz(
             f"  Critic results: {len(critic_passed)}/{len(all_generated)} passed"
         )
 
+        # ── Stage 5.5: Grounding Layer A/B (Deterministic) ────────────────
+        logger.info("[Stage 5.5/7] Running deterministic grounding checks...")
+        grounding_passed: List[Tuple[Dict, Dict]] = []
+        
+        for q_data, chunk in critic_passed:
+            context_text = chunk["text"] if isinstance(chunk, dict) else chunk.page_content
+            
+            # Layer A: Source existence — cited chunk must exist
+            citation = q_data.get("citation", {})
+            if not context_text or len(context_text.strip()) < 20:
+                logger.info(f"  ✗ Layer A FAIL (no source): {q_data.get('text', '')[:60]}...")
+                continue
+            
+            # Layer B: Quote existence — excerpt must match source text
+            excerpt = citation.get("excerpt", "") if isinstance(citation, dict) else ""
+            if excerpt and len(excerpt) > 15:
+                # Fuzzy substring match: check if any significant portion exists
+                excerpt_words = excerpt.lower().split()[:8]  # First 8 words
+                match_count = sum(1 for w in excerpt_words if w in context_text.lower())
+                if match_count < len(excerpt_words) * 0.4:  # Less than 40% word overlap
+                    logger.info(f"  ✗ Layer B FAIL (quote mismatch): {q_data.get('text', '')[:60]}...")
+                    continue
+            
+            grounding_passed.append((q_data, chunk))
+            logger.info(f"  ✓ Grounding OK: {q_data.get('text', '')[:60]}...")
+        
+        logger.info(f"  Grounding results: {len(grounding_passed)}/{len(critic_passed)} passed")
+
+
         # ── Stage 6: Cosine Similarity Verification ──────────────────────
         logger.info("[Stage 6/7] Running semantic similarity checks...")
         valid_questions: List[Dict] = []
 
-        for q_data, chunk in critic_passed:
+        for q_data, chunk in grounding_passed:
             context_text = (
                 chunk["text"] if isinstance(chunk, dict) else chunk.page_content
             )
@@ -948,6 +1027,37 @@ def process_and_generate_quiz(
                     f"Accepting question on critic merit alone."
                 )
 
+            # Validate difficulty metadata (AIRAG Part 4.7)
+            est_diff = q_data.get("estimated_difficulty")
+            bloom = q_data.get("bloom_level", "")
+            
+            VALID_BLOOM_LEVELS = {"REMEMBER", "UNDERSTAND", "APPLY", "ANALYZE", "EVALUATE", "CREATE"}
+            
+            # Normalize difficulty to 0.00-1.00 if it's a string like 'Easy'/'Medium'/'Hard'
+            if isinstance(est_diff, str):
+                diff_map = {"easy": 0.25, "medium": 0.5, "hard": 0.75}
+                est_diff = diff_map.get(est_diff.lower(), 0.5)
+            if est_diff is None or not isinstance(est_diff, (int, float)):
+                est_diff = 0.5  # Default to medium
+            est_diff = max(0.0, min(1.0, float(est_diff)))
+            
+            if bloom.upper() not in VALID_BLOOM_LEVELS:
+                bloom = "UNDERSTAND"  # Safe default
+            else:
+                bloom = bloom.upper()
+            
+            # Map numeric difficulty to label for backward compat
+            if est_diff < 0.33:
+                diff_label = "Easy"
+            elif est_diff <= 0.66:
+                diff_label = "Medium"
+            else:
+                diff_label = "Hard"
+            
+            q_data["difficulty"] = diff_label
+            q_data["estimated_difficulty"] = round(est_diff, 2)
+            q_data["bloom_level"] = bloom
+
             # Build final question object with citation metadata
             q_data["citation"] = {
                 "docId": doc_id,
@@ -961,6 +1071,12 @@ def process_and_generate_quiz(
             valid_questions.append(q_data)
 
         logger.info(f"  Final validated questions: {len(valid_questions)}")
+        
+        if not valid_questions and attempt < 2:
+            logger.info("[Regeneration] Attempting regeneration with adjusted prompt...")
+            config['_attempt'] = 2
+            config['types'] = ['Multiple Choice']  # Simplify to most reliable type
+            return process_and_generate_quiz(doc_id, filename, chunks, config)
 
         # ── Stage 7: Store Results in Redis ──────────────────────────────
         logger.info("[Stage 7/7] Storing results in Redis...")
@@ -992,6 +1108,16 @@ def process_and_generate_quiz(
             }]
             r.set(f"generated_questions:{doc_id}", json.dumps(error_msg))
 
+        # Pipeline Metrics
+        logger.info(f"[Metrics] Pipeline Summary:")
+        logger.info(f"  Doc ID: {doc_id}")
+        logger.info(f"  Chunks retrieved: {len(top_chunks)}")
+        logger.info(f"  Raw questions generated: {len(all_generated)}")
+        logger.info(f"  Critic passed: {len(critic_passed)}")
+        logger.info(f"  Grounding passed: {len(grounding_passed)}")
+        logger.info(f"  Final valid: {len(valid_questions)}")
+        logger.info(f"  Attempt: {attempt}")
+
         return {"status": "success", "questions_generated": len(valid_questions)}
 
     except Exception as e:
@@ -1003,5 +1129,4 @@ def process_and_generate_quiz(
         except Exception:
             pass
         return {"status": "error", "message": str(e)}
-
 

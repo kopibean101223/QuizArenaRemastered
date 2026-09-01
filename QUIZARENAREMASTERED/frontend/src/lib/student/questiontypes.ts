@@ -165,11 +165,13 @@ export type QuestionType =
 export interface BaseQuestion {
   id: string | number;
   difficulty: string;
+  estimated_difficulty?: number;
   topic: string;
   subject: string;
   text: string;
   points: number;
   timeLimit: number; // in seconds
+  bloomLevel?: string;
   explanation?: string;
   mediaUrl?: string;
 }

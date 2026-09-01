@@ -86,6 +86,11 @@ export interface GeneratedQuestion {
   citation: Citation;
   flagged?: boolean;
   flagReason?: string;
+  bloomLevel?: string;
+  estimated_difficulty?: number;
+  reject_reason?: string;
+  rejected_by?: string;
+  reject_note?: string;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -94,6 +99,39 @@ const DIFF_STYLE: Record<string, { bg: string; text: string; border: string }> =
   Medium: { bg: C.yellowLight, text: "#9A6C00", border: C.yellowBorder },
   Hard:   { bg: C.coralLight,  text: "#C8441E", border: "rgba(255,107,74,0.25)" },
 };
+
+const BLOOM_STYLE: Record<string, { bg: string; text: string }> = {
+  REMEMBER:    { bg: "rgba(46,212,122,0.08)",  text: "#18A058" },
+  UNDERSTAND:  { bg: "rgba(46,212,122,0.12)",  text: "#15803d" },
+  APPLY:       { bg: "rgba(255,201,60,0.12)",  text: "#9A6C00" },
+  ANALYZE:     { bg: "rgba(255,165,0,0.12)",   text: "#c2410c" },
+  EVALUATE:    { bg: "rgba(255,107,74,0.12)",  text: "#C8441E" },
+  CREATE:      { bg: "rgba(91,61,246,0.1)",    text: "#5B3DF6" },
+};
+
+const REJECT_REASONS = [
+  { value: "hallucinated", label: "Hallucinated — not in source" },
+  { value: "wrong_answer", label: "Wrong answer" },
+  { value: "ambiguous", label: "Ambiguous — multiple valid answers" },
+  { value: "duplicate", label: "Duplicate question" },
+  { value: "off_topic", label: "Off-topic — not from evidence" },
+  { value: "poorly_worded", label: "Poorly worded" },
+  { value: "structurally_broken", label: "Structurally broken" },
+  { value: "other", label: "Other (specify in note)" },
+];
+
+function getDiffStyle(difficulty: string): { bg: string; text: string; border: string; label: string } {
+  // Try parsing as numeric first (new format: 0.00-1.00)
+  const num = parseFloat(difficulty);
+  if (!isNaN(num) && num >= 0 && num <= 1) {
+    if (num < 0.33) return { ...DIFF_STYLE.Easy, label: `${(num * 100).toFixed(0)}% Easy` };
+    if (num <= 0.66) return { ...DIFF_STYLE.Medium, label: `${(num * 100).toFixed(0)}% Medium` };
+    return { ...DIFF_STYLE.Hard, label: `${(num * 100).toFixed(0)}% Hard` };
+  }
+  // Fallback to string matching (backward compat)
+  const style = DIFF_STYLE[difficulty] || DIFF_STYLE.Medium;
+  return { ...style, label: difficulty };
+}
 
 const STATUS_STYLE: Record<QuestionStatus, { bg: string; text: string; border: string; label: string }> = {
   pending:  { bg: C.yellowLight, text: "#9A6C00", border: C.yellowBorder, label: "Pending" },
@@ -179,13 +217,13 @@ function CitationPanel({ citation, flagged, flagReason, onFlag }:
 
 // ─── Question Card ─────────────────────────────────────────────────────────────
 function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
-  { q: GeneratedQuestion; onStatusChange: (id: number, s: QuestionStatus) => void; onFlag: (id: number, reason: string) => void; onEdit: (id: number, data: Partial<GeneratedQuestion>) => void; }) {
+  { q: GeneratedQuestion; onStatusChange: (id: number, s: QuestionStatus, reject_reason?: string, reject_note?: string) => void; onFlag: (id: number, reason: string) => void; onEdit: (id: number, data: Partial<GeneratedQuestion>) => void; }) {
   const [expanded, setExpanded] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState({ text: q.text, answer: q.answer, choices: q.choices || [] });
 
   const statusS = STATUS_STYLE[q.status] || STATUS_STYLE.pending;
-  const diffS = DIFF_STYLE[q.difficulty] || DIFF_STYLE.Medium;
+  const diffS = getDiffStyle(q.estimated_difficulty?.toString() ?? q.difficulty);
   const labels = ["A", "B", "C", "D", "E", "F"];
 
   const handleSaveEdit = () => {
@@ -230,8 +268,16 @@ function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
               {statusS.label}
             </span>
             <span style={{ background: diffS.bg, color: diffS.text, border: `1.5px solid ${diffS.border}`, borderRadius: 7, padding: "2px 8px", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700 }}>
-              {q.difficulty}
+              {diffS.label}
             </span>
+            {q.bloomLevel && (() => {
+              const bs = BLOOM_STYLE[q.bloomLevel.toUpperCase()] || BLOOM_STYLE.UNDERSTAND;
+              return (
+                <span style={{ background: bs.bg, color: bs.text, borderRadius: 7, padding: "2px 8px", fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                  {q.bloomLevel}
+                </span>
+              );
+            })()}
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: C.inputBg, color: C.muted, borderRadius: 7, padding: "2px 8px", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600 }}>
               {QTYPE_ICON[q.type] || <Circle size={10} strokeWidth={2.5} />}{q.type}
             </span>
@@ -351,7 +397,7 @@ function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
             {q.status !== "approved" && q.status !== "rejected" ? (
               <div style={{ display: "flex", gap: 6 }}>
                 <ActionBtn icon={<Check size={13} strokeWidth={2.5} />} label="Approve" bg={C.greenLight} color="#18A058" border={C.greenBorder} onClick={() => onStatusChange(q.id, "approved")} />
-                <ActionBtn icon={<XCircle size={13} strokeWidth={2.5} />} label="Reject" bg={C.redLight} color={C.red} border={C.redBorder} onClick={() => onStatusChange(q.id, "rejected")} />
+                <RejectButton questionId={q.id} onReject={(id, reason, note) => onStatusChange(id, "rejected", reason, note)} />
               </div>
             ) : (
               <button type="button" onClick={() => onStatusChange(q.id, "pending")} style={{ background: "transparent", border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "6px 12px", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, cursor: "pointer" }}>Reset to Pending</button>
@@ -360,6 +406,45 @@ function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
         )}
       </div>
     </div>
+  );
+}
+
+function RejectButton({ questionId, onReject }: { questionId: number; onReject: (id: number, reason: string, note: string) => void }) {
+  const [showModal, setShowModal] = useState(false);
+  const [reason, setReason] = useState("");
+  const [note, setNote] = useState("");
+
+  const handleConfirm = () => {
+    if (!reason) { toast.error("Please select a reject reason."); return; }
+    if (reason === "other" && !note.trim()) { toast.error("Please provide a note for 'Other' reason."); return; }
+    onReject(questionId, reason, note);
+    setShowModal(false);
+    setReason("");
+    setNote("");
+  };
+
+  return (
+    <>
+      <ActionBtn icon={<XCircle size={13} strokeWidth={2.5} />} label="Reject" bg={C.redLight} color={C.red} border={C.redBorder} onClick={() => setShowModal(true)} />
+      {showModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }} onClick={() => setShowModal(false)}>
+          <div style={{ background: C.white, borderRadius: 18, padding: "24px", width: 380, maxWidth: "90vw", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontFamily: "Manrope, sans-serif", fontSize: 16, fontWeight: 800, color: C.navy, margin: "0 0 16px" }}>Reject Question</h3>
+            <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 6 }}>Reason *</label>
+            <select value={reason} onChange={e => setReason(e.target.value)} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600, color: C.navy, marginBottom: 14, background: C.offWhite, cursor: "pointer" }}>
+              <option value="">Select a reason...</option>
+              {REJECT_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+            </select>
+            <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 6 }}>Note (optional{reason === "other" ? " — required for 'Other'" : ""})</label>
+            <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Additional context..." style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontFamily: "Manrope, sans-serif", fontSize: 13, minHeight: 70, resize: "vertical", marginBottom: 16 }} />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => setShowModal(false)} style={{ padding: "8px 16px", borderRadius: 9, border: `1.5px solid ${C.border}`, background: C.offWhite, fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: C.muted, cursor: "pointer" }}>Cancel</button>
+              <button type="button" onClick={handleConfirm} style={{ padding: "8px 16px", borderRadius: 9, border: "none", background: C.red, fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 2px 8px rgba(255,71,87,0.3)" }}>Confirm Reject</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -378,11 +463,10 @@ function GeneratePanel({
   generating 
 }: { 
   docs: SyllabusDoc[]; 
-  onGenerate: (config: { count: string; difficulty: string; qtypes: string[]; docId: number | "all" }) => void; 
+  onGenerate: (config: { count: string; qtypes: string[]; docId: number | "all" }) => void; 
   generating: boolean;
 }) {
   const [count, setCount] = useState("5");
-  const [difficulty, setDifficulty] = useState("Medium");
   const [selectedQtypes, setSelectedQtypes] = useState<string[]>(["Multiple Choice"]);
   const [selectedDoc, setSelectedDoc] = useState<number | "all">("all");
   
@@ -433,18 +517,6 @@ function GeneratePanel({
         </div>
       </div>
 
-      {/* Difficulty */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Difficulty</label>
-        <div style={{ display: "flex", gap: 5 }}>
-          {["Easy", "Medium", "Hard"].map(d => (
-            <button key={d} type="button" onClick={() => setDifficulty(d)} style={{ flex: 1, background: difficulty === d ? C.indigoLight : C.offWhite, border: `1.5px solid ${difficulty === d ? C.indigo : C.border}`, borderRadius: 8, padding: "6px 0", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: difficulty === d ? C.indigo : C.muted, cursor: "pointer" }}>
-              {d}
-            </button>
-          ))}
-        </div>
-      </div>
-
      
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -484,8 +556,7 @@ function GeneratePanel({
 
       {/* Action Button */}
       <button 
-        type="button" 
-        onClick={() => onGenerate({ count, difficulty, qtypes: selectedQtypes, docId: selectedDoc })}
+        onClick={() => onGenerate({ count, qtypes: selectedQtypes, docId: selectedDoc })}
         disabled={generating || readyDocs.length === 0 || selectedQtypes.length === 0} 
         style={{ 
           width: "100%", 
@@ -595,7 +666,6 @@ export function AIQuestionGenerator() {
 
   const handleGenerate = async (config: {
     count: string;
-    difficulty: string;
     qtypes: string[];
     docId: number | "all";
   }) => {
@@ -614,7 +684,6 @@ export function AIQuestionGenerator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           count: parseInt(config.count, 10),
-          difficulty: config.difficulty,
           types: config.qtypes,
           document_id: activeDocId,
           category: "General", 
@@ -623,11 +692,11 @@ export function AIQuestionGenerator() {
 
       const resData = await response.json().catch(() => ({}));
 
-      if (!response.ok) {
+      if (!response.ok || response.status === 202) {
         const errorMessage = resData?.detail || resData?.error || "Failed to generate questions.";
         if (errorMessage.includes("still reading") || errorMessage.includes("wait a moment") || errorMessage.includes("processing")) {
           // Keep the button spinning and poll again in 5 seconds
-          toast.loading("AI is crafting questions... this can take a moment.", { id: "generating", duration: 6000 });
+          toast.loading("AI is crafting questions... this can take a moment.", { id: "generating" });
           setTimeout(() => {
             handleGenerate(config);
           }, 5000);
@@ -675,16 +744,20 @@ export function AIQuestionGenerator() {
     }
   };
 
-  const handleStatusChange = async (questionId: number, newStatus: QuestionStatus) => {
+  const handleStatusChange = async (questionId: number, newStatus: QuestionStatus, reject_reason?: string, reject_note?: string) => {
     setQuestions((prev) =>
-      prev.map((q) => (q.id === questionId ? { ...q, status: newStatus } : q))
+      prev.map((q) => (q.id === questionId ? { ...q, status: newStatus, reject_reason, reject_note, rejected_by: newStatus === "rejected" ? "human" : undefined } : q))
     );
 
     try {
       await fetch("/api/rag/status", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId, status: newStatus.toUpperCase() }),
+        body: JSON.stringify({ 
+          questionId, 
+          status: newStatus.toUpperCase(),
+          ...(newStatus === "rejected" && { reject_reason, rejected_by: "human", reject_note })
+        }),
       });
     } catch (error) {
       console.error("Failed to update status:", error);
@@ -979,7 +1052,7 @@ export function AIQuestionGenerator() {
                       <QuestionCard
                         key={q.id}
                         q={q}
-                        onStatusChange={(id, s) => handleStatusChange(id, s)}
+                        onStatusChange={(id, s, reason, note) => handleStatusChange(id, s, reason, note)}
                         onEdit={handleEditQuestion} 
                         onFlag={(id, reason) =>
                           setQuestions((qs) =>

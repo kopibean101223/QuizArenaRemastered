@@ -246,7 +246,9 @@ class MathCitation(BaseModel):
 class MathQuestion(BaseModel):
     text: str = Field(description="The mathematical problem to be solved.")
     type: str = Field(description="Must be one of: 'Multiple Choice', 'Step-by-step Solution', 'Numerical Input', 'Graphing'")
-    difficulty: str = Field(description="Must be 'Easy', 'Medium', or 'Hard'")
+    difficulty: str = Field(description="Human-readable label: 'Easy', 'Medium', or 'Hard'")
+    estimated_difficulty: Optional[float] = Field(default=None, description="Normalized difficulty from 0.00 (very easy) to 1.00 (very difficult)")
+    bloom_level: Optional[str] = Field(default=None, description="Bloom's Taxonomy level: REMEMBER, UNDERSTAND, APPLY, ANALYZE, EVALUATE, CREATE")
     answer: str = Field(description="The final, correct mathematical answer.")
     choices: Optional[List[str]] = Field(default=None, description="Provide exactly 4 plausible choices if the type is 'Multiple Choice'. Otherwise null.")
     
@@ -267,7 +269,7 @@ class MathQuestionList(BaseModel):
 
 class GenerateRequest(BaseModel):
     count: int = 5
-    difficulty: str = "Medium"
+    difficulty: Optional[str] = None  # No longer user-selected; auto-generated as mixed difficulty
     types: List[str] = ["Multiple Choice"]
     document_id: Optional[Any] = "all"
     chunks: Optional[List[dict]] = None
@@ -302,11 +304,10 @@ async def generate_questions(req: GenerateRequest):
     if not req.chunks:
         req.chunks = []
         
-    redis_client.setex(task_key, 300, "running")
+    redis_client.setex(task_key, 600, "running")
     
     config = {
         "count": req.count,
-        "difficulty": req.difficulty,
         "types": req.types
     }
     

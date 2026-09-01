@@ -22,3 +22,5 @@ python-multipart
 
 ragas
 datasets
+instructor
+langchain-text-splitters
