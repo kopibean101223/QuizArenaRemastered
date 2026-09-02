@@ -544,6 +544,13 @@ class StepWeight(BaseModel):
     pointsAwarded: int
     commonMistake: str
 
+class AnswerData(BaseModel):
+    steps: Optional[List[str]] = None
+    numericAnswer: Optional[float] = None
+    tolerance: Optional[float] = None
+    expression: Optional[str] = None
+    graphType: Optional[str] = None
+
 class GeneratedQuestion(BaseModel):
     chunk_index: int
     text: str
@@ -553,6 +560,7 @@ class GeneratedQuestion(BaseModel):
     estimated_difficulty: Optional[float] = None  # 0.00-1.00 normalized
     bloom_level: Optional[str] = None  # REMEMBER, UNDERSTAND, APPLY, ANALYZE, EVALUATE, CREATE
     choices: Optional[List[QuestionChoice]] = None
+    answerData: Optional[AnswerData] = None
     stepWeights: Optional[List[StepWeight]] = None
     partialCreditRules: Optional[str] = None
 
@@ -594,6 +602,10 @@ For every question, return:
 - bloom_level: one of REMEMBER, UNDERSTAND, APPLY, ANALYZE, EVALUATE, CREATE
 - estimated_difficulty: a normalized number from 0.00 (very easy) to 1.00 (very difficult)
 - difficulty: a human-readable label derived from estimated_difficulty (Easy if <0.33, Medium if 0.33-0.66, Hard if >0.66)
+
+SPECIAL TYPE INSTRUCTIONS:
+- If type is 'Step-by-step Solution' or 'Numerical Input': Do NOT generate choices. Place the final mathematical answer in the `answer` string, and place the step-by-step derivation in `answerData.steps` (as a list of strings, e.g. ["Step 1: ...", "Step 2: ..."]).
+- If type is 'Multiple Choice': You must generate exactly 4 choices, with exactly 1 marked `isCorrect=True`.
 
 Preserve the requested question-type distribution.
 
@@ -940,30 +952,40 @@ def process_and_generate_quiz(
 
 
         
-        # MCQ Validation and Duplicate Detection
-        valid_mcqs = []
+        # Structure Validation and Duplicate Detection
+        valid_structured = []
         seen_questions = set()
         for q_data, chunk in all_generated:
             
-            # Duplicate detection (exact string matching for now)
+            # Duplicate detection
             q_text = q_data.get("text", "")
             if q_text in seen_questions:
                 continue
             seen_questions.add(q_text)
             
-            # MCQ validation
-            if q_data.get("type", "") == "Multiple Choice":
+            # Type-specific validation
+            q_type = q_data.get("type", "")
+            if q_type == "Multiple Choice":
                 choices = q_data.get("choices", [])
                 ans = q_data.get("answer", "")
                 if len(choices) != 4 or ans not in choices or len(set(choices)) != 4:
                     logger.warning("MCQ Validation failed: Choices invalid.")
                     continue
-            valid_mcqs.append((q_data, chunk))
-        critic_items = valid_mcqs
+            elif q_type == "Step-by-step Solution":
+                ans_data = q_data.get("answerData") or {}
+                steps = ans_data.get("steps", [])
+                if not isinstance(steps, list) or len(steps) < 1:
+                    logger.warning("Step-by-step Validation failed: Missing steps.")
+                    continue
+            
+            valid_structured.append(id(q_data))
         
-        # Filter by critic verdict
+        # Filter by critic verdict and structure validation
         critic_passed: List[Tuple[Dict, Dict]] = []
         for idx, (q_data, chunk) in enumerate(all_generated):
+            if id(q_data) not in valid_structured:
+                continue
+                
             verdict = all_verdicts[idx] if idx < len(all_verdicts) else "FAIL"
             q_preview = q_data.get("text", "")[:80]
             if "PASS" in verdict:
@@ -1108,7 +1130,7 @@ def process_and_generate_quiz(
                         "difficulty": q.get("difficulty", "Medium"),
                         "topic": q.get("topic", topic[0] if isinstance(topic, list) and topic else "General"),
                         "answer": q.get("answer"),
-                        "answerData": q.get("answerData", {}),
+                        "answerData": q.get("answerData") or {},
                         "estimatedDifficulty": q.get("estimated_difficulty", 0.5),
                         "bloomLevel": q.get("bloom_level", "UNDERSTAND"),
                         "request_id": request_id,
