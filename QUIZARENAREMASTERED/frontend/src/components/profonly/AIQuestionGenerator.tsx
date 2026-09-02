@@ -259,7 +259,7 @@ function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
   };
 
   return (
-    <div style={{ background: C.white, borderRadius: 20, border: `1.5px solid ${q.status === "approved" ? C.greenBorder : q.status === "rejected" ? C.redBorder : C.border}`, boxShadow: "0 2px 14px rgba(0,0,0,0.05)", overflow: "hidden", opacity: q.status === "rejected" ? 0.72 : 1, transition: "all 0.18s" }}>
+    <div style={{ background: C.white, borderRadius: 20, border: `1.5px solid ${String(q.status).toLowerCase() === "approved" ? C.greenBorder : String(q.status).toLowerCase() === "rejected" ? C.redBorder : C.border}`, boxShadow: "0 2px 14px rgba(0,0,0,0.05)", overflow: "hidden", opacity: String(q.status).toLowerCase() === "rejected" ? 0.72 : 1, transition: "all 0.18s" }}>
       <div style={{ padding: "16px 18px 14px", display: "flex", alignItems: "flex-start", gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -394,7 +394,7 @@ function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
             <div style={{ display: "flex", gap: 6 }}>
               <ActionBtn icon={<Pencil size={13} strokeWidth={2} />} label="Edit" bg={C.yellowLight} color="#9A6C00" onClick={() => setIsEditing(true)} />
             </div>
-            {q.status !== "approved" && q.status !== "rejected" ? (
+            {String(q.status).toLowerCase() !== "approved" && String(q.status).toLowerCase() !== "rejected" ? (
               <div style={{ display: "flex", gap: 6 }}>
                 <ActionBtn icon={<Check size={13} strokeWidth={2.5} />} label="Approve" bg={C.greenLight} color="#18A058" border={C.greenBorder} onClick={() => onStatusChange(q.id, "approved")} />
                 <RejectButton questionId={q.id} onReject={(id, reason, note) => onStatusChange(id, "rejected", reason, note)} />
@@ -675,6 +675,7 @@ export function AIQuestionGenerator() {
     }
 
     setGenerating(true);
+    toast.loading("AI is crafting questions... initializing", { id: "generating" });
 
     try {
       const activeDocId = config.docId === "all" ? docs[0].id : config.docId;
@@ -686,36 +687,51 @@ export function AIQuestionGenerator() {
           count: parseInt(config.count, 10),
           types: config.qtypes,
           document_id: activeDocId,
-          category: "General", 
+          category: "General",
         }),
       });
 
       const resData = await response.json().catch(() => ({}));
 
-      if (!response.ok || response.status === 202) {
-        const errorMessage = resData?.detail || resData?.error || "Failed to generate questions.";
-        if (errorMessage.includes("still reading") || errorMessage.includes("wait a moment") || errorMessage.includes("processing")) {
-          // Keep the button spinning and poll again in 5 seconds
-          toast.loading("AI is crafting questions... this can take a moment.", { id: "generating" });
-          setTimeout(() => {
-            handleGenerate(config);
-          }, 5000);
-          return; // Do NOT set generating to false
-        } else {
-          toast.error(errorMessage, { id: "generating" });
-          setGenerating(false);
-          return;
-        }
+      if (!response.ok && response.status !== 202) {
+        throw new Error(resData?.error || resData?.detail || "Failed to start generation");
       }
-      
-      const normalizedData = (Array.isArray(resData) ? resData : resData.questions || []).map((q: any) => ({
-        ...q,
-        status: String(q.status || "pending").toLowerCase() as QuestionStatus
-      }));
 
-      setQuestions((prev) => [...normalizedData, ...prev]);
-      toast.success("Questions generated successfully!", { id: "generating" });
-      setGenerating(false);
+      const requestId = resData.requestId;
+      if (!requestId) {
+        throw new Error("No requestId returned from server");
+      }
+
+      const pollInterval = setInterval(async () => {
+        try {
+          const pollRes = await fetch('/api/rag/generate/status?request_id=' + requestId);
+          if (!pollRes.ok) throw new Error("Backend error");
+          
+          const pollData = await pollRes.json();
+          const stage = pollData.stage || "Processing...";
+          toast.loading("AI is crafting questions... " + stage, { id: "generating" });
+          
+          if (pollData.status === "COMPLETED" || pollData.status === "PARTIAL") {
+            clearInterval(pollInterval);
+            toast.success("Questions generated successfully!", { id: "generating" });
+            setGenerating(false);
+            const refreshRes = await fetch('/api/rag/data');
+            if (refreshRes.ok) {
+                const freshData = await refreshRes.json();
+                if (freshData.questions) setQuestions(freshData.questions);
+            }
+          } else if (pollData.status === "FAILED") {
+            clearInterval(pollInterval);
+            toast.error(pollData.error || "Generation failed", { id: "generating" });
+            setGenerating(false);
+          }
+        } catch (err: any) {
+          clearInterval(pollInterval);
+          toast.error("Polling interrupted: " + err.message, { id: "generating" });
+          setGenerating(false);
+        }
+      }, 2500);
+
     } catch (error: any) {
       console.error("Error generating questions:", error);
       toast.error(error.message || "Failed to generate questions.", { id: "generating" });
@@ -723,12 +739,12 @@ export function AIQuestionGenerator() {
     }
   };
 
-  const filtered = statusFilter === "all" ? questions : questions.filter(q => q.status === statusFilter);
+  const filtered = statusFilter === "all" ? questions : questions.filter(q => String(q.status).toLowerCase() === statusFilter);
   const counts = {
     all: questions.length,
-    pending: questions.filter(q => q.status === "pending").length,
-    approved: questions.filter(q => q.status === "approved").length,
-    rejected: questions.filter(q => q.status === "rejected").length,
+    pending: questions.filter(q => String(q.status).toLowerCase() === "pending").length,
+    approved: questions.filter(q => String(q.status).toLowerCase() === "approved").length,
+    rejected: questions.filter(q => String(q.status).toLowerCase() === "rejected").length,
   };
 
   const handleDeleteDoc = async (id: number) => {
@@ -765,13 +781,13 @@ export function AIQuestionGenerator() {
   };
 
   const handleBulkStatusChange = async (targetStatus: QuestionStatus) => {
-    const pendingQuestions = questions.filter(q => q.status === "pending");
+    const pendingQuestions = questions.filter(q => String(q.status).toLowerCase() === "pending");
     if (pendingQuestions.length === 0) return;
 
     const pendingIds = pendingQuestions.map(q => q.id);
 
     setQuestions(prev =>
-      prev.map(q => (q.status === "pending" ? { ...q, status: targetStatus } : q))
+      prev.map(q => (String(q.status).toLowerCase() === "pending" ? { ...q, status: targetStatus } : q))
     );
 
     try {
@@ -786,10 +802,10 @@ export function AIQuestionGenerator() {
   };
 
   const handleDeleteAllRejected = async () => {
-    const rejectedQuestions = questions.filter(q => q.status === "rejected");
+    const rejectedQuestions = questions.filter(q => String(q.status).toLowerCase() === "rejected");
     if (rejectedQuestions.length === 0) return;
 
-    setQuestions(prev => prev.filter(q => q.status !== "rejected"));
+    setQuestions(prev => prev.filter(q => String(q.status).toLowerCase() !== "rejected"));
 
     try {
       await fetch("/api/rag/status/bulk", {

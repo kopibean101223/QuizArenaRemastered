@@ -17,18 +17,20 @@ export async function GET() {
 
     const userId = user.id;
 
+    // Use Prisma for docs
     const docs = await prisma.syllabusDoc.findMany({
       where: { userId },
       orderBy: { id: 'desc' }
     });
     
-    const questions = await prisma.generatedQuestion.findMany({
-      where: { userId },
-      orderBy: { id: 'desc' },
-      include: { choices: true, citation: true }
-    });
+    // Use Supabase for questions to get answerData and estimatedDifficulty which are not in Prisma schema
+    const { data: qData } = await supabase
+      .from('GeneratedQuestion')
+      .select('*, choices:QuestionChoice(*), citation:QuestionCitation(*)')
+      .eq('userId', userId)
+      .order('id', { ascending: false });
 
-    return NextResponse.json({ docs, questions });
+    return NextResponse.json({ docs, questions: qData || [] });
   } catch (error) {
     console.error("Database fetch error:", error);
     return NextResponse.json({ error: 'Failed to fetch database records' }, { status: 500 });

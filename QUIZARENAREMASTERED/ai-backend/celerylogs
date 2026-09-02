@@ -1,0 +1,476 @@
+[2026-09-02 15:11:58,101: INFO/MainProcess] AFC is enabled with max remote calls: 10.
+[2026-09-02 15:12:10,923: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent "HTTP/1.1 200 OK"
+[2026-09-02 15:12:10] INFO quiz_pipeline:   → Generated 6 questions from batch 3
+[2026-09-02 15:12:10,932: INFO/MainProcess]   → Generated 6 questions from batch 3
+[2026-09-02 15:12:10] INFO quiz_pipeline:   Total raw questions generated: 18
+[2026-09-02 15:12:10,945: INFO/MainProcess]   Total raw questions generated: 18
+[2026-09-02 15:12:10] INFO quiz_pipeline: [Stage 5/7] Running critic validation...
+[2026-09-02 15:12:10,947: INFO/MainProcess] [Stage 5/7] Running critic validation...
+[2026-09-02 15:12:11,208: INFO/MainProcess] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:12:11] WARNING quiz_pipeline: [groq] Rate limited (attempt 1/3). Server suggests: 15.9975s
+[2026-09-02 15:12:11,266: WARNING/MainProcess] [groq] Rate limited (attempt 1/3). Server suggests: 15.9975s
+[2026-09-02 15:12:11] INFO quiz_pipeline: [Backoff] Sleeping 16.7s (attempt 1)
+[2026-09-02 15:12:11,269: INFO/MainProcess] [Backoff] Sleeping 16.7s (attempt 1)
+[2026-09-02 15:12:31,730: INFO/MainProcess] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-09-02 15:12:31] INFO quiz_pipeline: [groq] Success on attempt 2
+[2026-09-02 15:12:31,755: INFO/MainProcess] [groq] Success on attempt 2
+[2026-09-02 15:12:31] INFO quiz_pipeline:   Waiting 12.0s before next critic batch...
+[2026-09-02 15:12:31,757: INFO/MainProcess]   Waiting 12.0s before next critic batch...
+[2026-09-02 15:12:43,967: INFO/MainProcess] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:12:43] WARNING quiz_pipeline: [groq] Rate limited (attempt 1/3). Server suggests: 22.2075s
+[2026-09-02 15:12:43,968: WARNING/MainProcess] [groq] Rate limited (attempt 1/3). Server suggests: 22.2075s
+[2026-09-02 15:12:43] INFO quiz_pipeline: [Backoff] Sleeping 22.8s (attempt 1)
+[2026-09-02 15:12:43,968: INFO/MainProcess] [Backoff] Sleeping 22.8s (attempt 1)
+[2026-09-02 15:13:08,830: INFO/MainProcess] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-09-02 15:13:08] INFO quiz_pipeline: [groq] Success on attempt 2
+[2026-09-02 15:13:08,835: INFO/MainProcess] [groq] Success on attempt 2
+[2026-09-02 15:13:08] INFO quiz_pipeline:   Waiting 12.0s before next critic batch...
+[2026-09-02 15:13:08,835: INFO/MainProcess]   Waiting 12.0s before next critic batch...
+[2026-09-02 15:13:24,824: INFO/MainProcess] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-09-02 15:13:24] INFO quiz_pipeline: [groq] Success on attempt 1
+[2026-09-02 15:13:24,827: INFO/MainProcess] [groq] Success on attempt 1
+[2026-09-02 15:13:24] INFO quiz_pipeline:   Waiting 12.0s before next critic batch...
+[2026-09-02 15:13:24,828: INFO/MainProcess]   Waiting 12.0s before next critic batch...
+[2026-09-02 15:13:39,461: INFO/MainProcess] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-09-02 15:13:39] INFO quiz_pipeline: [groq] Success on attempt 1
+[2026-09-02 15:13:39,466: INFO/MainProcess] [groq] Success on attempt 1
+[2026-09-02 15:13:39] INFO quiz_pipeline:   Waiting 12.0s before next critic batch...
+[2026-09-02 15:13:39,466: INFO/MainProcess]   Waiting 12.0s before next critic batch...
+[2026-09-02 15:13:54,644: INFO/MainProcess] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-09-02 15:13:54] INFO quiz_pipeline: [groq] Success on attempt 1
+[2026-09-02 15:13:54,649: INFO/MainProcess] [groq] Success on attempt 1
+[2026-09-02 15:13:54] INFO quiz_pipeline:   Waiting 12.0s before next critic batch...
+[2026-09-02 15:13:54,650: INFO/MainProcess]   Waiting 12.0s before next critic batch...
+[2026-09-02 15:14:08,477: INFO/MainProcess] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-09-02 15:14:08] INFO quiz_pipeline: [groq] Success on attempt 1
+[2026-09-02 15:14:08,480: INFO/MainProcess] [groq] Success on attempt 1
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,481: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,481: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,482: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,482: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,483: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,483: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,483: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,483: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,484: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,484: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,484: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,485: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,485: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,485: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,485: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,485: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,486: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] WARNING quiz_pipeline: MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08,486: WARNING/MainProcess] MCQ Validation failed: Choices invalid.
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: According to the text, when applying the power rule term by term to f(x) = 3x^4 ...
+[2026-09-02 15:14:08,486: INFO/MainProcess]   ✓ PASSED: According to the text, when applying the power rule term by term to f(x) = 3x^4 ...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: Based on the differentiation of f(x) = 3x^4 - 5x^2 + 7 shown in the text, what i...
+[2026-09-02 15:14:08,487: INFO/MainProcess]   ✓ PASSED: Based on the differentiation of f(x) = 3x^4 - 5x^2 + 7 shown in the text, what i...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: According to the basic differentiation rules, what is the derivative of f(x) = x...
+[2026-09-02 15:14:08,487: INFO/MainProcess]   ✓ PASSED: According to the basic differentiation rules, what is the derivative of f(x) = x...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: Using the rule d/dx [x^n] = n * x^(n - 1) from the text, if we apply this to fin...
+[2026-09-02 15:14:08,488: INFO/MainProcess]   ✓ PASSED: Using the rule d/dx [x^n] = n * x^(n - 1) from the text, if we apply this to fin...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: According to the product rule, if u(x) and v(x) are differentiable functions, wh...
+[2026-09-02 15:14:08,488: INFO/MainProcess]   ✓ PASSED: According to the product rule, if u(x) and v(x) are differentiable functions, wh...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: Which of the following mathematically represents the product rule for differenti...
+[2026-09-02 15:14:08,488: INFO/MainProcess]   ✓ PASSED: Which of the following mathematically represents the product rule for differenti...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: What is the value of the discriminant (Delta) for the quadratic equation 2x^2 - ...
+[2026-09-02 15:14:08,494: INFO/MainProcess]   ✓ PASSED: What is the value of the discriminant (Delta) for the quadratic equation 2x^2 - ...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: What are the roots of the quadratic equation 2x^2 - 4x - 6 = 0?...
+[2026-09-02 15:14:08,495: INFO/MainProcess]   ✓ PASSED: What are the roots of the quadratic equation 2x^2 - 4x - 6 = 0?...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: If sin(theta) = 3/5 and theta is in quadrant I, what is the value of cos(2*theta...
+[2026-09-02 15:14:08,495: INFO/MainProcess]   ✓ PASSED: If sin(theta) = 3/5 and theta is in quadrant I, what is the value of cos(2*theta...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: Which of the following equations shows the correct substitution step when calcul...
+[2026-09-02 15:14:08,495: INFO/MainProcess]   ✓ PASSED: Which of the following equations shows the correct substitution step when calcul...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: Which of the following is NOT a valid expression for the double angle formula fo...
+[2026-09-02 15:14:08,495: INFO/MainProcess]   ✓ PASSED: Which of the following is NOT a valid expression for the double angle formula fo...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: According to the fundamental trigonometric identities, what does sin^2(theta) + ...
+[2026-09-02 15:14:08,495: INFO/MainProcess]   ✓ PASSED: According to the fundamental trigonometric identities, what does sin^2(theta) + ...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: According to the text, what is the value of the discriminant (Delta) when a quad...
+[2026-09-02 15:14:08,495: INFO/MainProcess]   ✓ PASSED: According to the text, what is the value of the discriminant (Delta) when a quad...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✗ FAILED: If a quadratic equation ax^2 + bx + c = 0 has two distinct complex conjugate roo...
+[2026-09-02 15:14:08,495: INFO/MainProcess]   ✗ FAILED: If a quadratic equation ax^2 + bx + c = 0 has two distinct complex conjugate roo...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: When evaluating the integral of f(g(x)) * g'(x) dx using u-substitution, if we s...
+[2026-09-02 15:14:08,496: INFO/MainProcess]   ✓ PASSED: When evaluating the integral of f(g(x)) * g'(x) dx using u-substitution, if we s...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: Using the substitution u = g(x), the integral of f(g(x)) * g'(x) dx simplifies d...
+[2026-09-02 15:14:08,496: INFO/MainProcess]   ✓ PASSED: Using the substitution u = g(x), the integral of f(g(x)) * g'(x) dx simplifies d...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: According to the text, what does calculus focus on?...
+[2026-09-02 15:14:08,496: INFO/MainProcess]   ✓ PASSED: According to the text, what does calculus focus on?...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ PASSED: Based on the provided text for Basic Differentiation Rules, which of the followi...
+[2026-09-02 15:14:08,496: INFO/MainProcess]   ✓ PASSED: Based on the provided text for Basic Differentiation Rules, which of the followi...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   Critic results: 17/18 passed
+[2026-09-02 15:14:08,496: INFO/MainProcess]   Critic results: 17/18 passed[2026-09-02 15:14:08] INFO quiz_pipeline: [Stage 5.5/7] Running deterministic grounding checks...
+[2026-09-02 15:14:08,496: INFO/MainProcess] [Stage 5.5/7] Running deterministic grounding checks...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: According to the text, when applying the power rule term by ...
+[2026-09-02 15:14:08,497: INFO/MainProcess]   ✓ Grounding OK: According to the text, when applying the power rule term by ...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: Based on the differentiation of f(x) = 3x^4 - 5x^2 + 7 shown...
+[2026-09-02 15:14:08,497: INFO/MainProcess]   ✓ Grounding OK: Based on the differentiation of f(x) = 3x^4 - 5x^2 + 7 shown...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: According to the basic differentiation rules, what is the de...
+[2026-09-02 15:14:08,497: INFO/MainProcess]   ✓ Grounding OK: According to the basic differentiation rules, what is the de...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: Using the rule d/dx [x^n] = n * x^(n - 1) from the text, if ...
+[2026-09-02 15:14:08,497: INFO/MainProcess]   ✓ Grounding OK: Using the rule d/dx [x^n] = n * x^(n - 1) from the text, if ...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: According to the product rule, if u(x) and v(x) are differen...
+[2026-09-02 15:14:08,498: INFO/MainProcess]   ✓ Grounding OK: According to the product rule, if u(x) and v(x) are differen...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: Which of the following mathematically represents the product...
+[2026-09-02 15:14:08,498: INFO/MainProcess]   ✓ Grounding OK: Which of the following mathematically represents the product...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: What is the value of the discriminant (Delta) for the quadra...
+[2026-09-02 15:14:08,498: INFO/MainProcess]   ✓ Grounding OK: What is the value of the discriminant (Delta) for the quadra...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: What are the roots of the quadratic equation 2x^2 - 4x - 6 =...
+[2026-09-02 15:14:08,498: INFO/MainProcess]   ✓ Grounding OK: What are the roots of the quadratic equation 2x^2 - 4x - 6 =...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: If sin(theta) = 3/5 and theta is in quadrant I, what is the ...
+[2026-09-02 15:14:08,498: INFO/MainProcess]   ✓ Grounding OK: If sin(theta) = 3/5 and theta is in quadrant I, what is the ...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: Which of the following equations shows the correct substitut...
+[2026-09-02 15:14:08,499: INFO/MainProcess]   ✓ Grounding OK: Which of the following equations shows the correct substitut...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: Which of the following is NOT a valid expression for the dou...
+[2026-09-02 15:14:08,499: INFO/MainProcess]   ✓ Grounding OK: Which of the following is NOT a valid expression for the dou...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: According to the fundamental trigonometric identities, what ...
+[2026-09-02 15:14:08,499: INFO/MainProcess]   ✓ Grounding OK: According to the fundamental trigonometric identities, what ...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: According to the text, what is the value of the discriminant...
+[2026-09-02 15:14:08,499: INFO/MainProcess]   ✓ Grounding OK: According to the text, what is the value of the discriminant...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: When evaluating the integral of f(g(x)) * g'(x) dx using u-s...
+[2026-09-02 15:14:08,499: INFO/MainProcess]   ✓ Grounding OK: When evaluating the integral of f(g(x)) * g'(x) dx using u-s...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: Using the substitution u = g(x), the integral of f(g(x)) * g...
+[2026-09-02 15:14:08,499: INFO/MainProcess]   ✓ Grounding OK: Using the substitution u = g(x), the integral of f(g(x)) * g...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: According to the text, what does calculus focus on?...
+[2026-09-02 15:14:08,499: INFO/MainProcess]   ✓ Grounding OK: According to the text, what does calculus focus on?...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   ✓ Grounding OK: Based on the provided text for Basic Differentiation Rules, ...
+[2026-09-02 15:14:08,499: INFO/MainProcess]   ✓ Grounding OK: Based on the provided text for Basic Differentiation Rules, ...
+[2026-09-02 15:14:08] INFO quiz_pipeline:   Grounding results: 17/17 passed
+[2026-09-02 15:14:08,500: INFO/MainProcess]   Grounding results: 17/17 passed
+[2026-09-02 15:14:08] INFO quiz_pipeline: [Stage 6/7] Running semantic similarity checks...
+[2026-09-02 15:14:08,500: INFO/MainProcess] [Stage 6/7] Running semantic similarity checks...
+[2026-09-02 15:14:11,257: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:14:16,262: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:16,269: INFO/MainProcess] Retrying request to /embeddings in 0.400568 seconds
+[2026-09-02 15:14:16,828: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:16,829: INFO/MainProcess] Retrying request to /embeddings in 0.862914 seconds
+[2026-09-02 15:14:18,138: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:18] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:18,139: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:21,121: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:14:22,754: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:22,754: INFO/MainProcess] Retrying request to /embeddings in 0.424637 seconds
+[2026-09-02 15:14:23,319: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:23,341: INFO/MainProcess] Retrying request to /embeddings in 0.797018 seconds
+[2026-09-02 15:14:24,285: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:24] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:24,286: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:26,631: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:14:28,509: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:28,510: INFO/MainProcess] Retrying request to /embeddings in 0.385277 seconds
+[2026-09-02 15:14:29,352: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:29,352: INFO/MainProcess] Retrying request to /embeddings in 0.871162 seconds
+[2026-09-02 15:14:30,379: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:30] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:30,380: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:33,475: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:14:35,062: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:35,063: INFO/MainProcess] Retrying request to /embeddings in 0.434721 seconds
+[2026-09-02 15:14:35,644: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:35,644: INFO/MainProcess] Retrying request to /embeddings in 0.935289 seconds
+[2026-09-02 15:14:36,731: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:36] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:36,732: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:39,308: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:14:40,621: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:40,622: INFO/MainProcess] Retrying request to /embeddings in 0.444532 seconds
+[2026-09-02 15:14:41,207: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:41,208: INFO/MainProcess] Retrying request to /embeddings in 0.991244 seconds
+[2026-09-02 15:14:42,345: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:42] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:42,345: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:44,294: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:14:45,757: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:45,757: INFO/MainProcess] Retrying request to /embeddings in 0.377645 seconds
+[2026-09-02 15:14:46,287: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:46,288: INFO/MainProcess] Retrying request to /embeddings in 0.893615 seconds
+[2026-09-02 15:14:47,358: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:47] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:47,360: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:49,437: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:14:50,884: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:50,885: INFO/MainProcess] Retrying request to /embeddings in 0.470510 seconds
+[2026-09-02 15:14:51,499: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:51,500: INFO/MainProcess] Retrying request to /embeddings in 0.842565 seconds
+[2026-09-02 15:14:52,500: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:52] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:52,500: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:54,755: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:14:56,266: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:56,266: INFO/MainProcess] Retrying request to /embeddings in 0.436977 seconds
+[2026-09-02 15:14:56,864: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:56,865: INFO/MainProcess] Retrying request to /embeddings in 0.843530 seconds
+[2026-09-02 15:14:57,964: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:14:57] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:14:57,971: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:00,708: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:15:02,355: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:02,356: INFO/MainProcess] Retrying request to /embeddings in 0.478121 seconds
+[2026-09-02 15:15:02,984: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:02,985: INFO/MainProcess] Retrying request to /embeddings in 0.772651 seconds
+[2026-09-02 15:15:03,905: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:03] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:03,906: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:05,986: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:15:07,393: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:07,394: INFO/MainProcess] Retrying request to /embeddings in 0.452902 seconds
+[2026-09-02 15:15:07,994: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:07,995: INFO/MainProcess] Retrying request to /embeddings in 0.768881 seconds
+[2026-09-02 15:15:08,908: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:08] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:08,908: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:11,133: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:15:12,868: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:12,869: INFO/MainProcess] Retrying request to /embeddings in 0.487716 seconds
+[2026-09-02 15:15:13,594: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:13,595: INFO/MainProcess] Retrying request to /embeddings in 0.944901 seconds
+[2026-09-02 15:15:14,674: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:14] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:14,675: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:16,968: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:15:18,455: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:18,456: INFO/MainProcess] Retrying request to /embeddings in 0.451854 seconds
+[2026-09-02 15:15:19,051: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:19,052: INFO/MainProcess] Retrying request to /embeddings in 0.970331 seconds
+[2026-09-02 15:15:20,182: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:20] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:20,183: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:22,902: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:15:24,554: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:24,555: INFO/MainProcess] Retrying request to /embeddings in 0.382034 seconds
+[2026-09-02 15:15:25,081: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:25,082: INFO/MainProcess] Retrying request to /embeddings in 0.909923 seconds
+[2026-09-02 15:15:26,136: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:26] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:26,136: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:28,521: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:15:30,251: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:30,252: INFO/MainProcess] Retrying request to /embeddings in 0.420149 seconds
+[2026-09-02 15:15:30,841: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:30,841: INFO/MainProcess] Retrying request to /embeddings in 0.832107 seconds
+[2026-09-02 15:15:31,840: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:31] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:31,840: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:34,114: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:15:35,593: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:35,599: INFO/MainProcess] Retrying request to /embeddings in 0.400081 seconds
+[2026-09-02 15:15:36,141: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:36,142: INFO/MainProcess] Retrying request to /embeddings in 0.828163 seconds
+[2026-09-02 15:15:37,158: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:37] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:37,159: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:39,527: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:15:41,243: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:41,243: INFO/MainProcess] Retrying request to /embeddings in 0.459253 seconds
+[2026-09-02 15:15:41,845: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:41,846: INFO/MainProcess] Retrying request to /embeddings in 0.980323 seconds
+[2026-09-02 15:15:42,969: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:42] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:42,971: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:45,886: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents "HTTP/1.1 404 Not Found"
+[2026-09-02 15:15:47,392: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:47,393: INFO/MainProcess] Retrying request to /embeddings in 0.384203 seconds
+[2026-09-02 15:15:47,932: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:47,932: INFO/MainProcess] Retrying request to /embeddings in 0.942520 seconds
+[2026-09-02 15:15:49,130: INFO/MainProcess] HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 429 Too Many Requests"
+[2026-09-02 15:15:49] WARNING quiz_pipeline:   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:49,131: WARNING/MainProcess]   ⚠ Embedding failed (Error code: 429 - {'error': {'message': 'You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing/.', 'type': 'insufficient_quota', 'param': None, 'code': 'credit_balance_exhausted'}}). Accepting question on critic merit alone.
+[2026-09-02 15:15:49] INFO quiz_pipeline:   Final validated questions: 17
+[2026-09-02 15:15:49,131: INFO/MainProcess]   Final validated questions: 17
+[2026-09-02 15:15:49] INFO quiz_pipeline: [Stage 7/7] Storing results in Redis...
+[2026-09-02 15:15:49,132: INFO/MainProcess] [Stage 7/7] Storing results in Redis...
+[2026-09-02 15:15:50] INFO quiz_pipeline: ════════════════════════════════════════════════════════════
+  SUCCESS: 17 questions saved for doc 133
+════════════════════════════════════════════════════════════
+[2026-09-02 15:15:50,852: INFO/MainProcess] ════════════════════════════════════════════════════════════
+  SUCCESS: 17 questions saved for doc 133
+════════════════════════════════════════════════════════════
+[2026-09-02 15:15:50] INFO quiz_pipeline: [Metrics] Pipeline Summary:
+[2026-09-02 15:15:50,896: INFO/MainProcess] [Metrics] Pipeline Summary:
+[2026-09-02 15:15:50] INFO quiz_pipeline:   Doc ID: 133
+[2026-09-02 15:15:50,897: INFO/MainProcess]   Doc ID: 133
+[2026-09-02 15:15:50] INFO quiz_pipeline:   Chunks retrieved: 9
+[2026-09-02 15:15:50,897: INFO/MainProcess]   Chunks retrieved: 9
+[2026-09-02 15:15:50] INFO quiz_pipeline:   Raw questions generated: 18
+[2026-09-02 15:15:50,905: INFO/MainProcess]   Raw questions generated: 18
+[2026-09-02 15:15:50] INFO quiz_pipeline:   Critic passed: 17
+[2026-09-02 15:15:50,905: INFO/MainProcess]   Critic passed: 17
+[2026-09-02 15:15:50] INFO quiz_pipeline:   Grounding passed: 17
+[2026-09-02 15:15:50,906: INFO/MainProcess]   Grounding passed: 17
+[2026-09-02 15:15:50] INFO quiz_pipeline:   Final valid: 17
+[2026-09-02 15:15:50,906: INFO/MainProcess]   Final valid: 17
+[2026-09-02 15:15:50] INFO quiz_pipeline:   Attempt: 1
+[2026-09-02 15:15:50,906: INFO/MainProcess]   Attempt: 1
+[2026-09-02 15:15:52,636: INFO/MainProcess] Task process_and_generate_quiz[93e28f1a-874e-456d-8308-ecf39fcb27cb] succeeded in 360.02459180000005s: {'status': 'success', 'questions_generated': 17}
+[2026-09-02 15:15:53,297: INFO/MainProcess] Task process_and_generate_quiz[33edc53a-9e21-4d96-aae4-5d80c40a5adf] received
+[2026-09-02 15:15:53] INFO quiz_pipeline: ════════════════════════════════════════════════════════════
+[2026-09-02 15:15:53,310: INFO/MainProcess] ════════════════════════════════════════════════════════════
+[2026-09-02 15:15:53] INFO quiz_pipeline: Starting pipeline for 'sample_math_quiz_material.pdf' (doc_id=134)
+[2026-09-02 15:15:53,311: INFO/MainProcess] Starting pipeline for 'sample_math_quiz_material.pdf' (doc_id=134)
+[2026-09-02 15:15:53] INFO quiz_pipeline: Config: model=qwen/qwen3.6-27b, count=3, difficulty=None
+[2026-09-02 15:15:53,311: INFO/MainProcess] Config: model=qwen/qwen3.6-27b, count=3, difficulty=None
+[2026-09-02 15:15:53] INFO quiz_pipeline: ════════════════════════════════════════════════════════════
+[2026-09-02 15:15:53,312: INFO/MainProcess] ════════════════════════════════════════════════════════════
+[2026-09-02 15:15:53] INFO quiz_pipeline: [Stage 7] Performing Dynamic Hybrid Retrieval for docId=134 topic=['Multiple Choice']
+[2026-09-02 15:15:53,312: INFO/MainProcess] [Stage 7] Performing Dynamic Hybrid Retrieval for docId=134 topic=['Multiple Choice']
+[2026-09-02 15:15:57,214: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents "HTTP/1.1 200 OK"
+[2026-09-02 15:15:58,366: INFO/MainProcess] HTTP Request: POST https://hewrwersffxbswgjrhaf.supabase.co/rest/v1/rpc/match_document_chunks_v2 "HTTP/2 200 OK"
+[2026-09-02 15:16:02] INFO quiz_pipeline: [Stage 4/7] Generating questions in batches of 3...
+[2026-09-02 15:16:02,232: INFO/MainProcess] [Stage 4/7] Generating questions in batches of 3...
+[2026-09-02 15:16:02] INFO quiz_pipeline:   Batch 1/3: processing 3 chunks...
+[2026-09-02 15:16:02,233: INFO/MainProcess]   Batch 1/3: processing 3 chunks...
+[2026-09-02 15:16:11,391: INFO/MainProcess] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+[2026-09-02 15:16:11] WARNING quiz_pipeline: [Actor] Groq failed, trying Gemini fallback: The output is incomplete due to a max_tokens length limit.[2026-09-02 15:16:11,394: WARNING/MainProcess] [Actor] Groq failed, trying Gemini fallback: The output is incomplete due to a max_tokens length limit.
+[2026-09-02 15:16:13,552: INFO/MainProcess] AFC is enabled with max remote calls: 10.
+
+worker: Hitting Ctrl+C again will initiate cold shutdown, terminating all running tasks!
+
+worker: Warm shutdown (MainProcess)
+[2026-09-02 15:16:28,657: INFO/MainProcess] HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent "HTTP/1.1 200 OK"
+[2026-09-02 15:16:28] INFO quiz_pipeline:   → Generated 6 questions from batch 1
+[2026-09-02 15:16:28,661: INFO/MainProcess]   → Generated 6 questions from batch 1
+[2026-09-02 15:16:28] INFO quiz_pipeline:   Waiting 12.0s before next batch...
+[2026-09-02 15:16:28,661: INFO/MainProcess]   Waiting 12.0s before next batch...
+
+worker: Hitting Ctrl+C again will terminate all running tasks!
+[2026-09-02 15:16:35] ERROR quiz_pipeline: CRITICAL ERROR in pipeline: <class 'celery.concurrency.solo.TaskPool'> does not implement kill_job
+Traceback (most recent call last):
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\app\celery_worker.py", line 886, in process_and_generate_quiz
+    time.sleep(INTER_REQUEST_DELAY)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\apps\worker.py", line 306, in _handle_request
+    callback(worker)
+    ~~~~~~~~^^^^^^^^
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\apps\worker.py", line 423, in on_cold_shutdown
+    worker.consumer.cancel_active_requests()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\worker\consumer\consumer.py", line 773, in cancel_active_requests
+    request.cancel(self.pool, emit_retry=emit_retry)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\worker\request.py", line 431, in cancel
+    pool.terminate_job(self.worker_pid, signal)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\concurrency\base.py", line 113, in terminate_job
+    raise NotImplementedError(
+        f'{type(self)} does not implement kill_job')
+NotImplementedError: <class 'celery.concurrency.solo.TaskPool'> does not implement kill_job
+[2026-09-02 15:16:35,266: ERROR/MainProcess] CRITICAL ERROR in pipeline: <class 'celery.concurrency.solo.TaskPool'> does not implement kill_job
+Traceback (most recent call last):
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\app\celery_worker.py", line 886, in process_and_generate_quiz
+    time.sleep(INTER_REQUEST_DELAY)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\apps\worker.py", line 306, in _handle_request
+    callback(worker)
+    ~~~~~~~~^^^^^^^^
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\apps\worker.py", line 423, in on_cold_shutdown
+    worker.consumer.cancel_active_requests()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\worker\consumer\consumer.py", line 773, in cancel_active_requests
+    request.cancel(self.pool, emit_retry=emit_retry)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\worker\request.py", line 431, in cancel
+    pool.terminate_job(self.worker_pid, signal)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\concurrency\base.py", line 113, in terminate_job
+    raise NotImplementedError(
+        f'{type(self)} does not implement kill_job')
+NotImplementedError: <class 'celery.concurrency.solo.TaskPool'> does not implement kill_job
+[2026-09-02 15:16:36,700: WARNING/MainProcess] Restoring 1 unacknowledged message(s)
+[2026-09-02 15:16:36,918: WARNING/MainProcess] Exception ignored in atexit callback <function _exit_function at 0x0000020E051E4670>
+[2026-09-02 15:16:36,919: WARNING/MainProcess] :
+[2026-09-02 15:16:36,919: WARNING/MainProcess] Traceback (most recent call last):
+[2026-09-02 15:16:36,919: WARNING/MainProcess]   File "C:\Users\IAMT\AppData\Local\Python\pythoncore-3.14-64\Lib\multiprocessing\util.py", line 405, in _exit_function
+[2026-09-02 15:16:36,923: WARNING/MainProcess]     
+[2026-09-02 15:16:36,923: WARNING/MainProcess] _run_finalizers(0)
+[2026-09-02 15:16:36,923: WARNING/MainProcess]   File "C:\Users\IAMT\AppData\Local\Python\pythoncore-3.14-64\Lib\multiprocessing\util.py", line 371, in _run_finalizers
+[2026-09-02 15:16:36,924: WARNING/MainProcess]     
+[2026-09-02 15:16:36,924: WARNING/MainProcess] finalizer()
+[2026-09-02 15:16:36,924: WARNING/MainProcess]   File "C:\Users\IAMT\AppData\Local\Python\pythoncore-3.14-64\Lib\multiprocessing\util.py", line 295, in __call__
+[2026-09-02 15:16:36,926: WARNING/MainProcess]     
+[2026-09-02 15:16:36,931: WARNING/MainProcess] res = self._callback(*self._args, **self._kwargs)
+[2026-09-02 15:16:36,932: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\kombu\transport\virtual\base.py", line 296, in restore_unacked_once
+[2026-09-02 15:16:36,937: WARNING/MainProcess]     
+[2026-09-02 15:16:36,937: WARNING/MainProcess] unrestored = self.restore_unacked()
+[2026-09-02 15:16:36,937: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\kombu\transport\redis.py", line 383, in restore_unacked
+[2026-09-02 15:16:36,941: WARNING/MainProcess]     
+[2026-09-02 15:16:36,942: WARNING/MainProcess] self.restore_by_tag(tag, client=client)
+[2026-09-02 15:16:36,942: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\kombu\transport\redis.py", line 438, in restore_by_tag
+[2026-09-02 15:16:36,943: WARNING/MainProcess]     
+[2026-09-02 15:16:36,948: WARNING/MainProcess] client.transaction(restore_transaction, self.unacked_key)
+[2026-09-02 15:16:36,948: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\client.py", line 631, in transaction
+[2026-09-02 15:16:36,967: WARNING/MainProcess]     
+[2026-09-02 15:16:36,969: WARNING/MainProcess] pipe.watch(*watches)
+[2026-09-02 15:16:36,969: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\client.py", line 2275, in watch
+[2026-09-02 15:16:36,971: WARNING/MainProcess]     
+[2026-09-02 15:16:36,971: WARNING/MainProcess] return self.execute_command("WATCH", *names)
+[2026-09-02 15:16:36,972: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\client.py", line 1897, in execute_command
+[2026-09-02 15:16:36,973: WARNING/MainProcess]     
+[2026-09-02 15:16:36,973: WARNING/MainProcess] return self.immediate_execute_command(*args, **kwargs)
+[2026-09-02 15:16:36,973: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\client.py", line 1967, in immediate_execute_command
+[2026-09-02 15:16:36,974: WARNING/MainProcess]     
+[2026-09-02 15:16:36,975: WARNING/MainProcess] response = conn.retry.call_with_retry(
+[2026-09-02 15:16:36,976: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\retry.py", line 120, in call_with_retry
+[2026-09-02 15:16:36,988: WARNING/MainProcess]     
+[2026-09-02 15:16:37,004: WARNING/MainProcess] return do()
+[2026-09-02 15:16:37,005: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\client.py", line 1968, in <lambda>
+[2026-09-02 15:16:37,006: WARNING/MainProcess]     
+[2026-09-02 15:16:37,007: WARNING/MainProcess] lambda: self._send_command_parse_response(
+[2026-09-02 15:16:37,007: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\client.py", line 819, in _send_command_parse_response
+[2026-09-02 15:16:37,007: WARNING/MainProcess]     
+[2026-09-02 15:16:37,008: WARNING/MainProcess] return self.parse_response(conn, command_name, **options)
+[2026-09-02 15:16:37,008: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\client.py", line 2142, in parse_response
+[2026-09-02 15:16:37,009: WARNING/MainProcess]     
+[2026-09-02 15:16:37,009: WARNING/MainProcess] result = Redis.parse_response(self, connection, command_name, **options)
+[2026-09-02 15:16:37,015: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\client.py", line 935, in parse_response
+[2026-09-02 15:16:37,018: WARNING/MainProcess]     
+[2026-09-02 15:16:37,019: WARNING/MainProcess] response = connection.read_response()
+[2026-09-02 15:16:37,019: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\connection.py", line 1407, in read_response
+[2026-09-02 15:16:37,032: WARNING/MainProcess]     
+[2026-09-02 15:16:37,036: WARNING/MainProcess] response = self._parser.read_response(
+[2026-09-02 15:16:37,036: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\_parsers\resp3.py", line 40, in read_response
+[2026-09-02 15:16:37,039: WARNING/MainProcess]     
+[2026-09-02 15:16:37,039: WARNING/MainProcess] result = self._read_response(
+[2026-09-02 15:16:37,040: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\_parsers\resp3.py", line 65, in _read_response
+[2026-09-02 15:16:37,040: WARNING/MainProcess]     
+[2026-09-02 15:16:37,041: WARNING/MainProcess] raw = self._buffer.readline(timeout=timeout)
+[2026-09-02 15:16:37,041: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\_parsers\socket.py", line 117, in readline
+[2026-09-02 15:16:37,051: WARNING/MainProcess]     
+[2026-09-02 15:16:37,052: WARNING/MainProcess] self._read_from_socket(timeout=timeout)
+[2026-09-02 15:16:37,052: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\redis\_parsers\socket.py", line 64, in _read_from_socket
+[2026-09-02 15:16:37,053: WARNING/MainProcess]     
+[2026-09-02 15:16:37,053: WARNING/MainProcess] data = sock.recv(socket_read_size)
+[2026-09-02 15:16:37,053: WARNING/MainProcess]   File "C:\Users\IAMT\AppData\Local\Python\pythoncore-3.14-64\Lib\ssl.py", line 1285, in recv
+[2026-09-02 15:16:37,058: WARNING/MainProcess]     
+[2026-09-02 15:16:37,059: WARNING/MainProcess] return self.read(buflen)
+[2026-09-02 15:16:37,060: WARNING/MainProcess]   File "C:\Users\IAMT\AppData\Local\Python\pythoncore-3.14-64\Lib\ssl.py", line 1140, in read
+[2026-09-02 15:16:37,069: WARNING/MainProcess]     
+[2026-09-02 15:16:37,069: WARNING/MainProcess] return self._sslobj.read(len)
+[2026-09-02 15:16:37,069: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\apps\worker.py", line 306, in _handle_request
+[2026-09-02 15:16:37,070: WARNING/MainProcess]     
+[2026-09-02 15:16:37,070: WARNING/MainProcess] callback(worker)
+[2026-09-02 15:16:37,070: WARNING/MainProcess]   File "C:\Users\IAMT\Documents\QuizArenaRemastered\QUIZARENAREMASTERED\ai-backend\venv\Lib\site-packages\celery\apps\worker.py", line 335, in on_hard_shutdown
+[2026-09-02 15:16:37,071: WARNING/MainProcess]     
+[2026-09-02 15:16:37,071: WARNING/MainProcess] raise WorkerTerminate(EX_FAILURE)
+[2026-09-02 15:16:37,071: WARNING/MainProcess] celery.exceptions
+[2026-09-02 15:16:37,071: WARNING/MainProcess] .
+[2026-09-02 15:16:37,071: WARNING/MainProcess] WorkerTerminate
+[2026-09-02 15:16:37,071: WARNING/MainProcess] : 
+[2026-09-02 15:16:37,072: WARNING/MainProcess] 1

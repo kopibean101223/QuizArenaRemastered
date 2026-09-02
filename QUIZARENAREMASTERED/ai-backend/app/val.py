@@ -238,3 +238,36 @@ def run_real_evaluation():
 if __name__ == "__main__":
     run_real_evaluation()
 
+
+def validate_mcq(q: dict) -> bool:
+    choices = q.get("choices", [])
+    if len(choices) != 4: return False
+    correct_count = sum(1 for c in choices if c.get("isCorrect"))
+    if correct_count != 1: return False
+    return True
+
+def validate_step_by_step(q: dict) -> bool:
+    data = q.get("answerData", {})
+    steps = data.get("steps", [])
+    if not isinstance(steps, list) or len(steps) < 2: return False
+    return True
+
+def validate_numerical(q: dict) -> bool:
+    data = q.get("answerData", {})
+    if "numericAnswer" not in data: return False
+    if "tolerance" not in data: return False
+    return True
+
+def validate_graphing(q: dict) -> bool:
+    data = q.get("answerData", {})
+    if "expression" not in data: return False
+    if "graphType" not in data: return False
+    return True
+
+def validate_question_structure(q: dict) -> bool:
+    qtype = q.get("type", "")
+    if qtype == "Multiple Choice": return validate_mcq(q)
+    elif qtype == "Step-by-step Solution": return validate_step_by_step(q)
+    elif qtype == "Numerical Input": return validate_numerical(q)
+    elif qtype == "Graphing/Plotting": return validate_graphing(q)
+    return True

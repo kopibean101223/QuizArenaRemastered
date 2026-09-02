@@ -29,3 +29,6 @@ python -m celery -A app.celery_worker.celery_app worker --loglevel=info -P solo
 - **Redis Error?** Make sure you have your `.env` file correctly set up with the Upstash Redis URL.
 - **Task not running?** Ensure both the Uvicorn server AND the Celery worker are running at the same time. Uvicorn sends the task, and Celery processes it.
 
+py -m venv venv
+.\venv\Scripts\Activate.ps1
+

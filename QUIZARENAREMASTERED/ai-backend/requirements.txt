@@ -19,8 +19,7 @@ flashrank
 scikit-learn
 numpy
 python-multipart
+instructor
 
 ragas
 datasets
-instructor
-langchain-text-splitters

@@ -54,6 +54,7 @@ load_dotenv()
 # ═══════════════════════════════════════════════════════════════════════════════
 logger = logging.getLogger("quiz_pipeline")
 logger.setLevel(logging.INFO)
+logger.propagate = False
 if not logger.handlers:
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(
@@ -506,7 +507,7 @@ def get_embedding(text: str) -> np.ndarray:
         if os.getenv("GEMINI_API_KEY"):
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
             emb = GoogleGenerativeAIEmbeddings(
-                model="models/embedding-001",
+                model="models/gemini-embedding-2",
                 google_api_key=os.getenv("GEMINI_API_KEY")
             )
             return np.array(emb.embed_query(text))
@@ -573,7 +574,7 @@ def generate_batch_questions(
         chunks_text += f"\n--- CHUNK {i + 1} ---\n{text[:800]}\n"
 
     prompt = f"""You are an expert Mathematics Professor.
-Based on the following {len(chunks)} text chunks from "{filename}", generate exactly {len(chunks) * 2} mathematical test questions (TWO per chunk).
+Based on the following {len(chunks)} text chunks from "{filename}", generate exactly {config.get("count", len(chunks))} mathematical test questions.
 
 Allowed Question Types: {types_str}
 
@@ -598,7 +599,7 @@ Preserve the requested question-type distribution.
 
 {chunks_text}
 
-IMPORTANT: Return exactly {len(chunks) * 2} question objects. chunk_index is 0-based."""
+IMPORTANT: Return exactly {config.get("count", len(chunks))} question objects. chunk_index is 0-based."""
 
     # Using Instructor with Groq as primary (using JSON mode)
     try:
@@ -756,15 +757,17 @@ def _get_redis_client():
 # ═══════════════════════════════════════════════════════════════════════════════
 @celery_app.task(name="process_and_generate_quiz")
 def process_and_generate_quiz(
+    request_id: str,
     doc_id: str,
+    user_id: str,
     filename: str,
-    chunks: list,
     config: dict
 ):
+    chunks = []
     """Generate quiz questions using dynamic configs passed from frontend."""
     attempt = config.get('_attempt', 1)
     logger.info(f"{'═' * 60}")
-    logger.info(f"Starting pipeline for '{filename}' (doc_id={doc_id})")
+    logger.info(f"Starting pipeline for '{filename}' (request_id={request_id})")
     logger.info(f"Config: model={GROQ_MODEL}, count={config.get('count')}, difficulty={config.get('difficulty')}")
     logger.info(f"{'═' * 60}")
 
@@ -816,14 +819,19 @@ def process_and_generate_quiz(
             top_chunks = chunks[:10]
             
         if not top_chunks:
-             logger.warning("No context chunks retrieved!")
-             # Do not generate if no context found
-             r = _get_redis_client()
-             r.set(
-                 f"generated_questions:{doc_id}",
-                 json.dumps([{"error": "No relevant context found in document."}])
-             )
-             return {"status": "failed", "error": "No context"}
+            logger.warning("No context chunks retrieved!")
+            # Do not generate if no context found
+            r = _get_redis_client()
+            r.set(
+                f"generated_questions:{doc_id}",
+                json.dumps([{"error": "No relevant context found in document."}])
+            )
+            try:
+                from supabase import create_client
+                sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+                sb.table("generation_runs").update({"status": "FAILED", "stage": "No context found", "error_message": "No context"}).eq("request_id", request_id).execute()
+            except: pass
+            return {"status": "failed", "error": "No context"}
 
         # Evidence Sufficiency Gate (AIRAG Part 2.1)
         requested_count = config.get('count', 5)
@@ -838,6 +846,11 @@ def process_and_generate_quiz(
                 f"generated_questions:{doc_id}",
                 json.dumps([{"error": "INSUFFICIENT_CONTEXT: Not enough relevant content found in the document to generate grounded questions. The AI abstained rather than risk generating ungrounded content."}])
             )
+            try:
+                from supabase import create_client
+                sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+                sb.table("generation_runs").update({"status": "FAILED", "stage": "Insufficient context", "error_message": "INSUFFICIENT_CONTEXT"}).eq("request_id", request_id).execute()
+            except: pass
             return {"status": "abstained", "reason": "INSUFFICIENT_CONTEXT"}
 
 
@@ -879,11 +892,7 @@ def process_and_generate_quiz(
                 )
 
             # Inter-batch delay to respect rate limits
-            if batch_idx < len(batches) - 1:
-                logger.info(
-                    f"  Waiting {INTER_REQUEST_DELAY}s before next batch..."
-                )
-                time.sleep(INTER_REQUEST_DELAY)
+
 
         logger.info(f"  Total raw questions generated: {len(all_generated)}")
 
@@ -900,6 +909,11 @@ def process_and_generate_quiz(
                     )
                 }])
             )
+            try:
+                from supabase import create_client
+                sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+                sb.table("generation_runs").update({"status": "COMPLETED", "stage": "Finished (0 generated)", "progress": 100.0}).eq("request_id", request_id).execute()
+            except: pass
             return {"status": "success", "questions_generated": 0}
 
         # ── Stage 5: Batch Critic Validation ─────────────────────────────
@@ -923,12 +937,7 @@ def process_and_generate_quiz(
             verdicts = batch_critic_check(critic_batch)
             all_verdicts.extend(verdicts)
 
-            if i + BATCH_SIZE < len(critic_items):
-                logger.info(
-                    f"  Waiting {INTER_REQUEST_DELAY}s before next "
-                    f"critic batch..."
-                )
-                time.sleep(INTER_REQUEST_DELAY)
+
 
         
         # MCQ Validation and Duplicate Detection
@@ -1072,25 +1081,76 @@ def process_and_generate_quiz(
 
         logger.info(f"  Final validated questions: {len(valid_questions)}")
         
-        if not valid_questions and attempt < 2:
-            logger.info("[Regeneration] Attempting regeneration with adjusted prompt...")
-            config['_attempt'] = 2
-            config['types'] = ['Multiple Choice']  # Simplify to most reliable type
-            return process_and_generate_quiz(doc_id, filename, chunks, config)
 
-        # ── Stage 7: Store Results in Redis ──────────────────────────────
-        logger.info("[Stage 7/7] Storing results in Redis...")
+
+        # ── Stage 7: Store Results in DB ──────────────────────────────
+        logger.info("[Stage 7/7] Storing results in DB and Redis...")
         r = _get_redis_client()
-
+        
         if valid_questions:
             r.set(
                 f"generated_questions:{doc_id}",
                 json.dumps(valid_questions)
             )
+            
+            # Save directly to Supabase DB
+            try:
+                from supabase import create_client
+                sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+                
+                for q in valid_questions:
+                    # Insert Question
+                    q_res = sb.table("GeneratedQuestion").insert({
+                        "userId": user_id,
+                        "docId": int(doc_id) if str(doc_id).isdigit() else None,
+                        "text": q["text"],
+                        "type": q.get("type", "Multiple Choice"),
+                        "difficulty": q.get("difficulty", "Medium"),
+                        "topic": q.get("topic", topic[0] if isinstance(topic, list) and topic else "General"),
+                        "answer": q.get("answer"),
+                        "answerData": q.get("answerData", {}),
+                        "estimatedDifficulty": q.get("estimated_difficulty", 0.5),
+                        "bloomLevel": q.get("bloom_level", "UNDERSTAND"),
+                        "request_id": request_id,
+                        "status": "PENDING"
+                    }).execute()
+                    
+                    if q_res.data:
+                        q_id = q_res.data[0]["id"]
+                        
+                        # Insert Choices
+                        choices = q.get("choices", [])
+                        if choices:
+                            labels = ['A', 'B', 'C', 'D', 'E', 'F']
+                            choice_payloads = [
+                                {
+                                    "questionId": q_id,
+                                    "label": labels[idx] if idx < len(labels) else str(idx),
+                                    "text": c["text"],
+                                    "isCorrect": c.get("isCorrect", False)
+                                } for idx, c in enumerate(choices)
+                            ]
+                            sb.table("QuestionChoice").insert(choice_payloads).execute()
+                            
+                        # Insert Citation
+                        citation = q.get("citation")
+                        if citation:
+                            sb.table("QuestionCitation").insert({
+                                "questionId": q_id,
+                                "docName": filename,
+                                "section": citation.get("section", ""),
+                                "pageRange": citation.get("pageRange", ""),
+                                "excerpt": citation.get("excerpt", ""),
+                                "confidence": citation.get("confidence", "strong")
+                            }).execute()
+                            
+            except Exception as e_db:
+                logger.error(f"Failed to save questions to DB: {e_db}")
+
             logger.info(
                 f"{'═' * 60}\n"
                 f"  SUCCESS: {len(valid_questions)} questions saved "
-                f"for doc {doc_id}\n"
+                f"(doc_id={doc_id})\n"
                 f"{'═' * 60}"
             )
         else:
@@ -1118,6 +1178,20 @@ def process_and_generate_quiz(
         logger.info(f"  Final valid: {len(valid_questions)}")
         logger.info(f"  Attempt: {attempt}")
 
+        try:
+            from supabase import create_client
+            sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+            sb.table("generation_runs").update({
+                "status": "COMPLETED",
+                "stage": "Finished successfully",
+                "progress": 100.0,
+                "validated_count": len(valid_questions),
+                "saved_count": len(valid_questions),
+                "raw_generated": len(all_generated),
+                "error_message": None
+            }).eq("request_id", request_id).execute()
+        except Exception as e_sb:
+            logger.error(f"Failed to update run status: {e_sb}")
         return {"status": "success", "questions_generated": len(valid_questions)}
 
     except Exception as e:
@@ -1126,6 +1200,16 @@ def process_and_generate_quiz(
             r = _get_redis_client()
             error_msg = [{"error": f"Internal pipeline crash: {str(e)}"}]
             r.set(f"generated_questions:{doc_id}", json.dumps(error_msg))
+        except Exception:
+            pass
+        try:
+            from supabase import create_client
+            sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+            sb.table("generation_runs").update({
+                "status": "FAILED",
+                "stage": "Failed with exception",
+                "error_message": str(e)
+            }).eq("request_id", request_id).execute()
         except Exception:
             pass
         return {"status": "error", "message": str(e)}
