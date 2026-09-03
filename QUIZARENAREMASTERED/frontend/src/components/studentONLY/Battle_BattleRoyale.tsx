@@ -44,9 +44,10 @@
         return question.correct ? 'True' : 'False';
       case 'Identification':
       case 'Short Answer':
+      case 'Step-by-step Solution':
         return question.acceptedAnswers[0] ?? '';
       case 'Numerical Input':
-        return String(question.correctValue);
+        return question.correctAnswerText ?? String(question.correctValue);
       case 'Mathematics':
         return question.correctExpression;
       default:

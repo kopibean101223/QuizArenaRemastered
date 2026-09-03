@@ -26,8 +26,15 @@ export async function POST(req: Request) {
     // 1. Pull the approved question bank for this doc/section
     console.log(`[ADAPTIVE] ┌─ STEP 1: Load Question Bank`);
     const bankRows = await prisma.generatedQuestion.findMany({
-      where: { docId, status: 'APPROVED' },
-      include: { itemParameters: true },
+      where: {
+        ...(docId ? { docId: Number(docId) } : {}),
+        status: 'APPROVED',
+      },
+      include: {
+        itemParameters: true,
+        choiceRows: true,
+        citationRow: true,
+      },
     });
 
     console.log(`[ADAPTIVE] │ Found ${bankRows.length} approved questions`);
@@ -39,15 +46,32 @@ export async function POST(req: Request) {
       );
     }
 
-    const questionBank: QuestionMeta[] = bankRows.map((q) => ({
-      questionId: q.id,
-      topic: q.topic ?? 'General',
-      questionType: q.type,
-      llmDifficulty: (q.difficulty as 'Easy' | 'Medium' | 'Hard') ?? 'Medium',
-      choices: Array.isArray(q.choices) ? (q.choices as any) : [],
-      correctAnswer: q.answer ?? '',
-      embeddingVector: (q.citation as any)?.embedding ?? [],
-    }));
+    const questionBank: QuestionMeta[] = bankRows.map((q) => {
+      const legacyChoices = Array.isArray((q as any).choices) ? (q as any).choices : [];
+      const relationChoices = Array.isArray((q as any).choiceRows) ? (q as any).choiceRows : [];
+      const choiceTexts = (relationChoices.length > 0 ? relationChoices : legacyChoices)
+        .map((choice: any) => typeof choice === 'string' ? choice : choice?.text ?? choice?.label ?? '')
+        .filter(Boolean);
+
+      const citationValue = (q as any).citationRow ?? (q as any).citation ?? null;
+      const embeddingVector = Array.isArray((citationValue as any)?.embedding)
+        ? (citationValue as any).embedding
+        : [];
+      const correctChoice = (relationChoices.length > 0 ? relationChoices : legacyChoices).find((choice: any) => {
+        if (typeof choice === 'string') return false;
+        return Boolean(choice?.isCorrect);
+      });
+
+      return {
+        questionId: q.id,
+        topic: q.topic ?? 'General',
+        questionType: q.type,
+        llmDifficulty: (q.difficulty as 'Easy' | 'Medium' | 'Hard') ?? 'Medium',
+        choices: choiceTexts,
+        correctAnswer: q.answer ?? (correctChoice ? String(correctChoice.text ?? correctChoice.label ?? '') : ''),
+        embeddingVector,
+      };
+    });
     console.log(`[ADAPTIVE] └─ Bank loaded: [${questionBank.map(q => `Q${q.questionId}(${q.llmDifficulty})`).join(', ')}]`);
 
     // 2. Load student's BKT states for every topic present in this bank

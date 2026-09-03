@@ -113,7 +113,7 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
   
 
 
-const { myDeck, drawnCards, showCardModal, triggerCardDraw, handleAddToDeck } = usePowerDeck();
+const { myDeck, drawnCards, showCardModal, triggerCardDraw, handleAddToDeck, setShowCardModal } = usePowerDeck();
 
 
   // Stagger State

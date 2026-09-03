@@ -29,6 +29,7 @@ export function usePowerDeck() {
     myDeck,
     drawnCards,
     showCardModal,
+    setShowCardModal,
     triggerCardDraw,
     handleAddToDeck,
   };

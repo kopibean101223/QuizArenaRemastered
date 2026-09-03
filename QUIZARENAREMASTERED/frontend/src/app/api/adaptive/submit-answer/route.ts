@@ -19,8 +19,13 @@ export async function POST(req: Request) {
       );
     }
 
+    const normalizedQuestionId = Number(questionId);
+    if (!Number.isFinite(normalizedQuestionId)) {
+      return NextResponse.json({ error: 'questionId must be a valid number' }, { status: 400 });
+    }
+
     const question = await prisma.generatedQuestion.findUnique({
-      where: { id: questionId },
+      where: { id: normalizedQuestionId },
       include: { itemParameters: true },
     });
     if (!question) {
@@ -28,7 +33,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'question not found' }, { status: 404 });
     }
 
-    const topic = question.topic ?? 'General';
+    const topic = String(question.topic ?? 'General');
     console.log('[ADAPTIVE] QUESTION LOADED:', {
       questionId,
       topic,
@@ -67,7 +72,7 @@ export async function POST(req: Request) {
 
     // IRT update
     console.log(`[ADAPTIVE] ┌─ IRT UPDATE (Ability: theta)`);
-    const bI = question.itemParameters?.bI ?? 0;
+    const bI = typeof question.itemParameters?.bI === 'number' ? question.itemParameters.bI : 0;
     console.log(`[ADAPTIVE] │ Question difficulty (b_i): ${bI.toFixed(4)}`);
     
     const existingAbility = await prisma.studentAbility.findUnique({ where: { studentId } });

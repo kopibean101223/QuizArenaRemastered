@@ -23,6 +23,7 @@ import type { PowerCardData } from "./PowerCards/types";
 import {
   getStudentIdentity,
   computeTimeLeft,
+  parseNumericValue,
 } from "@/lib/student/battle/useBattleConnection";
 import type { NormalizedQuestion } from "@/lib/student/battle/useBattleConnection";
 import { useBattleSocketContext } from "@/lib/student/battle/useBattleSocketProvider";
@@ -34,17 +35,19 @@ function checkAnswer(question: NormalizedQuestion, value: any): boolean {
     case "True / False":
       return value === question.correct;
     case "Identification":
-    case "Short Answer": {
+    case "Short Answer":
+    case "Step-by-step Solution": {
       const normalize = (s: string) => (question.caseSensitive ? s.trim() : s.trim().toLowerCase());
       const answer = normalize(String(value ?? ""));
       if (!answer) return false;
       return question.acceptedAnswers.some((a) => normalize(a) === answer);
     }
     case "Numerical Input": {
-      const num = Number(value);
-      if (Number.isNaN(num)) return false;
+      const expected = question.correctValue;
+      const submitted = parseNumericValue(value);
+      if (submitted == null || !Number.isFinite(expected)) return false;
       const tolerance = question.tolerance ?? 0;
-      return Math.abs(num - question.correctValue) <= tolerance;
+      return Math.abs(submitted - expected) <= tolerance;
     }
     case "Mathematics": {
       const normalize = (s: string) => s.replace(/\s+/g, "").toLowerCase();
@@ -63,9 +66,10 @@ function getCorrectAnswerDisplay(question: NormalizedQuestion): string {
       return question.correct ? "True" : "False";
     case "Identification":
     case "Short Answer":
+    case "Step-by-step Solution":
       return question.acceptedAnswers[0] ?? "";
     case "Numerical Input":
-      return `${question.correctValue}${question.unit ? " " + question.unit : ""}`;
+      return question.correctAnswerText ?? `${question.correctValue}${question.unit ? " " + question.unit : ""}`;
     case "Mathematics":
       return question.correctExpression;
     default:

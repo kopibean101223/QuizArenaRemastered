@@ -20,16 +20,55 @@ export async function GET() {
     const docs = await prisma.syllabusDoc.findMany({
       where: { userId },
       orderBy: { id: 'desc' },
-      include: { choices: true, citation: true }
+      include: {
+        questions: {
+          include: {
+            choiceRows: true,
+            citationRow: true,
+          }
+        }
+      }
     });
-    
+
     const questions = await prisma.generatedQuestion.findMany({
       where: { userId },
       orderBy: { id: 'desc' },
-      include: { choices: true, citation: true }
+      include: {
+        choiceRows: true,
+        citationRow: true,
+      }
     });
 
-    return NextResponse.json({ docs, questions });
+    const normalizeQuestion = (question: any) => ({
+      ...question,
+      choices: Array.isArray(question.choiceRows)
+        ? question.choiceRows
+            .map((choice: any) => ({
+              id: choice.id,
+              label: choice.label,
+              text: choice.text,
+              isCorrect: choice.isCorrect,
+            }))
+            .sort((a: any, b: any) => String(a.label).localeCompare(String(b.label)))
+        : [],
+      citation: question.citationRow ? {
+        id: question.citationRow.id,
+        docName: question.citationRow.docName,
+        section: question.citationRow.section,
+        pageRange: question.citationRow.pageRange,
+        excerpt: question.citationRow.excerpt,
+        confidence: question.citationRow.confidence,
+      } : null,
+      choiceRows: undefined,
+      citationRow: undefined,
+    });
+
+    const normalizedDocs = docs.map((doc) => ({
+      ...doc,
+      questions: Array.isArray(doc.questions) ? doc.questions.map(normalizeQuestion) : [],
+    }));
+
+    return NextResponse.json({ docs: normalizedDocs, questions: questions.map(normalizeQuestion) });
   } catch (error) {
     return NextResponse.json({ error: 'Failed to fetch database records' }, { status: 500 });
   }

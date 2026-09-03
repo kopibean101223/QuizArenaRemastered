@@ -30,8 +30,6 @@ model GeneratedQuestion {
   topic           String?
   answer          String?
   docId           Int?
-  choices         Json
-  citation        Json?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @default(now()) @updatedAt
   status          QuestionStatus    @default(PENDING)

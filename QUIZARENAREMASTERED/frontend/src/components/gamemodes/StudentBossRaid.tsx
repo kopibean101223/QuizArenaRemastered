@@ -19,6 +19,7 @@ const POWER_UP_SLOTS = [
 
 interface StudentBossRaidProps {
   battleId?: string;
+  currentQuestion?: { text?: string; question?: string; choices?: string[]; options?: string[]; answer?: string; } | any | null;
   activeQuestion?: { text?: string; question?: string; choices?: string[]; options?: string[]; answer?: string; } | any | null;
   bossHealth?: number;
   bossMaxHealth?: number;

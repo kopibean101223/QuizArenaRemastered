@@ -7,6 +7,7 @@ import {
   formatBattleQuestions,
   getStudentIdentity,
   computeTimeLeft,
+  parseNumericValue,
 } from '@/lib/student/battle/useBattleConnection';
 import type { BattleQuestion } from '@/lib/student/battle/useBattleConnection';
 import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProvider';
@@ -84,14 +85,14 @@ function doesAnswerMatchQuestion(question: TeamQuestion | undefined, answer: str
     return normalizeChoiceText(question.correctExpression) === normalizeChoiceText(normalizedAnswer);
   }
 
-  if (question.type === 'Short Answer' || question.type === 'Identification') {
+  if (question.type === 'Short Answer' || question.type === 'Identification' || question.type === 'Step-by-step Solution') {
     return question.acceptedAnswers.some((value) => normalizeChoiceText(value) === normalizeChoiceText(normalizedAnswer));
   }
 
   if (question.type === 'Numerical Input') {
-    const expected = Number(question.correctValue);
-    const submitted = Number(normalizedAnswer);
-    return Number.isFinite(expected) && Number.isFinite(submitted) && Math.abs(expected - submitted) <= (question.tolerance ?? 0);
+    const expected = question.correctValue;
+    const submitted = parseNumericValue(normalizedAnswer);
+    return Number.isFinite(expected) && submitted != null && Math.abs(expected - submitted) <= (question.tolerance ?? 0);
   }
 
   return false;

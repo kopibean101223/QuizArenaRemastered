@@ -41,7 +41,7 @@ export interface PlayerResult {
 export interface FinalBattleData {
   battleId: string;
   roomCode?: string;
-  battleMode?: 'LIVE' | 'SELF_PACED' | 'TEAM' | 'ROYALE' | 'BINGO';
+  battleMode?: 'LIVE' | 'SELF_PACED' | 'TEAM' | 'ROYALE' | 'BINGO' | 'BOSSRAID' | 'ENDLESS';
   players?: PlayerResult[];
 }
 

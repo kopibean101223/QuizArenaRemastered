@@ -1,6 +1,8 @@
 import { WebSocket } from 'ws';
 import Redis from 'ioredis';
 
+type BattleMode = 'LIVE' | 'TEAM' | 'ROYALE' | 'BINGO' | 'BOSSRAID' | 'ENDLESS';
+
 const MAX_HISTORY_LIMIT = 100;
 const ACTIVE_ROOM_TTL_SECONDS = 4 * 60 * 60;
 const HOST_DISCONNECT_GRACE_MS = 20_000;
@@ -46,7 +48,7 @@ class RoomPresenceHandler {
   private clientRoomMap = new Map<WebSocket, string>();
   private hostSockets = new Map<string, Set<WebSocket>>();
   private hostDisconnectTimers = new Map<string, NodeJS.Timeout>();
-  private battleModes = new Map<string, 'LIVE' | 'TEAM' | 'ROYALE' | 'BINGO'>();  
+  private battleModes = new Map<string, BattleMode>();
   private onHostAbandoned?: (battleId: string) => Promise<void>;
 
   /** LiveBattleHandler (or whoever cares) plugs in what "abandoned room" means for it. */
@@ -59,10 +61,10 @@ class RoomPresenceHandler {
     return clients ? clients.size : 0;
   }
 
-  public setBattleMode(battleId: string, mode: 'LIVE' | 'TEAM' | 'ROYALE' | 'BINGO' | 'BOSSRAID' | 'ENDLESS'): void {
+  public setBattleMode(battleId: string, mode: BattleMode): void {
     this.battleModes.set(battleId, mode);
   }
-  public getBattleMode(battleId: string): 'LIVE' | 'TEAM' | 'ROYALE'| 'BINGO' | 'BOSSRAID' | 'ENDLESS' {
+  public getBattleMode(battleId: string): BattleMode {
     return this.battleModes.get(battleId) || 'LIVE';
   }
   public initSubscriber(redisSubscriber: Redis): void {

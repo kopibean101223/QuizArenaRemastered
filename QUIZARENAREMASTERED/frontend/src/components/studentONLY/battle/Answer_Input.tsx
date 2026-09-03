@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnswerBtn } from "../LiveBattleCOMPONENTONLY/AnswerButton";
 import { C } from "../LiveBattleCOMPONENTONLY/Constants";
-import type { NormalizedQuestion } from "@/lib/student/battle/useBattleConnection";
+import {
+  parseNumericValue,
+  type NormalizedQuestion,
+} from "@/lib/student/battle/useBattleConnection";
 
 interface AnswerInputProps {
   question: NormalizedQuestion;
@@ -28,6 +31,7 @@ export function AnswerInput({ question, disabled, revealed, onSubmit }: AnswerIn
   const [boolChoice, setBoolChoice] = useState<boolean | null>(null);
   const [text, setText] = useState("");
   const [num, setNum] = useState("");
+  const [stepValues, setStepValues] = useState<string[]>([]);
 
   switch (question.type) {
     // 4-choice grid — unchanged from today, just routed through here now.
@@ -123,18 +127,86 @@ export function AnswerInput({ question, disabled, revealed, onSubmit }: AnswerIn
         />
       );
 
+    case "Step-by-step Solution": {
+      const stepQuestion = question as typeof question & {
+        stepWeights?: Array<{ stepDescription?: string; description?: string; pointsAwarded?: number; commonMistake?: string }>;
+        steps?: string[];
+      };
+
+      const stepEntries = Array.isArray(stepQuestion.stepWeights) && stepQuestion.stepWeights.length > 0
+        ? stepQuestion.stepWeights.map((step, index) => step?.stepDescription ?? step?.description ?? `Step ${index + 1}`)
+        : Array.isArray(stepQuestion.steps) && stepQuestion.steps.length > 0
+          ? stepQuestion.steps
+          : ["Step 1"];
+
+      useEffect(() => {
+        setStepValues((prev) => {
+          const next = stepEntries.map((_, index) => prev[index] ?? "");
+          if (next.length === prev.length && next.every((value, index) => value === (prev[index] ?? ""))) {
+            return prev;
+          }
+          return next;
+        });
+      }, [stepEntries.length]);
+
+      const combinedValue = stepValues.join("\n\n");
+
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {stepEntries.map((label, index) => (
+            <div key={`${label}-${index}`} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <label
+                style={{
+                  fontFamily: "Manrope, sans-serif",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: "rgba(255,255,255,0.7)",
+                }}
+              >
+                {label}
+              </label>
+              <textarea
+                value={stepValues[index] ?? ""}
+                disabled={disabled}
+                placeholder={`Type your answer for ${label.toLowerCase()}...`}
+                onChange={(e) => {
+                  const next = [...stepValues];
+                  next[index] = e.target.value;
+                  setStepValues(next);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    onSubmit(combinedValue);
+                  }
+                }}
+                rows={3}
+                style={{ ...inputBaseStyle, resize: "vertical" }}
+              />
+            </div>
+          ))}
+        </div>
+      );
+    }
+
     // Numeric keypad-friendly input, unit shown as a suffix if the question has one.
     case "Numerical Input":
       return (
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <input
-            type="number"
+            type="text"
             inputMode="decimal"
             value={num}
             disabled={disabled}
             placeholder="0"
             onChange={(e) => setNum(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && onSubmit(Number(num))}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return;
+              const parsed = parseNumericValue(num);
+              onSubmit(parsed ?? num);
+            }}
             style={inputBaseStyle}
           />
           {question.unit && (

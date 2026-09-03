@@ -78,21 +78,21 @@ export async function POST(req: Request) {
         prisma.generatedQuestion.create({
           data: {
             userId: userId, 
-            docId: doc.id,
+            doc: { connect: { id: doc.id } },
             text: q.text,
             type: q.type || 'Multiple Choice',
             difficulty: q.difficulty || difficulty || 'Medium',
             topic: category && category !== 'General' ? category : (doc.filename || 'General'),
             answer: q.answer || '',
             status: 'PENDING',
-            choices: {
+            choiceRows: {
                 create: (q.choices || []).map((c: any) => ({
                     label: c.label || '',
                     text: c.text || '',
                     isCorrect: !!c.isCorrect,
                 }))
             },
-            citation: q.citation ? {
+            citationRow: q.citation ? {
                 create: {
                     docName: q.citation.docName || doc.filename || '',
                     section: q.citation.section || '',
@@ -102,12 +102,34 @@ export async function POST(req: Request) {
                 }
             } : undefined
           },
-          include: { choices: true, citation: true }
+          include: { choiceRows: true, citationRow: true }
         })
       )
     );
 
-    return NextResponse.json(savedQuestions);
+    const normalizedQuestions = savedQuestions.map((question: any) => ({
+      ...question,
+      choices: Array.isArray(question.choiceRows)
+        ? question.choiceRows.map((choice: any) => ({
+            id: choice.id,
+            label: choice.label,
+            text: choice.text,
+            isCorrect: choice.isCorrect,
+          }))
+        : [],
+      citation: question.citationRow ? {
+        id: question.citationRow.id,
+        docName: question.citationRow.docName,
+        section: question.citationRow.section,
+        pageRange: question.citationRow.pageRange,
+        excerpt: question.citationRow.excerpt,
+        confidence: question.citationRow.confidence,
+      } : null,
+      choiceRows: undefined,
+      citationRow: undefined,
+    }));
+
+    return NextResponse.json(normalizedQuestions);
   } catch (error: any) {
     console.error('Error in /api/rag/generate:', error);
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });

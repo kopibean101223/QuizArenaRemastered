@@ -60,7 +60,7 @@ const C = {
 // ─── Data ──────────────────────────────────────────────────────────────────────
 const SUBJECTS   = ["All Subjects","Mathematics","Physics","Computer Science","History","Biology"];
 const DIFFICULTIES = ["All Difficulties","Easy","Medium","Hard"];
-const QTYPES = ["All", "Algebra", "Calculus", "Discrete Math"];
+const QTYPES = ["All", "Multiple Choice", "True / False", "Identification", "Short Answer", "Mathematics", "Numerical Input", "Step-by-step Solution"];
 const SORT_OPTIONS = ["Newest First","Oldest First","A → Z","Z → A","Difficulty ↑","Difficulty ↓"];
 
 const SUBJECT_STYLE: Record<string,{bg:string;text:string;dot:string}> = {
@@ -420,7 +420,7 @@ function QuestionModal({editing, defaultTopic, onClose, onSaveSuccess}:{editing?
         id: editing?.id,
         text, subject, difficulty, type, topic, answer, 
         points: Number(points), timeLimit: Number(timeLimit),
-        choices: ["All", "Algebra", "Calculus", "Discrete Math"].includes(type) ? [] : choices,
+        choices: type === "Multiple Choice" ? choices : [],
         testCases: type === "Coding" ? testCases : []
       };
 
