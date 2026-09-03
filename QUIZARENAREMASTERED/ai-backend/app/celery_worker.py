@@ -353,6 +353,13 @@ def generate_with_fallback(prompt: str, temperature: float = 0.2, prefill: str =
     return ""
 
 
+class OutputTruncatedError(Exception):
+    """Raised when an LLM response was truncated due to output token limits."""
+    def __init__(self, partial_content: str, message: str = "Output truncated by max_tokens limit"):
+        super().__init__(message)
+        self.partial_content = partial_content
+
+
 def _call_groq(prompt: str, temperature: float, prefill: str) -> str:
     """Call Groq API with rate limiting.
 
@@ -387,15 +394,15 @@ def _call_groq(prompt: str, temperature: float, prefill: str) -> str:
         max_tokens=4096
     )
     finish_reason = response.choices[0].finish_reason
-    if finish_reason == "length":
-        logger.warning(f"[Groq] Output truncated (finish_reason=length). Consider reducing prompt size.")
-        raise Exception("Output truncated by max_tokens limit")
-
-    content = response.choices[0].message.content
+    content = response.choices[0].message.content or ""
     
-    # Re-attach the prefilled start if it succeeded
+    # Re-attach the prefilled start if present
     if content and prefill:
         content = prefill + content
+
+    if finish_reason == "length":
+        logger.warning("[Groq] Output truncated (finish_reason=length). Preserving partial content.")
+        raise OutputTruncatedError(content, "Groq output truncated by max_tokens limit")
         
     return content.strip() if content else ""
 
@@ -410,7 +417,7 @@ def _call_gemini(prompt: str, temperature: float, prefill: str = "") -> str:
     from google.genai import types as genai_types
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     response = client.models.generate_content(
-        model="gemini-3.5-flash",
+        model="gemini-2.5-flash",
         contents=prompt,
         config=genai_types.GenerateContentConfig(
             temperature=temperature,
@@ -435,11 +442,11 @@ def _call_openai(prompt: str, temperature: float, prefill: str = "") -> str:
         max_tokens=4096
     )
     finish_reason = response.choices[0].finish_reason
+    content = response.choices[0].message.content or ""
     if finish_reason == "length":
-        logger.warning(f"[OpenAI] Output truncated (finish_reason=length).")
-        raise Exception("Output truncated by max_tokens limit")
+        logger.warning("[OpenAI] Output truncated (finish_reason=length).")
+        raise OutputTruncatedError(content, "OpenAI output truncated by max_tokens limit")
 
-    content = response.choices[0].message.content
     return content.strip() if content else ""
 
 
@@ -494,15 +501,77 @@ def clean_and_parse_json(raw_str: str) -> Any:
         return None
 
 
+def extract_complete_json_objects(raw_str: str) -> List[Dict]:
+    """Safely extracts all fully formed JSON objects from an array or truncated text.
+    Recovers valid questions even if the LLM reached max_tokens mid-stream.
+    """
+    if not raw_str:
+        return []
+    cleaned = re.sub(r"<think>.*?</think>", "", raw_str, flags=re.DOTALL)
+    cleaned = re.sub(r"<think>.*", "", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"^```(?:json)?", "", cleaned.strip(), flags=re.MULTILINE)
+    cleaned = re.sub(r"```$", "", cleaned.strip(), flags=re.MULTILINE).strip()
+
+    # Attempt standard parses first
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            return [p for p in parsed if isinstance(p, dict)]
+        if isinstance(parsed, dict) and "questions" in parsed and isinstance(parsed["questions"], list):
+            return [p for p in parsed["questions"] if isinstance(p, dict)]
+    except Exception:
+        pass
+
+    # Extract balanced braces
+    results = []
+    stack = 0
+    start_idx = -1
+    in_string = False
+    escape = False
+
+    for i, ch in enumerate(cleaned):
+        if ch == '"' and not escape:
+            in_string = not in_string
+        elif ch == '\\' and in_string:
+            escape = not escape
+            continue
+        elif not in_string:
+            if ch == '{':
+                if stack == 0:
+                    start_idx = i
+                stack += 1
+            elif ch == '}':
+                stack -= 1
+                if stack == 0 and start_idx != -1:
+                    obj_str = cleaned[start_idx:i+1]
+                    try:
+                        obj_clean = re.sub(r",\s*([\]}])", r"\1", obj_str)
+                        obj = json.loads(obj_clean)
+                        if isinstance(obj, dict) and obj.get("text"):
+                            results.append(obj)
+                    except Exception:
+                        pass
+                    start_idx = -1
+        escape = False
+
+    return results
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# EMBEDDINGS (for Cosine Similarity Quality Gate)
+# EMBEDDINGS (Batch-enabled for Cosine Similarity Quality Gate)
 # ═══════════════════════════════════════════════════════════════════════════════
 def get_embedding(text: str) -> np.ndarray:
-    """Get text embedding with Gemini → OpenAI fallback.
+    """Get single text embedding with Gemini → OpenAI fallback."""
+    batch = get_batch_embeddings([text])
+    return batch[0] if batch else np.zeros(768)
 
-    Used in the cosine similarity quality gate to verify that generated
-    questions are semantically aligned with their source material.
+
+def get_batch_embeddings(texts: List[str]) -> List[np.ndarray]:
+    """Get batch text embeddings in ONE remote call with Gemini → OpenAI fallback.
+    Prevents serialized per-question HTTP overhead in Stage 6.
     """
+    if not texts:
+        return []
     try:
         if os.getenv("GEMINI_API_KEY"):
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -510,18 +579,20 @@ def get_embedding(text: str) -> np.ndarray:
                 model="models/gemini-embedding-2",
                 google_api_key=os.getenv("GEMINI_API_KEY")
             )
-            return np.array(emb.embed_query(text))
+            vectors = emb.embed_documents(texts)
+            return [np.array(v) for v in vectors]
         raise Exception("No Gemini key")
     except Exception as e:
-        logger.debug(f"Gemini embedding failed ({e}), trying OpenAI...")
+        logger.warning(f"[BatchEmbedding] Gemini failed ({e}), trying OpenAI...")
         if os.getenv("OPENAI_API_KEY") and provider_health.is_alive("openai"):
             from langchain_openai import OpenAIEmbeddings
             emb = OpenAIEmbeddings(
                 model="text-embedding-3-small",
                 api_key=os.getenv("OPENAI_API_KEY")
             )
-            return np.array(emb.embed_query(text))
-        raise Exception("No embedding provider available")
+            vectors = emb.embed_documents(texts)
+            return [np.array(v) for v in vectors]
+        raise Exception("No embedding provider available for batch embeddings")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -535,14 +606,14 @@ import instructor
 from pydantic import BaseModel, Field
 
 class QuestionChoice(BaseModel):
-    label: str
+    label: Optional[str] = None
     text: str
-    isCorrect: bool
+    isCorrect: bool = False
 
 class StepWeight(BaseModel):
-    stepDescription: str
-    pointsAwarded: int
-    commonMistake: str
+    stepDescription: Optional[str] = None
+    pointsAwarded: Optional[int] = None
+    commonMistake: Optional[str] = None
 
 class AnswerData(BaseModel):
     steps: Optional[List[str]] = None
@@ -550,15 +621,16 @@ class AnswerData(BaseModel):
     tolerance: Optional[float] = None
     expression: Optional[str] = None
     graphType: Optional[str] = None
+    keyFeatures: Optional[List[str]] = None
 
 class GeneratedQuestion(BaseModel):
-    chunk_index: int
+    chunk_index: int = 0
     text: str
-    type: str
-    difficulty: str  # Keep as str for backward compat but will contain numeric string
+    type: str = "Multiple Choice"
+    difficulty: str = "Medium"
+    estimated_difficulty: Optional[float] = 0.5
+    bloom_level: Optional[str] = "UNDERSTAND"
     answer: str
-    estimated_difficulty: Optional[float] = None  # 0.00-1.00 normalized
-    bloom_level: Optional[str] = None  # REMEMBER, UNDERSTAND, APPLY, ANALYZE, EVALUATE, CREATE
     choices: Optional[List[QuestionChoice]] = None
     answerData: Optional[AnswerData] = None
     stepWeights: Optional[List[StepWeight]] = None
@@ -570,50 +642,59 @@ class BatchQuestions(BaseModel):
 def generate_batch_questions(
     chunks: List[Dict],
     filename: str,
-    config: dict
+    config: dict,
+    sub_batch_count: Optional[int] = None
 ) -> List[Dict]:
-    """Generate questions for multiple chunks using native structured outputs."""
+    """Generate questions for multiple chunks using native structured outputs with adaptive targets."""
     types_list = config.get('types', ['Multiple Choice'])
     types_str = ', '.join(types_list)
+    is_adaptive = config.get('is_adaptive', True)
+    count = sub_batch_count or len(chunks)
     
     chunks_text = ""
     for i, chunk in enumerate(chunks):
         text = chunk["text"] if isinstance(chunk, dict) else chunk.page_content
         chunks_text += f"\n--- CHUNK {i + 1} ---\n{text[:800]}\n"
 
-    prompt = f"""You are an expert Mathematics Professor.
-Based on the following {len(chunks)} text chunks from "{filename}", generate exactly {config.get("count", len(chunks))} mathematical test questions.
+    adaptive_instruction = (
+        "ADAPTIVE POOL TARGET: Target approximately 30% Easy (0.00-0.39), 40% Medium (0.40-0.69), "
+        "and 30% Hard (0.70-1.00). Vary cognitive demand using Bloom's Taxonomy."
+        if is_adaptive else
+        "STANDARD TARGET: Generate questions adhering strictly to source material with appropriate cognitive depth."
+    )
+
+    prompt = f"""You are an expert Mathematics Professor and Curriculum Designer.
+Based on the following {len(chunks)} text chunks from "{filename}", generate exactly {count} mathematical test questions.
 
 Allowed Question Types: {types_str}
-
 Each question MUST be one of the Allowed Question Types.
 Each question must strictly be derived from formulas and concepts in its corresponding chunk.
 
-IMPORTANT DIFFICULTY INSTRUCTIONS:
-Generate a MIXED-DIFFICULTY set of questions. Do NOT target a single difficulty level.
-Vary cognitive demand naturally according to the information available in the source document.
-Use Bloom's Taxonomy as a guide: Remember, Understand, Apply, Analyze, Evaluate, Create.
-Do NOT introduce information not supported by the document.
-Do NOT make a question artificially difficult through confusing wording.
-Difficulty should reflect cognitive demand.
+DIFFICULTY & ADAPTIVE INSTRUCTIONS:
+{adaptive_instruction}
+- Do NOT introduce information not supported by the document.
+- Do NOT make a question artificially difficult through confusing wording.
+- Difficulty should reflect true cognitive demand.
 
 For every question, return:
 - question type
 - bloom_level: one of REMEMBER, UNDERSTAND, APPLY, ANALYZE, EVALUATE, CREATE
 - estimated_difficulty: a normalized number from 0.00 (very easy) to 1.00 (very difficult)
-- difficulty: a human-readable label derived from estimated_difficulty (Easy if <0.33, Medium if 0.33-0.66, Hard if >0.66)
+- difficulty: human-readable label: "Easy" (0.00-0.39), "Medium" (0.40-0.69), "Hard" (0.70-1.00)
 
 SPECIAL TYPE INSTRUCTIONS:
-- If type is 'Step-by-step Solution' or 'Numerical Input': Do NOT generate choices. Place the final mathematical answer in the `answer` string, and place the step-by-step derivation in `answerData.steps` (as a list of strings, e.g. ["Step 1: ...", "Step 2: ..."]).
+- If type is 'Step-by-step Solution': Leave choices empty. Set `answer` to final answer string, and supply sequential strings in `answerData.steps` (e.g. ["Step 1: ...", "Step 2: ..."]).
+- If type is 'Numerical Input': Leave choices empty. Set `answer` to numeric string, and provide `numericAnswer` (float) in `answerData`.
+- If type is 'Graphing/Plotting': Provide mathematical equation in `answerData.expression` and graph type in `answerData.graphType`.
 - If type is 'Multiple Choice': You must generate exactly 4 choices, with exactly 1 marked `isCorrect=True`.
 
 Preserve the requested question-type distribution.
 
 {chunks_text}
 
-IMPORTANT: Return exactly {config.get("count", len(chunks))} question objects. chunk_index is 0-based."""
+IMPORTANT: Return exactly {count} question objects. chunk_index is 0-based."""
 
-    # Using Instructor with Groq as primary (using JSON mode)
+    # Using Instructor with Groq as primary
     try:
         patched_client = instructor.from_openai(groq_client, mode=instructor.Mode.MD_JSON)
         batch_res = patched_client.chat.completions.create(
@@ -626,16 +707,34 @@ IMPORTANT: Return exactly {config.get("count", len(chunks))} question objects. c
             temperature=0.3,
             max_tokens=4096
         )
-        # Convert pydantic models back to dicts for downstream compatibility
         return [q.model_dump() for q in batch_res.questions]
     except Exception as e:
-        logger.warning(f"[Actor] Groq failed, trying Gemini fallback: {e}")
+        logger.warning(f"[Actor] Groq request failed: {e}")
+        
+        # Check if partial output contains valid questions before blind fallback
+        recovered = []
+        if isinstance(e, OutputTruncatedError) and e.partial_content:
+            recovered = extract_complete_json_objects(e.partial_content)
+        elif hasattr(e, "response") and hasattr(e.response, "text"):
+            recovered = extract_complete_json_objects(e.response.text)
+        
+        if len(recovered) >= max(1, count // 2):
+            logger.info(f"[Actor] Recovered {len(recovered)} valid questions from truncated Groq output.")
+            return recovered
+
+        # Rate limit retry for Groq
+        err_str = str(e)
+        if "429" in err_str or "rate_limit" in err_str.lower():
+            server_delay = _parse_retry_delay(err_str) or 15.0
+            logger.warning(f"[Actor] Groq rate limited. Sleeping {server_delay:.1f}s before fallback...")
+            time.sleep(server_delay)
+
+        # Fallback to Gemini
         try:
             from google import genai
-            gemini_fallback_model = "gemini-3.5-flash"
+            gemini_fallback_model = "gemini-2.5-flash"
             client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
             
-            # Retry up to 3 times with delay for rate limits
             for attempt in range(3):
                 try:
                     response = client.models.generate_content(
@@ -650,9 +749,9 @@ IMPORTANT: Return exactly {config.get("count", len(chunks))} question objects. c
                     data = json.loads(response.text)
                     return data.get("questions", [])
                 except Exception as rate_err:
-                    err_str = str(rate_err)
-                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                        delay = _parse_retry_delay(err_str) or (15 * (attempt + 1))
+                    err_s = str(rate_err)
+                    if "429" in err_s or "RESOURCE_EXHAUSTED" in err_s:
+                        delay = _parse_retry_delay(err_s) or (15 * (attempt + 1))
                         logger.warning(f"[Gemini] Rate limited, retrying in {delay:.0f}s (attempt {attempt+1}/3)")
                         time.sleep(delay)
                     else:
@@ -778,22 +877,25 @@ def process_and_generate_quiz(
     chunks = []
     """Generate quiz questions using dynamic configs passed from frontend."""
     attempt = config.get('_attempt', 1)
+    is_adaptive = config.get('is_adaptive', True)
+    requested_count = config.get('count', 5)
+    # EMERSON CANLAS POGI KO
+    target_pool_size = config.get('target_pool_size') or (requested_count * 3 if is_adaptive else requested_count)
+
     logger.info(f"{'═' * 60}")
     logger.info(f"Starting pipeline for '{filename}' (request_id={request_id})")
-    logger.info(f"Config: model={GROQ_MODEL}, count={config.get('count')}, difficulty={config.get('difficulty')}")
+    logger.info(f"Config: model={GROQ_MODEL}, requested_count={requested_count}, target_pool_size={target_pool_size}, is_adaptive={is_adaptive}")
     logger.info(f"{'═' * 60}")
 
     try:
-        # Use chunks passed from frontend
-        # Stage 7: Dynamic Retrieval & Hybrid Search
-        logger.info(f"[Stage 7] Performing Dynamic Hybrid Retrieval for docId={doc_id} topic={config.get('types')}")
+        # ── Stage 3: Dynamic Hybrid Retrieval & Reranking ─────────────────
+        logger.info(f"[Stage 3/7] Performing Dynamic Hybrid Retrieval for docId={doc_id} (target_pool={target_pool_size})")
         top_chunks = []
-        # Attempt to retrieve from Supabase
         try:
             from supabase import create_client
             supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
             
-            query = f"{config.get('difficulty')} {config.get('category', '')} {config.get('types')}"
+            query = f"{config.get('category', '')} {config.get('types', '')} mathematics problems concepts"
             
             # Embed the query
             from app.main import get_embedding_model
@@ -804,12 +906,13 @@ def process_and_generate_quiz(
             query_embedding = embedding_model.embed_query(query)
             
             # Call Supabase RPC for Hybrid Search (Dense + Sparse with RRF)
+            match_count = max(30, target_pool_size * 2)
             rpc_response = supabase.rpc(
                 'match_document_chunks_v2',
                 {
                     'query_text': query,
                     'query_embedding': query_embedding,
-                    'match_count': 30,
+                    'match_count': match_count,
                     'filter_doc_id': str(doc_id)
                 }
             ).execute()
@@ -820,7 +923,7 @@ def process_and_generate_quiz(
                 from flashrank import RerankRequest
                 rerankreq = RerankRequest(query=query, passages=candidates)
                 reranked = ranker.rerank(rerankreq)
-                top_chunks = reranked[:10]
+                top_chunks = reranked[:max(10, min(30, target_pool_size + 5))]
             elif len(chunks) > 0:
                 top_chunks = chunks[:10]
             else:
@@ -832,7 +935,6 @@ def process_and_generate_quiz(
             
         if not top_chunks:
             logger.warning("No context chunks retrieved!")
-            # Do not generate if no context found
             r = _get_redis_client()
             r.set(
                 f"generated_questions:{doc_id}",
@@ -845,18 +947,17 @@ def process_and_generate_quiz(
             except: pass
             return {"status": "failed", "error": "No context"}
 
-        # Evidence Sufficiency Gate (AIRAG Part 2.1)
-        requested_count = config.get('count', 5)
-        min_chunks_needed = max(2, requested_count // 2)
+        # Evidence Sufficiency Gate
+        min_chunks_needed = max(2, min(5, target_pool_size // 3))
         if len(top_chunks) < min_chunks_needed:
             logger.warning(
                 f"[Evidence Gate] INSUFFICIENT_CONTEXT: Only {len(top_chunks)} chunks "
-                f"retrieved, need at least {min_chunks_needed} for {requested_count} questions"
+                f"retrieved, need at least {min_chunks_needed} for target pool {target_pool_size}"
             )
             r = _get_redis_client()
             r.set(
                 f"generated_questions:{doc_id}",
-                json.dumps([{"error": "INSUFFICIENT_CONTEXT: Not enough relevant content found in the document to generate grounded questions. The AI abstained rather than risk generating ungrounded content."}])
+                json.dumps([{"error": "INSUFFICIENT_CONTEXT: Not enough relevant content found in the document to generate grounded questions."}])
             )
             try:
                 from supabase import create_client
@@ -865,46 +966,48 @@ def process_and_generate_quiz(
             except: pass
             return {"status": "abstained", "reason": "INSUFFICIENT_CONTEXT"}
 
-
-        # ── Stage 4: Batch Question Generation (Actor) ───────────────────
+        # ── Stage 4: Controlled Batch Question Generation (Actor) ─────────
         logger.info(
-            f"[Stage 4/7] Generating questions in batches of {BATCH_SIZE}..."
+            f"[Stage 4/7] Generating questions with target_pool_size={target_pool_size} (is_adaptive={is_adaptive})..."
         )
 
-        # Group chunks into batches
+        # Output-aware sub-batching: group chunks into controlled batches of 2-3 chunks
+        SUB_BATCH_CHUNK_SIZE = 3
         batches = []
-        for i in range(0, len(top_chunks), BATCH_SIZE):
-            batches.append(top_chunks[i:i + BATCH_SIZE])
+        for i in range(0, len(top_chunks), SUB_BATCH_CHUNK_SIZE):
+            batches.append(top_chunks[i:i + SUB_BATCH_CHUNK_SIZE])
 
         all_generated: List[Tuple[Dict, Dict]] = []
 
         for batch_idx, batch in enumerate(batches):
+            if len(all_generated) >= target_pool_size:
+                logger.info(f"  Target pool reached ({len(all_generated)}/{target_pool_size}). Stopping generation.")
+                break
+
+            needed_in_batch = min(len(batch), target_pool_size - len(all_generated) + 1)
             logger.info(
-                f"  Batch {batch_idx + 1}/{len(batches)}: "
-                f"processing {len(batch)} chunks..."
+                f"  Sub-batch {batch_idx + 1}/{len(batches)}: "
+                f"requesting {needed_in_batch} questions from {len(batch)} chunks..."
             )
 
-            questions = generate_batch_questions(batch, filename, config)
+            questions = generate_batch_questions(batch, filename, config, sub_batch_count=needed_in_batch)
 
             if questions:
                 for q_idx, q_data in enumerate(questions):
-                    # Map question back to its source chunk
                     chunk_idx = q_data.get("chunk_index", q_idx)
                     if isinstance(chunk_idx, int) and chunk_idx < len(batch):
                         all_generated.append((q_data, batch[chunk_idx]))
                     elif q_idx < len(batch):
                         all_generated.append((q_data, batch[q_idx]))
+                    else:
+                        all_generated.append((q_data, batch[0]))
                 logger.info(
-                    f"  → Generated {len(questions)} questions from batch "
-                    f"{batch_idx + 1}"
+                    f"  → Generated {len(questions)} questions from sub-batch {batch_idx + 1}"
                 )
             else:
                 logger.warning(
-                    f"  → Batch {batch_idx + 1} returned no questions"
+                    f"  → Sub-batch {batch_idx + 1} returned no questions"
                 )
-
-            # Inter-batch delay to respect rate limits
-
 
         logger.info(f"  Total raw questions generated: {len(all_generated)}")
 
@@ -914,25 +1017,63 @@ def process_and_generate_quiz(
             r.set(
                 f"generated_questions:{doc_id}",
                 json.dumps([{
-                    "error": (
-                        "AI could not generate questions from this document. "
-                        "The content may lack sufficient mathematical "
-                        "formulas or examples."
-                    )
+                    "error": "AI could not generate questions from this document."
                 }])
             )
             try:
                 from supabase import create_client
                 sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
-                sb.table("generation_runs").update({"status": "COMPLETED", "stage": "Finished (0 generated)", "progress": 100.0}).eq("request_id", request_id).execute()
+                sb.table("generation_runs").update({
+                    "status": "FAILED",
+                    "stage": "Finished (0 generated)",
+                    "progress": 100.0,
+                    "error_message": "No questions generated"
+                }).eq("request_id", request_id).execute()
             except: pass
-            return {"status": "success", "questions_generated": 0}
+            return {"status": "failed", "questions_generated": 0}
 
-        # ── Stage 5: Batch Critic Validation ─────────────────────────────
-        logger.info("[Stage 5/7] Running critic validation...")
+        # ── Stage 5: Structural Validation & Batch Critic ─────────────────
+        logger.info("[Stage 5/7] Running structural validation before critic...")
+
+        # Fast deterministic structural validation first
+        structurally_valid: List[Tuple[Dict, Dict]] = []
+        seen_questions = set()
+        
+        for q_data, chunk in all_generated:
+            q_text = (q_data.get("text") or "").strip()
+            if not q_text or q_text in seen_questions:
+                continue
+            seen_questions.add(q_text)
+            
+            q_type = q_data.get("type", "Multiple Choice")
+            if q_type == "Multiple Choice":
+                choices = q_data.get("choices", [])
+                if not isinstance(choices, list) or len(choices) != 4:
+                    logger.warning(f"Rejecting MCQ: choice count is {len(choices) if isinstance(choices, list) else 0}, expected 4")
+                    continue
+                correct_count = sum(1 for c in choices if isinstance(c, dict) and c.get("isCorrect"))
+                if correct_count != 1:
+                    logger.warning(f"Rejecting MCQ: {correct_count} correct choices found, expected exactly 1")
+                    continue
+            elif q_type == "Step-by-step Solution":
+                ans_data = q_data.get("answerData") or {}
+                steps = ans_data.get("steps", [])
+                if not isinstance(steps, list) or len(steps) < 1:
+                    logger.warning("Rejecting Step-by-step: missing steps list in answerData")
+                    continue
+            elif q_type == "Numerical Input":
+                ans = q_data.get("answer")
+                ans_data = q_data.get("answerData") or {}
+                if not ans and ans_data.get("numericAnswer") is None:
+                    logger.warning("Rejecting Numerical Input: missing answer and numericAnswer")
+                    continue
+
+            structurally_valid.append((q_data, chunk))
+
+        logger.info(f"  Structurally valid candidates: {len(structurally_valid)}/{len(all_generated)}")
 
         critic_items = []
-        for q_data, chunk in all_generated:
+        for q_data, chunk in structurally_valid:
             context = (
                 chunk["text"] if isinstance(chunk, dict) else chunk.page_content
             )
@@ -942,60 +1083,26 @@ def process_and_generate_quiz(
                 "answer": q_data.get("answer", ""),
             })
 
-        # Run critic in batches with inter-batch delays
+        # Run critic in batches of 5
         all_verdicts: List[str] = []
-        for i in range(0, len(critic_items), BATCH_SIZE):
-            critic_batch = critic_items[i:i + BATCH_SIZE]
+        CRITIC_BATCH_SIZE = 5
+        for i in range(0, len(critic_items), CRITIC_BATCH_SIZE):
+            critic_batch = critic_items[i:i + CRITIC_BATCH_SIZE]
             verdicts = batch_critic_check(critic_batch)
             all_verdicts.extend(verdicts)
 
-
-
-        
-        # Structure Validation and Duplicate Detection
-        valid_structured = []
-        seen_questions = set()
-        for q_data, chunk in all_generated:
-            
-            # Duplicate detection
-            q_text = q_data.get("text", "")
-            if q_text in seen_questions:
-                continue
-            seen_questions.add(q_text)
-            
-            # Type-specific validation
-            q_type = q_data.get("type", "")
-            if q_type == "Multiple Choice":
-                choices = q_data.get("choices", [])
-                ans = q_data.get("answer", "")
-                if len(choices) != 4 or ans not in choices or len(set(choices)) != 4:
-                    logger.warning("MCQ Validation failed: Choices invalid.")
-                    continue
-            elif q_type == "Step-by-step Solution":
-                ans_data = q_data.get("answerData") or {}
-                steps = ans_data.get("steps", [])
-                if not isinstance(steps, list) or len(steps) < 1:
-                    logger.warning("Step-by-step Validation failed: Missing steps.")
-                    continue
-            
-            valid_structured.append(id(q_data))
-        
-        # Filter by critic verdict and structure validation
         critic_passed: List[Tuple[Dict, Dict]] = []
-        for idx, (q_data, chunk) in enumerate(all_generated):
-            if id(q_data) not in valid_structured:
-                continue
-                
+        for idx, (q_data, chunk) in enumerate(structurally_valid):
             verdict = all_verdicts[idx] if idx < len(all_verdicts) else "FAIL"
             q_preview = q_data.get("text", "")[:80]
             if "PASS" in verdict:
                 critic_passed.append((q_data, chunk))
-                logger.info(f"  ✓ PASSED: {q_preview}...")
+                logger.info(f"  ✓ Critic PASSED: {q_preview}...")
             else:
-                logger.info(f"  ✗ FAILED: {q_preview}...")
+                logger.info(f"  ✗ Critic FAILED: {q_preview}...")
 
         logger.info(
-            f"  Critic results: {len(critic_passed)}/{len(all_generated)} passed"
+            f"  Critic results: {len(critic_passed)}/{len(structurally_valid)} passed"
         )
 
         # ── Stage 5.5: Grounding Layer A/B (Deterministic) ────────────────
@@ -1014,10 +1121,9 @@ def process_and_generate_quiz(
             # Layer B: Quote existence — excerpt must match source text
             excerpt = citation.get("excerpt", "") if isinstance(citation, dict) else ""
             if excerpt and len(excerpt) > 15:
-                # Fuzzy substring match: check if any significant portion exists
-                excerpt_words = excerpt.lower().split()[:8]  # First 8 words
+                excerpt_words = excerpt.lower().split()[:8]
                 match_count = sum(1 for w in excerpt_words if w in context_text.lower())
-                if match_count < len(excerpt_words) * 0.4:  # Less than 40% word overlap
+                if match_count < len(excerpt_words) * 0.4:
                     logger.info(f"  ✗ Layer B FAIL (quote mismatch): {q_data.get('text', '')[:60]}...")
                     continue
             
@@ -1026,89 +1132,120 @@ def process_and_generate_quiz(
         
         logger.info(f"  Grounding results: {len(grounding_passed)}/{len(critic_passed)} passed")
 
-
-        # ── Stage 6: Cosine Similarity Verification ──────────────────────
-        logger.info("[Stage 6/7] Running semantic similarity checks...")
+        # ── Stage 6: Cosine Similarity Verification (Batched) ─────────────
+        logger.info("[Stage 6/7] Running batched semantic similarity checks...")
         valid_questions: List[Dict] = []
 
-        for q_data, chunk in grounding_passed:
-            context_text = (
-                chunk["text"] if isinstance(chunk, dict) else chunk.page_content
-            )
-            question_text = q_data.get("text", "")
+        if grounding_passed:
+            unique_texts = []
+            text_to_idx = {}
+            
+            for q_data, chunk in grounding_passed:
+                q_txt = (q_data.get("text") or "").strip()
+                c_txt = (chunk["text"] if isinstance(chunk, dict) else chunk.page_content).strip()
+                if q_txt and q_txt not in text_to_idx:
+                    text_to_idx[q_txt] = len(unique_texts)
+                    unique_texts.append(q_txt)
+                if c_txt and c_txt not in text_to_idx:
+                    text_to_idx[c_txt] = len(unique_texts)
+                    unique_texts.append(c_txt)
 
             try:
-                q_emb = get_embedding(question_text)
-                c_emb = get_embedding(context_text)
-                sim = cosine_similarity([q_emb], [c_emb])[0][0]
+                all_embeddings = get_batch_embeddings(unique_texts)
+                text_vectors = {txt: all_embeddings[idx] for txt, idx in text_to_idx.items()}
+            except Exception as e_emb:
+                logger.warning(f"  ⚠ Batch embedding failed ({e_emb}). Proceeding with critic merit alone.")
+                text_vectors = {}
 
-                if sim < 0.75:
-                    logger.info(
-                        f"  ✗ Similarity too low ({sim:.3f}): "
-                        f"{question_text[:60]}..."
-                    )
-                    continue
-
-                logger.info(
-                    f"  ✓ Similarity OK ({sim:.3f}): {question_text[:60]}..."
+            for q_data, chunk in grounding_passed:
+                context_text = (
+                    chunk["text"] if isinstance(chunk, dict) else chunk.page_content
                 )
-            except Exception as e:
-                logger.warning(
-                    f"  ⚠ Embedding failed ({e}). "
-                    f"Accepting question on critic merit alone."
-                )
+                question_text = (q_data.get("text") or "").strip()
 
-            # Validate difficulty metadata (AIRAG Part 4.7)
-            est_diff = q_data.get("estimated_difficulty")
-            bloom = q_data.get("bloom_level", "")
-            
-            VALID_BLOOM_LEVELS = {"REMEMBER", "UNDERSTAND", "APPLY", "ANALYZE", "EVALUATE", "CREATE"}
-            
-            # Normalize difficulty to 0.00-1.00 if it's a string like 'Easy'/'Medium'/'Hard'
-            if isinstance(est_diff, str):
-                diff_map = {"easy": 0.25, "medium": 0.5, "hard": 0.75}
-                est_diff = diff_map.get(est_diff.lower(), 0.5)
-            if est_diff is None or not isinstance(est_diff, (int, float)):
-                est_diff = 0.5  # Default to medium
-            est_diff = max(0.0, min(1.0, float(est_diff)))
-            
-            if bloom.upper() not in VALID_BLOOM_LEVELS:
-                bloom = "UNDERSTAND"  # Safe default
-            else:
-                bloom = bloom.upper()
-            
-            # Map numeric difficulty to label for backward compat
-            if est_diff < 0.33:
-                diff_label = "Easy"
-            elif est_diff <= 0.66:
-                diff_label = "Medium"
-            else:
-                diff_label = "Hard"
-            
-            q_data["difficulty"] = diff_label
-            q_data["estimated_difficulty"] = round(est_diff, 2)
-            q_data["bloom_level"] = bloom
+                if question_text in text_vectors and context_text.strip() in text_vectors:
+                    q_emb = text_vectors[question_text]
+                    c_emb = text_vectors[context_text.strip()]
+                    sim = float(cosine_similarity([q_emb], [c_emb])[0][0])
 
-            # Build final question object with citation metadata
-            q_data["citation"] = {
-                "docId": doc_id,
-                "docName": filename,
-                "excerpt": context_text[:250],
-                "confidence": "strong"
-            }
-            # Remove internal batch-processing fields
-            q_data.pop("chunk_index", None)
+                    if sim < 0.75:
+                        logger.info(
+                            f"  ✗ Similarity too low ({sim:.3f}): {question_text[:60]}..."
+                        )
+                        continue
+                    logger.info(f"  ✓ Similarity OK ({sim:.3f}): {question_text[:60]}...")
+                else:
+                    logger.info(f"  ✓ Accepted on critic merit: {question_text[:60]}...")
 
-            valid_questions.append(q_data)
+                # Normalize difficulty metadata
+                est_diff = q_data.get("estimated_difficulty")
+                bloom = q_data.get("bloom_level", "")
+                
+                VALID_BLOOM_LEVELS = {"REMEMBER", "UNDERSTAND", "APPLY", "ANALYZE", "EVALUATE", "CREATE"}
+                
+                if isinstance(est_diff, str):
+                    diff_map = {"easy": 0.25, "medium": 0.5, "hard": 0.75}
+                    est_diff = diff_map.get(est_diff.lower(), 0.5)
+                if est_diff is None or not isinstance(est_diff, (int, float)):
+                    est_diff = 0.5
+                est_diff = max(0.0, min(1.0, float(est_diff)))
+                
+                if not bloom or bloom.upper() not in VALID_BLOOM_LEVELS:
+                    bloom = "UNDERSTAND"
+                else:
+                    bloom = bloom.upper()
+                
+                if est_diff < 0.40:
+                    diff_label = "Easy"
+                elif est_diff < 0.70:
+                    diff_label = "Medium"
+                else:
+                    diff_label = "Hard"
+                
+                # Extract citation metadata from chunk and text
+                meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else getattr(chunk, "metadata", {})
+                if not isinstance(meta, dict):
+                    meta = {}
+
+                section = meta.get("Header 2") or meta.get("Header 1") or meta.get("Header 3") or meta.get("section") or ""
+                # Fallback: extract section header from chunk text if metadata header is absent
+                if not section and context_text:
+                    m_sec = re.search(r"(?:Section:\s*)?(#{1,3}\s+[^\n]+)", context_text)
+                    if m_sec:
+                        section = m_sec.group(1).replace("#", "").strip()
+                    else:
+                        m_sec2 = re.search(r"Section:\s*([^\n]+)", context_text)
+                        if m_sec2:
+                            section = m_sec2.group(1).strip()
+
+                page = meta.get("page") or meta.get("page_number") or meta.get("pageRange") or meta.get("page_label")
+                if not page and isinstance(meta.get("loc"), dict):
+                    page = meta["loc"].get("pageNumber")
+                if not page and context_text:
+                    m_page = re.search(r"(?:Page|page)\s*[:#]?\s*(\d+(?:\s*-\s*\d+)?)", context_text)
+                    if m_page:
+                        page = m_page.group(1).strip()
+
+                page_range = str(page) if page is not None else None
+
+                q_data["citation"] = {
+                    "docId": doc_id,
+                    "docName": filename,
+                    "section": section,
+                    "pageRange": page_range,
+                    "excerpt": context_text[:250],
+                    "confidence": "strong"
+                }
+                q_data.pop("chunk_index", None)
+                valid_questions.append(q_data)
 
         logger.info(f"  Final validated questions: {len(valid_questions)}")
-        
 
-
-        # ── Stage 7: Store Results in DB ──────────────────────────────
+        # ── Stage 7: Store Results in DB and Redis ────────────────────────
         logger.info("[Stage 7/7] Storing results in DB and Redis...")
         r = _get_redis_client()
         
+        actual_saved_count = 0
         if valid_questions:
             r.set(
                 f"generated_questions:{doc_id}",
@@ -1120,34 +1257,61 @@ def process_and_generate_quiz(
                 from supabase import create_client
                 sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
                 
+                # Correct topic determination from request or config
+                base_topic = config.get("category") or config.get("topic")
+                if isinstance(base_topic, list) and base_topic:
+                    base_topic = base_topic[0]
+                elif not isinstance(base_topic, str):
+                    base_topic = "General"
+
+                # Check if this run is already completed (idempotency)
+                try:
+                    run_check = sb.table("generation_runs").select("status, saved_count").eq("request_id", request_id).execute()
+                    if run_check.data and run_check.data[0].get("status") == "COMPLETED" and (run_check.data[0].get("saved_count") or 0) > 0:
+                        logger.info(f"Run {request_id} was already COMPLETED. Preserving existing persisted questions.")
+                        return {"status": "success", "questions_generated": run_check.data[0]["saved_count"]}
+                except Exception as e_check:
+                    logger.debug(f"Idempotency check query note: {e_check}")
+
+                # Clean up any partial inserts for this request_id before fresh save
+                try:
+                    sb.table("GeneratedQuestion").delete().eq("request_id", request_id).execute()
+                except Exception as e_clean:
+                    logger.debug(f"Pre-insert cleanup note: {e_clean}")
+
+                saved_ids = []
                 for q in valid_questions:
-                    # Insert Question
-                    q_res = sb.table("GeneratedQuestion").insert({
+                    q_topic = q.get("topic") or base_topic
+                    
+                    q_payload = {
                         "userId": user_id,
                         "docId": int(doc_id) if str(doc_id).isdigit() else None,
                         "text": q["text"],
                         "type": q.get("type", "Multiple Choice"),
                         "difficulty": q.get("difficulty", "Medium"),
-                        "topic": q.get("topic", topic[0] if isinstance(topic, list) and topic else "General"),
+                        "topic": q_topic,
                         "answer": q.get("answer"),
                         "answerData": q.get("answerData") or {},
                         "estimatedDifficulty": q.get("estimated_difficulty", 0.5),
                         "bloomLevel": q.get("bloom_level", "UNDERSTAND"),
                         "request_id": request_id,
                         "status": "PENDING"
-                    }).execute()
+                    }
+                    
+                    q_res = sb.table("GeneratedQuestion").insert(q_payload).execute()
                     
                     if q_res.data:
                         q_id = q_res.data[0]["id"]
+                        saved_ids.append(q_id)
                         
-                        # Insert Choices
+                        # Insert Choices for MCQ
                         choices = q.get("choices", [])
-                        if choices:
+                        if choices and q.get("type") == "Multiple Choice":
                             labels = ['A', 'B', 'C', 'D', 'E', 'F']
                             choice_payloads = [
                                 {
                                     "questionId": q_id,
-                                    "label": labels[idx] if idx < len(labels) else str(idx),
+                                    "label": c.get("label") or (labels[idx] if idx < len(labels) else str(idx)),
                                     "text": c["text"],
                                     "isCorrect": c.get("isCorrect", False)
                                 } for idx, c in enumerate(choices)
@@ -1159,22 +1323,65 @@ def process_and_generate_quiz(
                         if citation:
                             sb.table("QuestionCitation").insert({
                                 "questionId": q_id,
-                                "docName": filename,
+                                "docName": citation.get("docName") or filename,
                                 "section": citation.get("section", ""),
-                                "pageRange": citation.get("pageRange", ""),
+                                "pageRange": citation.get("pageRange") or None,
                                 "excerpt": citation.get("excerpt", ""),
                                 "confidence": citation.get("confidence", "strong")
                             }).execute()
-                            
-            except Exception as e_db:
-                logger.error(f"Failed to save questions to DB: {e_db}")
 
-            logger.info(
-                f"{'═' * 60}\n"
-                f"  SUCCESS: {len(valid_questions)} questions saved "
-                f"(doc_id={doc_id})\n"
-                f"{'═' * 60}"
-            )
+                actual_saved_count = len(saved_ids)
+                # Verify persisted count directly from Supabase
+                try:
+                    verify_res = sb.table("GeneratedQuestion").select("id", count="exact").eq("request_id", request_id).execute()
+                    if verify_res.count is not None:
+                        actual_saved_count = verify_res.count
+                except Exception:
+                    pass
+
+            except Exception as e_db:
+                logger.error(f"Failed to save questions to DB: {e_db}", exc_info=True)
+                actual_saved_count = 0
+
+            if actual_saved_count > 0:
+                logger.info(
+                    f"{'═' * 60}\n"
+                    f"  SUCCESS: {actual_saved_count} questions saved to Supabase "
+                    f"(doc_id={doc_id}, request_id={request_id})\n"
+                    f"{'═' * 60}"
+                )
+                try:
+                    from supabase import create_client
+                    sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+                    sb.table("generation_runs").update({
+                        "status": "COMPLETED",
+                        "stage": "Finished successfully",
+                        "progress": 100.0,
+                        "validated_count": len(valid_questions),
+                        "saved_count": actual_saved_count,
+                        "raw_generated": len(all_generated),
+                        "error_message": None
+                    }).eq("request_id", request_id).execute()
+                except Exception as e_sb:
+                    logger.error(f"Failed to update run status: {e_sb}")
+                return {"status": "success", "questions_generated": actual_saved_count}
+            else:
+                logger.error(f"CRITICAL: 0 questions persisted in DB for request_id={request_id}. NOT reporting SUCCESS.")
+                try:
+                    from supabase import create_client
+                    sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+                    sb.table("generation_runs").update({
+                        "status": "FAILED",
+                        "stage": "Database persistence failed",
+                        "progress": 100.0,
+                        "validated_count": len(valid_questions),
+                        "saved_count": 0,
+                        "raw_generated": len(all_generated),
+                        "error_message": "Database insert failed to save valid questions."
+                    }).eq("request_id", request_id).execute()
+                except Exception:
+                    pass
+                return {"status": "failed", "error": "Database persistence failed"}
         else:
             logger.warning(
                 f"{'═' * 60}\n"
@@ -1189,32 +1396,21 @@ def process_and_generate_quiz(
                 )
             }]
             r.set(f"generated_questions:{doc_id}", json.dumps(error_msg))
-
-        # Pipeline Metrics
-        logger.info(f"[Metrics] Pipeline Summary:")
-        logger.info(f"  Doc ID: {doc_id}")
-        logger.info(f"  Chunks retrieved: {len(top_chunks)}")
-        logger.info(f"  Raw questions generated: {len(all_generated)}")
-        logger.info(f"  Critic passed: {len(critic_passed)}")
-        logger.info(f"  Grounding passed: {len(grounding_passed)}")
-        logger.info(f"  Final valid: {len(valid_questions)}")
-        logger.info(f"  Attempt: {attempt}")
-
-        try:
-            from supabase import create_client
-            sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
-            sb.table("generation_runs").update({
-                "status": "COMPLETED",
-                "stage": "Finished successfully",
-                "progress": 100.0,
-                "validated_count": len(valid_questions),
-                "saved_count": len(valid_questions),
-                "raw_generated": len(all_generated),
-                "error_message": None
-            }).eq("request_id", request_id).execute()
-        except Exception as e_sb:
-            logger.error(f"Failed to update run status: {e_sb}")
-        return {"status": "success", "questions_generated": len(valid_questions)}
+            try:
+                from supabase import create_client
+                sb = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+                sb.table("generation_runs").update({
+                    "status": "FAILED",
+                    "stage": "Quality gates rejected candidates",
+                    "progress": 100.0,
+                    "validated_count": 0,
+                    "saved_count": 0,
+                    "raw_generated": len(all_generated),
+                    "error_message": "No valid questions passed quality gates."
+                }).eq("request_id", request_id).execute()
+            except Exception:
+                pass
+            return {"status": "failed", "questions_generated": 0}
 
     except Exception as e:
         logger.error(f"CRITICAL ERROR in pipeline: {e}", exc_info=True)

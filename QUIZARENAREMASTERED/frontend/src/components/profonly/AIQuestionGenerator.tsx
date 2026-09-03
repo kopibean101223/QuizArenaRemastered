@@ -463,12 +463,13 @@ function GeneratePanel({
   generating 
 }: { 
   docs: SyllabusDoc[]; 
-  onGenerate: (config: { count: string; qtypes: string[]; docId: number | "all" }) => void; 
+  onGenerate: (config: { count: string; qtypes: string[]; docId: number | "all"; isAdaptive?: boolean }) => void; 
   generating: boolean;
 }) {
   const [count, setCount] = useState("5");
   const [selectedQtypes, setSelectedQtypes] = useState<string[]>(["Multiple Choice"]);
   const [selectedDoc, setSelectedDoc] = useState<number | "all">("all");
+  const [isAdaptive, setIsAdaptive] = useState(true);
   
   const readyDocs = docs.filter(d => d.status === "ready");
 
@@ -517,6 +518,40 @@ function GeneratePanel({
         </div>
       </div>
 
+      {/* EMERSON CANLAS POGI KO */}
+      {/* Adaptive Mode Indicator / Toggle */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: isAdaptive ? C.indigoLight : C.offWhite, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${isAdaptive ? C.indigoBorder : C.border}` }}>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: isAdaptive ? C.indigo : C.navy }}>Adaptive Question Pool</span>
+          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, color: C.muted }}>Generates 3x candidate pool (30% Easy, 40% Med, 30% Hard)</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setIsAdaptive(prev => !prev)}
+          style={{
+            background: isAdaptive ? C.indigo : "#CBD5E1",
+            border: "none",
+            borderRadius: 16,
+            width: 38,
+            height: 22,
+            cursor: "pointer",
+            position: "relative",
+            transition: "background 0.2s"
+          }}
+          title={isAdaptive ? "Adaptive pool enabled (3x surplus)" : "Standard exact count"}
+        >
+          <span style={{
+            position: "absolute",
+            top: 3,
+            left: isAdaptive ? 19 : 3,
+            width: 16,
+            height: 16,
+            borderRadius: "50%",
+            background: "#fff",
+            transition: "left 0.2s"
+          }} />
+        </button>
+      </div>
      
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -556,7 +591,7 @@ function GeneratePanel({
 
       {/* Action Button */}
       <button 
-        onClick={() => onGenerate({ count, qtypes: selectedQtypes, docId: selectedDoc })}
+        onClick={() => onGenerate({ count, qtypes: selectedQtypes, docId: selectedDoc, isAdaptive })}
         disabled={generating || readyDocs.length === 0 || selectedQtypes.length === 0} 
         style={{ 
           width: "100%", 
@@ -591,6 +626,66 @@ export function AIQuestionGenerator() {
   const [generating, setGenerating] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const refreshQuestions = async () => {
+    try {
+      const refreshRes = await fetch('/api/rag/data');
+      if (refreshRes.ok) {
+        const freshData = await refreshRes.json();
+        if (freshData.questions) {
+          const normalized = (freshData.questions || []).map((q: any) => ({
+            ...q,
+            status: String(q.status || "pending").toLowerCase() as QuestionStatus
+          }));
+          setQuestions(normalized);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to refresh questions:", e);
+    }
+  };
+
+  const startPolling = (requestId: string) => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+
+    setGenerating(true);
+
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const pollRes = await fetch('/api/rag/generate/status?request_id=' + requestId);
+        if (!pollRes.ok) throw new Error("Backend error fetching status");
+        
+        const pollData = await pollRes.json();
+        const stage = pollData.stage || "Processing...";
+        const progress = pollData.progress ? ` (${Math.round(pollData.progress)}%)` : "";
+        toast.loading(`AI is crafting questions... ${stage}${progress}`, { id: "generating" });
+        
+        if (pollData.status === "COMPLETED" || pollData.status === "PARTIAL") {
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+          localStorage.removeItem("activeGenerationTask");
+          toast.success(pollData.status === "COMPLETED" ? "Questions generated and saved successfully!" : "Partial questions saved!", { id: "generating" });
+          setGenerating(false);
+          await refreshQuestions();
+        } else if (pollData.status === "FAILED") {
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+          localStorage.removeItem("activeGenerationTask");
+          toast.error(pollData.error || "Generation failed", { id: "generating" });
+          setGenerating(false);
+        }
+      } catch (err: any) {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        toast.error("Polling interrupted: " + err.message, { id: "generating" });
+        setGenerating(false);
+      }
+    }, 2500);
+  };
 
   useEffect(() => {
     async function fetchInitialData() {
@@ -610,6 +705,34 @@ export function AIQuestionGenerator() {
       }
     }
     fetchInitialData();
+
+    // UI Recovery: check if background generation was running before page refresh
+    const savedTaskId = localStorage.getItem("activeGenerationTask");
+    if (savedTaskId) {
+      fetch('/api/rag/generate/status?request_id=' + savedTaskId)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status && !["COMPLETED", "FAILED", "PARTIAL", "NOT_FOUND"].includes(data.status)) {
+            toast.loading(`Resuming generation... (${data.stage || "Processing"})`, { id: "generating" });
+            startPolling(savedTaskId);
+          } else {
+            localStorage.removeItem("activeGenerationTask");
+            if (data.status === "COMPLETED" || data.status === "PARTIAL") {
+              refreshQuestions();
+            }
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem("activeGenerationTask");
+        });
+    }
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
   }, []);
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -668,6 +791,7 @@ export function AIQuestionGenerator() {
     count: string;
     qtypes: string[];
     docId: number | "all";
+    isAdaptive?: boolean;
   }) => {
     if (docs.length === 0) {
       toast.error("Please upload at least one syllabus document first.");
@@ -688,6 +812,7 @@ export function AIQuestionGenerator() {
           types: config.qtypes,
           document_id: activeDocId,
           category: "General",
+          isAdaptive: config.isAdaptive !== undefined ? config.isAdaptive : true,
         }),
       });
 
@@ -702,40 +827,14 @@ export function AIQuestionGenerator() {
         throw new Error("No requestId returned from server");
       }
 
-      const pollInterval = setInterval(async () => {
-        try {
-          const pollRes = await fetch('/api/rag/generate/status?request_id=' + requestId);
-          if (!pollRes.ok) throw new Error("Backend error");
-          
-          const pollData = await pollRes.json();
-          const stage = pollData.stage || "Processing...";
-          toast.loading("AI is crafting questions... " + stage, { id: "generating" });
-          
-          if (pollData.status === "COMPLETED" || pollData.status === "PARTIAL") {
-            clearInterval(pollInterval);
-            toast.success("Questions generated successfully!", { id: "generating" });
-            setGenerating(false);
-            const refreshRes = await fetch('/api/rag/data');
-            if (refreshRes.ok) {
-                const freshData = await refreshRes.json();
-                if (freshData.questions) setQuestions(freshData.questions);
-            }
-          } else if (pollData.status === "FAILED") {
-            clearInterval(pollInterval);
-            toast.error(pollData.error || "Generation failed", { id: "generating" });
-            setGenerating(false);
-          }
-        } catch (err: any) {
-          clearInterval(pollInterval);
-          toast.error("Polling interrupted: " + err.message, { id: "generating" });
-          setGenerating(false);
-        }
-      }, 2500);
+      localStorage.setItem("activeGenerationTask", requestId);
+      startPolling(requestId);
 
     } catch (error: any) {
       console.error("Error generating questions:", error);
       toast.error(error.message || "Failed to generate questions.", { id: "generating" });
       setGenerating(false);
+      localStorage.removeItem("activeGenerationTask");
     }
   };
 

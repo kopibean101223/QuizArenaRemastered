@@ -277,16 +277,28 @@ class GenerateRequest(BaseModel):
     types: List[str] = ["Multiple Choice"]
     filename: str = "Unknown"
     category: str = "General"
+    isAdaptive: Optional[bool] = True
+    is_adaptive: Optional[bool] = None
 
 @fastapi_app.post("/generate")
 async def generate_questions(req: GenerateRequest):
     """Starts generation pipeline and returns a requestId for polling."""
     request_id = str(uuid.uuid4())
     
+    # Determine adaptive mode (defaults to True as per specification)
+    adaptive_mode = True
+    if req.is_adaptive is not None:
+        adaptive_mode = req.is_adaptive
+    elif req.isAdaptive is not None:
+        adaptive_mode = req.isAdaptive
+
+    # EMERSON CANLAS POGI KO
+    target_pool_size = (req.count * 3) if adaptive_mode else req.count
+
     # Store initial state in Supabase
     if supabase_client:
         try:
-            supabase_client.table("generation_runs").insert({
+            base_payload = {
                 "request_id": request_id,
                 "document_id": req.document_id,
                 "user_id": req.user_id,
@@ -296,7 +308,17 @@ async def generate_questions(req: GenerateRequest):
                 "requested_count": req.count,
                 "types": req.types,
                 "created_at": datetime.utcnow().isoformat()
-            }).execute()
+            }
+            try:
+                # Include adaptive tracking columns if table has them
+                supabase_client.table("generation_runs").insert({
+                    **base_payload,
+                    "is_adaptive": adaptive_mode,
+                    "target_pool_size": target_pool_size
+                }).execute()
+            except Exception:
+                # Fallback if migration hasn't been applied yet
+                supabase_client.table("generation_runs").insert(base_payload).execute()
         except Exception as e:
             print(f"Supabase init run error: {e}")
             raise HTTPException(status_code=500, detail="Failed to initialize generation run in database.")
@@ -304,13 +326,21 @@ async def generate_questions(req: GenerateRequest):
     config = {
         "count": req.count,
         "types": req.types,
-        "category": req.category
+        "category": req.category,
+        "is_adaptive": adaptive_mode,
+        "target_pool_size": target_pool_size
     }
     
     from app.celery_worker import process_and_generate_quiz
     process_and_generate_quiz.delay(request_id, req.document_id, req.user_id, req.filename, config)
     
-    return {"requestId": request_id, "status": "QUEUED", "message": "Generation started."}
+    return {
+        "requestId": request_id,
+        "status": "QUEUED",
+        "isAdaptive": adaptive_mode,
+        "targetPoolSize": target_pool_size,
+        "message": "Generation started."
+    }
 
 @fastapi_app.get("/generate/status/{request_id}")
 async def get_generation_status(request_id: str):
@@ -332,9 +362,12 @@ async def get_generation_status(request_id: str):
                     "status": run["status"],
                     "stage": run["stage"],
                     "progress": run["progress"],
+                    "requestedCount": run.get("requested_count", 0),
                     "rawGenerated": run.get("raw_generated", 0),
                     "validated": run.get("validated_count", 0),
                     "saved": run.get("saved_count", 0),
+                    "isAdaptive": run.get("is_adaptive", True),
+                    "targetPoolSize": run.get("target_pool_size", run.get("requested_count", 0)),
                     "error": run.get("error_message")
                 }
         except Exception as e:
