@@ -1181,7 +1181,7 @@ def process_and_generate_quiz(
                     c_emb = text_vectors[context_text.strip()]
                     sim = float(cosine_similarity([q_emb], [c_emb])[0][0])
 
-                    if sim < 0.75:
+                    if sim < 0.65:
                         logger.info(
                             f"  ✗ Similarity too low ({sim:.3f}): {question_text[:60]}..."
                         )
