@@ -231,7 +231,7 @@ function buildTypedFields(q: any, options: string[]): NormalizedQuestion {
     topic: q.topic || 'General',
     subject: q.subject || q.topic || 'General Knowledge',
     text: q.text || q.question,
-    points: Number(q.points) || 10,
+    points: Number.isFinite(Number(q.points)) ? Number(q.points) : 0,
     timeLimit: Number(q.timeLimit) || 60,
     explanation: q.explanation ?? undefined,
     mediaUrl: q.mediaUrl ?? undefined,

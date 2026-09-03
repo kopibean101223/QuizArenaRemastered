@@ -697,10 +697,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     } else {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
-          type: 'ADVANCE_QUESTION',
+          type: 'PROF_END_BATTLE',
           battleId: activeSessionId,
-          currentIndex: currentIndex,
-          isLastQuestion: true
         }));
       }
       toast.success("Quiz completed!");

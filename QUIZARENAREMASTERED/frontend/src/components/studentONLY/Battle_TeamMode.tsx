@@ -17,6 +17,7 @@ import { BattleChat, BattleChatMessage } from './battle/BattleChat';
 import { PowerCardTray } from './PowerCards/PowerCardTray';
 import { TEAM_MODE_CARDS } from './PowerCards/CardCatalog';
 import type { PowerCardData } from './PowerCards/types';
+import { ChoosePowerUp } from './PowerCards/ChoosePowerUp';
 export interface TeamMemberAnswer {
   memberId: string;
   memberName: string;
@@ -264,16 +265,12 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
   const handleSelectOption = (optionKey: string) => {
     if (confirmed) return;
     setSelectedOption(optionKey);
-  };
-
-  const handleConfirmAnswer = () => {
-    if (!selectedOption || confirmed) return;
     setConfirmed(true);
 
     const myAnswer: TeamMemberAnswer = {
       memberId,
       memberName,
-      selectedOption,
+      selectedOption: optionKey,
       submittedAt: Date.now(),
     };
 
@@ -283,14 +280,6 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
       questionIndex,
       answer: myAnswer,
     });
-
-    const newCount = correctAnswersCount + 1;
-    setCorrectAnswersCount(newCount);
-
-    if (newCount >= 2) {
-      setShowChoosePowerUP(true);
-      setCorrectAnswersCount(0);
-    }
   };
 
   const handleAnswerInputSubmit = (value: any) => {
@@ -376,16 +365,23 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
     });
   };
 
-  function handleChoosePowerUP(cardIndex: number) {
-    const selectedCard = TEAM_MODE_CARDS[cardIndex];
+  function handleChoosePowerUP(selectedCard: PowerCardData) {
     if (!selectedCard) return;
-
-    setCollectedPowerCards((prev) => [...prev, { ...selectedCard, id: `${selectedCard.id}-${Date.now()}` }]);
+    send({
+      type: 'BATTLE_ACTION',
+      battleId,
+      userId: memberId,
+      sender: memberName,
+      action: 'USE_TEAM_POWER_CARD',
+      cardId: selectedCard.id,
+      questionIndex,
+      message: `team majority used power card: ${selectedCard.name}`,
+    });
     setTeamScore((prev) => prev + estimatePowerupBoost(selectedCard));
-    setRoundOutcome(`${selectedCard.name} activated for the team. Auto-applied via majority vote.`);
+    setRoundOutcome(`${selectedCard.name} applied to the current round by team majority.`);
     setShowChoosePowerUP(false);
     setCorrectAnswersCount(0);
-  }
+}
 
   if (!currentQuestion) {
     return (
@@ -439,7 +435,7 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
 
       <PowerCardTray
         topClassName="top-60"
-        cards={collectedPowerCards.length > 0 ? collectedPowerCards : TEAM_MODE_CARDS.slice(0, 3)}
+        cards={collectedPowerCards}
       />
 
 
@@ -484,16 +480,6 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
                 })}
               </div>
 
-              <button
-                type="button"
-                disabled={!selectedOption || confirmed}
-                onClick={handleConfirmAnswer}
-                className="w-full bg-[#2ED47A] disabled:opacity-40 disabled:cursor-not-allowed text-black font-extrabold py-4 rounded-xl flex items-center justify-center gap-2"
-              >
-                <Crown size={18} fill="#000" />
-                {confirmed ? 'Answer Locked In — waiting for the timer…' : 'Confirm Final Answer'}
-                <CheckCircle size={18} />
-              </button>
             </>
           ) : (
             <div className="flex flex-col gap-3">
@@ -553,43 +539,13 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
           </div>
         </div>
       </div>
-    {showChoosePowerUP && (
-      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-        <div className="w-full max-w-4xl rounded-3xl border border-[#5B3DF6]/40 bg-[#171b2d] p-6 shadow-[0_0_30px_rgba(91,61,246,0.3)]">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <div>
-              <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#8F93A8]">Team power-up</div>
-              <h3 className="mt-1 text-2xl font-black text-white">2 wins unlocked</h3>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowChoosePowerUP(false)}
-              className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-white/80"
-            >
-              Skip
-            </button>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {TEAM_MODE_CARDS.map((card, index) => (
-              <button
-                key={card.id}
-                type="button"
-                onClick={() => handleChoosePowerUP(index)}
-                className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition hover:border-[#5B3DF6] hover:bg-[#5B3DF6]/10"
-              >
-                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[#A98CFF]">{card.rarity}</div>
-                <div className="mt-2 text-lg font-black text-white">{card.name}</div>
-                <p className="mt-2 text-sm text-white/70">{card.description}</p>
-                <div className="mt-4 inline-flex rounded-full bg-[#5B3DF6]/20 px-2.5 py-1 text-xs font-black text-[#A98CFF]">
-                  +{estimatePowerupBoost(card)} team points
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    )}
+    {/* Choose Power-Up Modal */}
+      {showChoosePowerUP && (
+        <ChoosePowerUp
+          drawnCards={TEAM_MODE_CARDS.slice(0, 3)}
+          onSelectCard={handleChoosePowerUP}
+        />
+      )}
     </div>
   );
 }

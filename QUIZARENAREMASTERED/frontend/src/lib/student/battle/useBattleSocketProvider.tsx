@@ -293,7 +293,8 @@ export function BattleSocketProvider({
       ) {
         const m = data.type === 'ROYALE_STATE_SYNC' ? 'ROYALE' : 'TEAM';
         setBattleMode(m);
-        setCountdown((prev) => (prev === null ? 3 : prev));
+        setBattleStarted(true);
+        setCountdown(null);
       }
 
       if (data.type === 'BINGO_STATE_SYNC') {
@@ -424,7 +425,53 @@ export function BattleSocketProvider({
         }
       }
 
+      if (data.type === 'POWER_CARD_APPLIED' && Array.isArray(data.leaderboard)) {
+        setLeaderboard(data.leaderboard.map((item: any, idx: number) => ({
+          id: item.id || item.userId,
+          name: item.name || item.sender || `Player ${idx + 1}`,
+          initials: (item.name || 'P').substring(0, 2).toUpperCase(),
+          color: AVATAR_COLORS[idx % AVATAR_COLORS.length],
+          score: item.score || 0,
+          streak: item.streak || 0,
+          isMe: (item.id || item.userId) === resolvedUserId,
+          isLeader: idx === 0,
+          correctAnswers: item.correctAnswers,
+          totalQuestions: item.totalQuestions,
+          accuracy: item.accuracy,
+          isActive: item.isActive,
+        })));
+      } else if (data.type === 'POWER_CARD_APPLIED' && data.updatedPlayer) {
+        const updatedId = data.updatedPlayer.id || data.updatedPlayer.userId || data.userId;
+        setLeaderboard((previous) => {
+          const updated = previous.map((player) => player.id === updatedId
+            ? { ...player, score: Number(data.updatedPlayer.score ?? player.score) }
+            : player
+          );
+          if (updated.some((player) => player.id === updatedId)) return updated;
+          return [...updated, {
+            id: String(updatedId),
+            name: String(data.updatedPlayer.name || 'You'),
+            initials: String(data.updatedPlayer.name || 'Y').substring(0, 2).toUpperCase(),
+            color: AVATAR_COLORS[updated.length % AVATAR_COLORS.length],
+            score: Number(data.updatedPlayer.score ?? 0),
+            streak: Number(data.updatedPlayer.streak ?? 0),
+            isMe: updatedId === resolvedUserId,
+            isLeader: false,
+          }];
+        });
+      }
+
       if (data.type === 'BATTLE_ACTION') {
+        if (
+          data.action === 'USE_POWER_CARD' ||
+          data.action === 'USE_TEAM_POWER_CARD' ||
+          data.message?.startsWith('answered:') ||
+          data.message?.startsWith('used power card:') ||
+          data.message?.startsWith('team majority used power card:')
+        ) {
+          console.log('[Battle action]', data);
+          return;
+        }
         const newMsg = {
           id: data.id || `${data.userId}-${Date.now()}-${Math.random()}`,
           sender: data.sender || 'Anonymous',
@@ -473,11 +520,9 @@ export function BattleSocketProvider({
   useEffect(() => {
     if (countdown === null) return;
     if (countdown === 0) {
-      const t = setTimeout(() => {
-        setBattleStarted(true);
-        setCountdown(null);
-      }, 1500);
-      return () => clearTimeout(t);
+      setBattleStarted(true);
+      setCountdown(null);
+      return;
     }
     const t = setTimeout(() => setCountdown((c) => (c ?? 1) - 1), 1000);
     return () => clearTimeout(t);

@@ -49,6 +49,10 @@ export interface BattlePayload {
   forceReset?: boolean;
   questions?: unknown[];
   playerData?: PlayerData;
+  userId?: string;
+  cardId?: string;
+  targetId?: string;
+  questionIndex?: number;
   mode?: string; // ADDED: required for mode validation
   distributionMode?: 'adaptive' | 'uniform';
   adaptive?: boolean;

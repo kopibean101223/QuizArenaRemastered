@@ -12,6 +12,7 @@ import { CountdownBar } from './LiveBattleCOMPONENTONLY/CountdownBar';
 import { BattleChat, BattleChatMessage } from './battle/BattleChat';
 import { PowerCardTray } from './PowerCards/PowerCardTray';
 import { BINGO_STEAL_CARDS, BINGO_RETAKE_CARDS } from './PowerCards/CardCatalog';
+import { ChoosePowerUp } from './PowerCards/ChoosePowerUp';
 import type { PowerCardData } from './PowerCards/types';
 
 type CellStatus = 'unanswered' | 'correct' | 'wrong';
@@ -207,12 +208,25 @@ export function BattleBingo({ battleId }: { battleId: string }) {
     send({ type: 'BINGO_CHAT', mode: 'BINGO', battleId, sender: studentName, userId: currentUserId, message: text });
   }
 
-  function handleChoosePowerUP(powerUp: 'steal' | 'retake') {
-    const selectedCard = powerUp === 'steal' ? BINGO_STEAL_CARDS[0] : BINGO_RETAKE_CARDS[0];
-    setCollectedPowerCards((prev) => [...prev, { ...selectedCard, id: `${selectedCard.id}-${Date.now()}` }]);
-    setShowChoosePowerUP(false);
-    // Reset counter for next power-up opportunity
-    setCorrectAnswersCount(0);
+  function handleChoosePowerUP(selectedCard: PowerCardData) {
+  setCollectedPowerCards((prev) => [
+    ...prev,
+    { ...selectedCard, id: `${selectedCard.id}-${Date.now()}` },
+  ]);
+  setShowChoosePowerUP(false);
+  setCorrectAnswersCount(0);
+}
+
+  function handleUsePowerCard(card: PowerCardData, selectedTargetId?: string) {
+    if (card.name === 'Steal') {
+      if (!selectedTargetId || !discardValue || phase !== 'stealing') return;
+      send({ type: 'USE_BINGO_STEAL', mode: 'BINGO', battleId, targetUserId: selectedTargetId, discardValue: Number(discardValue) });
+    } else if (card.name === 'Retake') {
+      if (phase !== 'retake' || !answer || retakeUsed) return;
+      send({ type: 'USE_BINGO_RETAKE', mode: 'BINGO', battleId, answer, retakeValue: Number(retakeValue) });
+      setRetakeUsed(true);
+    }
+    setCollectedPowerCards((previous) => previous.filter((item) => item.id !== card.id));
   }
 
   if (phase === 'finished') {
@@ -261,14 +275,8 @@ export function BattleBingo({ battleId }: { battleId: string }) {
           cards={collectedPowerCards}
           topClassName="top-60"
           size="md"
-          onCardUse={(card) => {
-            // Handle power-up usage based on card type
-            if (card.name === 'Steal') {
-              // Show steal UI
-            } else if (card.name === 'Retake') {
-              // Show retake UI
-            }
-          }}
+          onCardUse={handleUsePowerCard}
+          targetOptions={players.filter((player) => player.id !== currentUserId).map((player) => ({ id: player.id, name: player.name }))}
         />
       )}
 
@@ -600,49 +608,12 @@ export function BattleBingo({ battleId }: { battleId: string }) {
       </div>
 
       {/* Choose Power-Up Modal */}
+      {/* Choose Power-Up Modal */}
       {showChoosePowerUP && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-[#1C1F33] border border-white/10 rounded-3xl p-8 max-w-2xl w-full mx-4">
-            <div className="text-center mb-8">
-              <div className="flex items-center justify-center gap-2 mb-3">
-                <Sparkles size={28} className="text-[#FFC93C]" />
-                <h2 className="text-2xl font-black text-white">Power-Up Earned!</h2>
-                <Sparkles size={28} className="text-[#FFC93C]" />
-              </div>
-              <p className="text-sm text-white/60">You've answered 2 questions correctly! Choose a power-up to add to your deck.</p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-6">
-              {/* Steal Card Option */}
-              <button
-                onClick={() => handleChoosePowerUP('steal')}
-                className="group relative flex flex-col items-center gap-4 p-6 rounded-2xl border border-[#4DA3FF]/30 bg-[#4DA3FF]/5 hover:bg-[#4DA3FF]/10 hover:border-[#4DA3FF] transition-all"
-              >
-                <div className="p-4 bg-[#4DA3FF]/20 rounded-xl group-hover:bg-[#4DA3FF]/30 transition-colors">
-                  <Shield size={32} className="text-[#4DA3FF]" />
-                </div>
-                <div className="text-center">
-                  <h3 className="font-extrabold text-white mb-2">Steal</h3>
-                  <p className="text-xs text-white/60 leading-snug">Blindly swap a number with another player.</p>
-                </div>
-              </button>
-
-              {/* Retake Card Option */}
-              <button
-                onClick={() => handleChoosePowerUP('retake')}
-                className="group relative flex flex-col items-center gap-4 p-6 rounded-2xl border border-[#2ED47A]/30 bg-[#2ED47A]/5 hover:bg-[#2ED47A]/10 hover:border-[#2ED47A] transition-all"
-              >
-                <div className="p-4 bg-[#2ED47A]/20 rounded-xl group-hover:bg-[#2ED47A]/30 transition-colors">
-                  <RefreshCcw size={32} className="text-[#2ED47A]" />
-                </div>
-                <div className="text-center">
-                  <h3 className="font-extrabold text-white mb-2">Retake</h3>
-                  <p className="text-xs text-white/60 leading-snug">Recover one of your incorrect numbers.</p>
-                </div>
-              </button>
-            </div>
-          </div>
-        </div>
+        <ChoosePowerUp
+          drawnCards={[BINGO_STEAL_CARDS[0], BINGO_RETAKE_CARDS[0]]}
+          onSelectCard={handleChoosePowerUP}
+        />
       )}
     </div>
   );

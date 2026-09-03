@@ -101,7 +101,19 @@ useEffect(() => {
             .maybeSingle();
           
           if (data?.status === 'ACTIVE') {
-            enterBattle(data.room_code || parsed.code, parsed.sid, data.mode || parsed.mode);
+            const { data: existingResult } = await supabase
+              .from('quiz_results')
+              .select('id')
+              .eq('session_id', parsed.sid)
+              .eq('user_id', user?.id || '')
+              .maybeSingle();
+
+            if (existingResult) {
+              localStorage.removeItem(STORAGE_KEY);
+              toast.error('You can only take this quiz once.');
+            } else {
+              enterBattle(data.room_code || parsed.code, parsed.sid, data.mode || parsed.mode);
+            }
           } else {
             localStorage.removeItem(STORAGE_KEY);
           }

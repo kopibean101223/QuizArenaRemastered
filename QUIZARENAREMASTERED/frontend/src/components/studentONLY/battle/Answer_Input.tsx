@@ -117,14 +117,35 @@ export function AnswerInput({ question, disabled, revealed, onSubmit }: AnswerIn
 
     case "Short Answer":
       return (
-        <textarea
-          value={text}
-          disabled={disabled}
-          placeholder="Type your answer..."
-          onChange={(e) => setText(e.target.value)}
-          rows={3}
-          style={{ ...inputBaseStyle, resize: "none" }}
-        />
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <textarea
+            value={text}
+            disabled={disabled}
+            placeholder="Type your answer..."
+            onChange={(e) => setText(e.target.value)}
+            rows={3}
+            style={{ ...inputBaseStyle, resize: "none" }}
+          />
+          <button
+            type="button"
+            disabled={disabled || !text.trim()}
+            onClick={() => onSubmit(text)}
+            style={{
+              width: "100%",
+              padding: "12px 16px",
+              border: "none",
+              borderRadius: 12,
+              background: disabled || !text.trim() ? "rgba(255,255,255,0.1)" : C.indigo,
+              color: "#fff",
+              fontFamily: "Manrope, sans-serif",
+              fontWeight: 800,
+              cursor: disabled || !text.trim() ? "default" : "pointer",
+              opacity: disabled || !text.trim() ? 0.5 : 1,
+            }}
+          >
+            Submit Answer
+          </button>
+        </div>
       );
 
     case "Step-by-step Solution": {

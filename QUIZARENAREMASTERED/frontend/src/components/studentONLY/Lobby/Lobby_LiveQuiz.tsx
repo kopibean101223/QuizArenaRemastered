@@ -61,7 +61,7 @@ export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
   return (
     <>
       <StudentTopBar />
-      <div style={{ minHeight: "100vh", background: C.navy, display: "flex", flexDirection: "column", paddingTop: 48, paddingBottom: 32 }}>
+      <div style={{ minHeight: "100vh", background: C.navy, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 48, paddingBottom: 32 }}>
 
         <div style={{ textAlign: "center", marginBottom: 24, padding: "0 24px" }}>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,201,60,0.15)", border: "1.5px solid rgba(255,201,60,0.3)", borderRadius: 20, padding: "5px 16px", marginBottom: 12 }}>
@@ -69,12 +69,13 @@ export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
             <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: C.yellow, letterSpacing: "0.1em", textTransform: "uppercase" }}>
               Live Quiz Lobby
             </span>
+          </div>
           <h1 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 48, fontWeight: 700, color: "#fff", margin: 0 }}>
             Ready to <span style={{ color: C.yellow }}>Battle?</span>
           </h1>
         </div>
 
-          <div style={{ width: "100%", maxWidth: 600 }}>
+          <div style={{ width: "100%", maxWidth: 600, marginLeft: 24, marginRight: 24 }}>
             <div style={{ background: "rgba(255,255,255,0.05)", border: "1.5px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "22px 24px", display: "flex", flexDirection: "column", gap: 12, textAlign: "center" }}>
               <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.green, margin: 0, textTransform: "uppercase", letterSpacing: "0.1em" }}>
                 Successfully Joined Room
@@ -114,7 +115,6 @@ export function Lobby_LiveQuiz({ sessionId, roomCode }: LobbyModeProps) {
             </div>
           </div>
 
-        </div>
       </div>
 
       {countdown !== null && <CountdownDisplay count={countdown} />}

@@ -14,6 +14,7 @@ import { SelfPacedBattle } from "./Battle_OwnPace";
 import { StudentBossRaid } from "../gamemodes/StudentBossRaid";
 import { StudentEndlessMode } from "../gamemodes/StudentEndlessMode";
 import { PENDING_JOIN_CODE_KEY } from "@/lib/student/studentData";
+import { resolveRoomCode } from "@/lib/student/joinlobby";
 
 // ─── Palette ────────────────────────────────────────────────────────────────────
 const C = {
@@ -137,30 +138,19 @@ export function BattleLobby() {
     const code = inputCode.trim().toUpperCase();
 
     try {
-      const { data, error } = await supabase
-        .from('quiz_sessions')
-        .select('id, section_id') // FIX: need the unique session id, not just section_id
-        .eq('room_code', code)
-        .eq('status', 'ACTIVE')
-        .maybeSingle();
-
-      if (error) {
-        alert("Database Error: " + error.message);
-        return;
-      }
-
-      if (!data) {
-        alert("Invalid Code! If you are sure this code exists, Supabase RLS is blocking your read access.");
+      const result = await resolveRoomCode(supabase, code);
+      if (!result.ok || !result.sessionId) {
+        alert(result.message);
         return;
       }
 
       setRoomCode(code);
-      setActualSessionId(data.id); // FIX: was data.section_id
+      setActualSessionId(result.sessionId);
       // FIX: the results screen (via page.tsx) reads battleId from
       // activeSectionId in context, not from this component's local
       // state - without this, that id was lost the moment navigate()
       // switched pages, and results always joined an empty battleId.
-      setActiveSectionId(data.id);
+      setActiveSectionId(result.sessionId);
       setHasJoined(true);
       toast.success("Successfully joined the live lobby!");
     } catch (err) {
@@ -238,6 +228,7 @@ export function BattleLobby() {
           else if (mode === "ENDLESS") setBattleMode("ENDLESS");
           else setBattleMode(mode === "SELF_PACED" || mode === "SELFPACED" ? "SELF_PACED" : "LIVE");
           setBattleStarted(true);
+          setCountdown(null);
         }
 
         // Handle incoming student peers joining the lobby
@@ -266,7 +257,7 @@ export function BattleLobby() {
     if (countdown === 0) {
       setTimeout(() => {
         setBattleStarted(true); 
-      }, 1500); 
+      }, 0);
       setCountdown(null);
       return;
     }

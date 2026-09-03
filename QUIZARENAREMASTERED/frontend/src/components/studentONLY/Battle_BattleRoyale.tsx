@@ -1,7 +1,7 @@
   'use client';
 
   import React, { useState, useEffect } from 'react';
-  import { Skull, Zap, ChevronRight, Sparkles } from 'lucide-react';
+  import { Flame, Skull, Zap, ChevronRight, Sparkles } from 'lucide-react';
   import { useApp } from '../../context/AppContext';
   import {
     formatBattleQuestions,
@@ -18,6 +18,7 @@
   import { CARD_CATALOG, BATTLE_ROYALE_CARDS } from './PowerCards/CardCatalog';
   import type { PowerCardData } from './PowerCards/types';
   import { PowerCardTray } from './PowerCards/PowerCardTray';
+  import { ChoosePowerUp } from './PowerCards/ChoosePowerUp';
 
   export interface Survivor {
     id: string;
@@ -105,6 +106,7 @@
     const [locked, setLocked] = useState(false);
     const [survivors, setSurvivors] = useState<Survivor[]>([]);
     const [eliminated, setEliminated] = useState(false);
+    const [cardEffect, setCardEffect] = useState<{ targetId: string; label: string } | null>(null);
 
     const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
     
@@ -270,6 +272,35 @@
       setCorrectAnswersCount(0);
     };
 
+    const handleUsePowerCard = (card: PowerCardData, targetId?: string) => {
+      send({
+        type: 'BATTLE_ACTION',
+        battleId,
+        userId: myId,
+        sender: myName,
+        action: 'USE_POWER_CARD',
+        cardId: card.id,
+        targetId,
+        questionIndex,
+        message: `used power card: ${card.name}`,
+      });
+      const amount = Number(card.effect.amount ?? 0);
+      if (targetId && card.effect.category === 'damage') {
+        setSurvivors((previous) => previous.map((player) =>
+          player.id === targetId ? { ...player, lives: Math.max(0, player.lives - amount) } : player
+        ));
+        setCardEffect({ targetId, label: `-${amount} HP` });
+        window.setTimeout(() => setCardEffect(null), 1200);
+      } else if (card.effect.target === 'self' && card.effect.category === 'hp') {
+        setSurvivors((previous) => previous.map((player) =>
+          player.isYou ? { ...player, lives: Math.min(startingHp, player.lives + amount) } : player
+        ));
+        setCardEffect({ targetId: myId, label: `+${amount} HP` });
+        window.setTimeout(() => setCardEffect(null), 1200);
+      }
+      setCollectedPowerCards((previous) => previous.filter((item) => item.id !== card.id));
+    };
+
     const activeSurvivorsCount = survivors.filter((s) => s.lives > 0).length;
     const me = survivors.find((s) => s.isYou);
     const myLives = me?.lives ?? startingHp;
@@ -303,6 +334,7 @@
 
     return (
       <div className="min-h-screen bg-[#131524] text-white flex flex-col font-sans">
+        <style>{`@keyframes royaleHit{0%,100%{transform:scale(1)}35%{transform:scale(1.22);filter:brightness(1.5)}}@keyframes royaleFlame{0%{opacity:0;transform:translateY(8px) scale(.5) rotate(-12deg)}35%{opacity:1;transform:translateY(-2px) scale(1.1) rotate(8deg)}100%{opacity:0;transform:translateY(-18px) scale(.8)}}@keyframes royaleDamage{0%{opacity:0;transform:translate(-50%,8px)}30%{opacity:1}100%{opacity:0;transform:translate(-50%,-18px)}}`}</style>
         {/* Header Bar */}
         <header className="px-6 py-3 flex items-center justify-between border-b border-white/10">
           <div className="flex items-center gap-4">
@@ -329,7 +361,12 @@
           </div>
         </header>
 
-                        <PowerCardTray cards={collectedPowerCards} topClassName="top-60" />
+                        <PowerCardTray
+                          cards={collectedPowerCards}
+                          topClassName="top-60"
+                          onCardUse={handleUsePowerCard}
+                          targetOptions={survivors.filter((player) => !player.isYou && player.lives > 0).map((player) => ({ id: player.id, name: player.name }))}
+                        />
 
                         
         {/* Main Grid */}
@@ -444,10 +481,20 @@
                         </span>
                       )}
                       <div
-                        className="size-9 rounded-full flex items-center justify-center font-extrabold text-xs text-white border-2 border-white/10 relative"
+                        className={`size-9 rounded-full flex items-center justify-center font-extrabold text-xs text-white border-2 border-white/10 relative ${cardEffect?.targetId === s.id ? 'animate-[royaleHit_700ms_ease-in-out]' : ''}`}
                         style={{ backgroundColor: s.color }}
                       >
                         {isDead ? <Skull size={18} /> : s.initials}
+                        {cardEffect?.targetId === s.id && (
+                          <>
+                            <span className="pointer-events-none absolute -right-3 -top-3 text-[#FF8A3D] animate-[royaleFlame_900ms_ease-out]">
+                              <Flame size={22} fill="currentColor" />
+                            </span>
+                            <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] font-black text-[#FFC93C] animate-[royaleDamage_900ms_ease-out]">
+                              {cardEffect.label}
+                            </span>
+                          </>
+                        )}
                       </div>
                       <span className="text-[10px] text-[#8F93A8] font-bold">{s.name}</span>
                       <div className="flex gap-0.5">
@@ -466,37 +513,12 @@
           </div>
         </div>
 
+        {/* Choose Power-Up Modal */}
         {showChoosePowerUP && availablePowerChoices.length > 0 && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="bg-[#1C1F33] border border-white/10 rounded-3xl p-8 max-w-2xl w-full mx-4">
-              <div className="text-center mb-8">
-                <div className="flex items-center justify-center gap-2 mb-3">
-                  <Sparkles size={28} className="text-[#FFC93C]" />
-                  <h2 className="text-2xl font-black text-white">Power-Up Earned!</h2>
-                  <Sparkles size={28} className="text-[#FFC93C]" />
-                </div>
-                <p className="text-sm text-white/60">You’ve won 2 rounds! Choose a random power-up card for your deck.</p>
-              </div>
-
-              <div className="grid grid-cols-1 gap-6" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
-                {availablePowerChoices.map((card, index) => (
-                  <button
-                    key={`${card.id}-${index}`}
-                    onClick={() => handleChoosePowerUP(card)}
-                    className="group relative flex flex-col items-center gap-4 p-6 rounded-2xl border border-white/20 bg-white/5 hover:bg-white/10 hover:border-white/40 transition-all text-left"
-                  >
-                    <div className="flex items-start justify-between w-full">
-                      <div className="flex-1">
-                        <h3 className="font-extrabold text-white mb-2">{card.name}</h3>
-                        <p className="text-xs text-white/60 leading-snug">{card.description}</p>
-                      </div>
-                      <span className="ml-4 px-3 py-1 bg-white/10 rounded-lg text-xs font-bold text-white/70">{card.rarity}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+          <ChoosePowerUp
+            drawnCards={availablePowerChoices}
+            onSelectCard={handleChoosePowerUP}
+          />
         )}
       </div>
     );

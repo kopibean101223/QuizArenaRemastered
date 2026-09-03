@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X } from 'lucide-react';
+import { Search, Sparkles, X } from 'lucide-react';
 import { PowerCard } from './PowerCard';
 import { CARD_CATALOG } from './CardCatalog';
 import type { PowerCardData } from './types';
@@ -13,7 +13,8 @@ export interface PowerCardTrayProps {
   topClassName?: string;
   size?: 'sm' | 'md' | 'lg';
   onToggleReveal?: (card: PowerCardData, isRevealed: boolean) => void;
-  onCardUse?: (card: PowerCardData) => void;
+  onCardUse?: (card: PowerCardData, targetId?: string) => void;
+  targetOptions?: { id: string; name: string }[];
 }
 
 function drawBattleCards(count: number): PowerCardData[] {
@@ -27,10 +28,18 @@ export function PowerCardTray({
   size = 'md',
   onToggleReveal,
   onCardUse,
+  targetOptions = [],
 }: PowerCardTrayProps) {
   const [drawnCards] = useState<PowerCardData[]>(() => cards ?? drawBattleCards(count));
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
+  const [targetId, setTargetId] = useState('');
+  const [targetSearch, setTargetSearch] = useState('');
   const powerCards = cards ?? drawnCards;
+  const expandedCard = expandedCardId ? powerCards.find(c => c.id === expandedCardId) : null;
+  const needsTarget = expandedCard?.effect.target === 'enemy' && targetOptions.length > 0;
+  const filteredTargets = targetOptions.filter((target) =>
+    target.name.toLowerCase().includes(targetSearch.toLowerCase())
+  );
 
   function toggleCard(card: PowerCardData) {
     if (expandedCardId === card.id) {
@@ -39,11 +48,11 @@ export function PowerCardTray({
     } else {
       // Expand the card to full view
       setExpandedCardId(card.id);
+      setTargetId('');
+      setTargetSearch('');
     }
     onToggleReveal?.(card, expandedCardId !== card.id);
   }
-
-  const expandedCard = expandedCardId ? powerCards.find(c => c.id === expandedCardId) : null;
 
   return (
     <>
@@ -68,7 +77,7 @@ export function PowerCardTray({
               >
                 <PowerCard
                   card={card}
-                  state="locked"
+                  state="revealed" // <-- Changed from "locked" to "revealed"
                   size={size}
                   onClick={() => toggleCard(card)}
                 />
@@ -80,8 +89,8 @@ export function PowerCardTray({
 
       {/* Full-Screen Card View */}
       {expandedCard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="relative flex flex-col items-center gap-6 p-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-[powerCardFadeIn_220ms_ease-out]">
+          <div className="relative flex flex-col items-center gap-6 p-8 animate-[powerCardRise_420ms_cubic-bezier(.2,.8,.2,1)]">
             {/* Close button */}
             <button
               onClick={() => setExpandedCardId(null)}
@@ -112,17 +121,47 @@ export function PowerCardTray({
                   Rarity: {expandedCard.rarity}
                 </span>
               </div>
+
+              {needsTarget && (
+                <div className="mt-4 w-full max-w-xs text-left animate-[powerCardFadeIn_300ms_ease-out]">
+                  <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.18em] text-white/50">
+                    Target player
+                  </label>
+                  <div className="relative mb-2">
+                    <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/40" />
+                    <input
+                      value={targetSearch}
+                      onChange={(event) => setTargetSearch(event.target.value)}
+                      placeholder="Search players"
+                      className="w-full rounded-lg border border-white/10 bg-black/20 py-2 pl-9 pr-3 text-xs text-white outline-none transition focus:border-[#FFC93C]"
+                    />
+                  </div>
+                  <select
+                    value={targetId}
+                    onChange={(event) => setTargetId(event.target.value)}
+                    className="w-full rounded-lg border border-white/10 bg-[#171329] px-3 py-2 text-xs font-bold text-white outline-none transition focus:border-[#FFC93C]"
+                    aria-label="Select target player"
+                  >
+                    <option value="">Choose a player</option>
+                    {filteredTargets.map((target) => (
+                      <option key={target.id} value={target.id}>{target.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
             {/* Use Button */}
             {onCardUse && (
               <button
+                disabled={needsTarget && !targetId}
                 onClick={() => {
-                  onCardUse(expandedCard);
+                  onCardUse(expandedCard, targetId || undefined);
                   setExpandedCardId(null);
                 }}
-                className="mt-4 px-6 py-3 bg-[#5B3DF6] hover:bg-[#5B3DF6]/80 text-white font-extrabold rounded-xl transition-colors"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#5B3DF6] px-6 py-3 font-extrabold text-white transition hover:bg-[#765dff] disabled:cursor-not-allowed disabled:opacity-40"
               >
+                <Sparkles size={16} />
                 Use Card
               </button>
             )}
@@ -135,6 +174,7 @@ export function PowerCardTray({
           </div>
         </div>
       )}
+      <style>{`@keyframes powerCardFadeIn{from{opacity:0}to{opacity:1}}@keyframes powerCardRise{from{opacity:0;transform:translateY(18px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}`}</style>
     </>
   );
 }
