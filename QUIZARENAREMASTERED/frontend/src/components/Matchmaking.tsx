@@ -325,7 +325,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [professorView, setProfessorView] = useState<"lobby" | "bingo-monitor">("lobby");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [activeCustomQuestion, setActiveCustomQuestion] = useState<any>(null);
-  const [timeRemaining, setTimeRemaining] = useState(30);
+  const [timeRemaining, setTimeRemaining] = useState(60);
   const [liveFeed, setLiveFeed] = useState<any[]>([]);
   const [bingoState, setBingoState] = useState({ phase: 'rolling', phaseSeconds: 0, round: 0, rolledNumber: null as number | null, eligiblePlayerIds: [] as string[], answeredPlayerIds: [] as string[], question: null as any });
   const [bingoAnswers, setBingoAnswers] = useState<any[]>([]);
@@ -574,7 +574,7 @@ const handleRemoveGroup = (groupName: string) => {
           type: 'JOIN_BATTLE',
           battleId: sessionId,
           totalQuestions: targetQuestionCount || randomizedQuestions.length || 37,
-          timeLimit: 30,
+          timeLimit: 60,
           sender: 'Professor'
         }));
           console.log("[TEAM][prof] onopen, lobbyType =", lobbyType);
@@ -620,12 +620,20 @@ const handleRemoveGroup = (groupName: string) => {
           const data = JSON.parse(event.data);
             console.log("[TEAM][prof] received message type:", data.type, data);   // <-- add this line first thing
           setLastMessage(data);
-          if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED' || data.type === 'SCORE_UPDATED') {
+          if (
+            data.type === 'ROOM_STATE_SYNC' ||
+            data.type === 'QUESTION_ADVANCED' ||
+            data.type === 'SCORE_UPDATED' ||
+            data.type === 'PROF_START_BATTLE' ||
+            data.type === 'PROF_START_TEAM' ||
+            data.type === 'PROF_START_ROYALE' ||
+            data.type === 'PROF_START_BINGO'
+          ) {
             setIsSyncing(false);
             if (typeof data.currentIndex === 'number') setCurrentIndex(data.currentIndex);
             if (data.customQuestion) {
               setActiveCustomQuestion(data.customQuestion);
-            } else if (data.type === 'QUESTION_ADVANCED' || data.type === 'ROOM_STATE_SYNC') {
+            } else if (data.type === 'QUESTION_ADVANCED' || data.type === 'ROOM_STATE_SYNC' || data.type === 'PROF_START_BATTLE') {
               setActiveCustomQuestion(null);
             }
             if (data.startedAt) {
@@ -839,13 +847,14 @@ const handleRemoveGroup = (groupName: string) => {
 
   useEffect(() => {
     if (!battleStarted || quizCompleted) return;
+    if (!startedAtRef.current) {
+      startedAtRef.current = Date.now();
+    }
     const timer = setInterval(() => {
-      if (startedAtRef.current) {
-        const elapsed = Math.floor((Date.now() - startedAtRef.current) / 1000);
-        setTimeRemaining(Math.max(0, timeLimitRef.current - elapsed));
-      } else {
-        setTimeRemaining(prev => Math.max(0, prev - 1));
-      }
+      const now = Date.now();
+      const start = startedAtRef.current || now;
+      const elapsed = Math.floor((now - start) / 1000);
+      setTimeRemaining(Math.max(0, timeLimitRef.current - elapsed));
     }, 500); // 500ms ensures it recovers fast when tab is switched back
     return () => clearInterval(timer);
   }, [battleStarted, currentIndex, randomizedQuestions.length, quizCompleted]);
@@ -1020,11 +1029,16 @@ const handleRemoveGroup = (groupName: string) => {
     setBattleStarted(true);
     if (lobbyType === 'bingo') setProfessorView("bingo-monitor");
     setCurrentIndex(0);
+    startedAtRef.current = Date.now();
+    timeLimitRef.current = 60;
     setTimeRemaining(60);
     const startType = lobbyType === 'bingo' ? 'PROF_START_BINGO' : lobbyType === 'royale' || lobbyType === 'chaosclash' ? 'PROF_START_ROYALE' : lobbyType === 'team' ? 'PROF_START_TEAM' : 'PROF_START_BATTLE';
     
     const count = targetQuestionCount || randomizedQuestions.length;
     const activeQuestions = adaptive ? randomizedQuestions : randomizedQuestions.slice(0, count);
+    if (!adaptive) {
+      setRandomizedQuestions(activeQuestions);
+    }
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
        wsRef.current.send(JSON.stringify({
@@ -1069,6 +1083,8 @@ const handleRemoveGroup = (groupName: string) => {
           customQuestion: customQ
         }));
       }
+      startedAtRef.current = Date.now();
+      timeLimitRef.current = 60;
       setTimeRemaining(60);
       setTimeout(() => setIsAdvancing(false), 500);
     } else {
@@ -1123,7 +1139,7 @@ const handleRemoveGroup = (groupName: string) => {
   };
 
   const currentActiveQuestion = randomizedQuestions[currentIndex];
-  const totalQCount = randomizedQuestions.length > 0 ? randomizedQuestions.length : 1;
+  const totalQCount = targetQuestionCount || (randomizedQuestions.length > 0 ? randomizedQuestions.length : 1);
 
   // Calculate Rankings & Groups based on LobbyType
   const sortedStudents = [...joinedStudents].sort((a, b) => b.score - a.score);
@@ -1431,7 +1447,7 @@ const handleRemoveGroup = (groupName: string) => {
               bossHealth={1000}
               timeLeft={timeRemaining}
               currentQuestion={activeCustomQuestion || randomizedQuestions[currentIndex] || null}
-              questions={randomizedQuestions}
+              questions={adaptive ? randomizedQuestions : randomizedQuestions.slice(0, targetQuestionCount || randomizedQuestions.length)}
               onLaunchQuestion={(q) => {
                  handleNextQuestion(q);
               }}

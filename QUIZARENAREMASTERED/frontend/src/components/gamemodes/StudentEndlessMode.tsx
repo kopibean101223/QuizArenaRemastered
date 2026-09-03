@@ -90,8 +90,8 @@ export function StudentEndlessMode({
 
   const [questionStartTime, setQuestionStartTime] = useState(Date.now());
   const [timerPercent, setTimerPercent] = useState(100);
-  const [timeLeft, setTimeLeft] = useState(20);
-  const [maxTime, setMaxTime] = useState(20);
+  const [timeLeft, setTimeLeft] = useState(60);
+  const [maxTime, setMaxTime] = useState(60);
   const [streak, setStreak] = useState(0);
   const [showStreakCard, setShowStreakCard] = useState(false);
 
@@ -176,7 +176,7 @@ export function StudentEndlessMode({
 
  useEffect(() => {
     if (!activeQuestion) return;
-    const newMaxTime = isSuddenDeath ? 3 : Math.max(5, 20 - timerPenalty);
+    const newMaxTime = isSuddenDeath ? 3 : Math.max(5, 60 - timerPenalty);
     setMaxTime(newMaxTime);
     
     // Critical Anti-Cheat: Subtract time they spent before refreshing

@@ -74,12 +74,16 @@ class LiveBattleHandler {
   // FIX (2.2): the grace-period timer in handleLeave() fires later, outside
   // of any handleMessage() call, so it needs its own reference to Redis.
   private redisPublisherRef: Redis | null = null;
+  private questionTimers: Map<string, NodeJS.Timeout>;
+  private advancingBattles: Set<string>;
 
   constructor() {
     this.activeRooms = new Map<string, Set<WebSocket>>();
     this.clientRoomMap = new Map<WebSocket, string>();
     this.hostSockets = new Map<string, Set<WebSocket>>();
     this.hostDisconnectTimers = new Map<string, NodeJS.Timeout>();
+    this.questionTimers = new Map<string, NodeJS.Timeout>();
+    this.advancingBattles = new Set<string>();
   }
 
   public initSubscriber(redisSubscriber: Redis): void {
@@ -95,6 +99,122 @@ class LiveBattleHandler {
         });
       }
     });
+  }
+
+  private clearQuestionTimer(battleId: string): void {
+    const existing = this.questionTimers.get(battleId);
+    if (existing) {
+      clearTimeout(existing);
+      this.questionTimers.delete(battleId);
+      console.log(`[LIVE][TIMER] cleared existing timer for ${battleId}`);
+    }
+  }
+
+  private scheduleQuestionTimeout(
+    battleId: string,
+    delayMs: number,
+    redisPublisher: Redis,
+    roomCode?: string
+  ): void {
+    this.clearQuestionTimer(battleId);
+    console.log(`[LIVE][TIMER] scheduling auto-advance for ${battleId} in ${delayMs}ms`);
+    const handle = setTimeout(() => {
+      console.log(`[LIVE][TIMER] timer FIRED for ${battleId}`);
+      this.triggerAdvance(battleId, redisPublisher, roomCode).catch((err) =>
+        console.error(`[LIVE][TIMER] advanceOrEnd failed for ${battleId}:`, err)
+      );
+    }, delayMs);
+    this.questionTimers.set(battleId, handle);
+  }
+
+  private async triggerAdvance(
+    battleId: string,
+    redisPublisher: Redis,
+    roomCode: string | undefined
+  ): Promise<void> {
+    if (this.advancingBattles.has(battleId)) return;
+    this.advancingBattles.add(battleId);
+    try {
+      await this.advanceOrEnd(battleId, redisPublisher, roomCode);
+    } finally {
+      this.advancingBattles.delete(battleId);
+    }
+  }
+
+  private async advanceOrEnd(
+    battleId: string,
+    redisPublisher: Redis,
+    roomCode: string | undefined
+  ): Promise<void> {
+    console.log(`[LIVE][ADVANCE] triggered for ${battleId}`);
+    this.clearQuestionTimer(battleId);
+
+    const sKey = stateKey(battleId);
+    const channel = roomChannel(battleId);
+    const lKey = leaderboardKey(battleId);
+    const hKey = historyKey(battleId);
+
+    const [rawQuestions, roomState] = await Promise.all([
+      redisPublisher.get(`battle:${battleId}:questions`),
+      redisPublisher.hgetall(sKey),
+    ]);
+    const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
+    const currentIndex = parseInt(roomState.currentIndex || '0', 10);
+    const nextIndex = currentIndex + 1;
+    const distributionMode = roomState.distributionMode || 'uniform';
+
+    console.log(`[LIVE][ADVANCE] ${battleId} currentIndex=${currentIndex} nextIndex=${nextIndex}`);
+
+    if (nextIndex >= questions.length && distributionMode === 'uniform') {
+      await redisPublisher.hset(sKey, { status: 'completed' });
+      await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
+      await redisPublisher.expire(hKey, COMPLETED_ROOM_TTL_SECONDS);
+
+      await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
+
+      const rawScores = await redisPublisher.hgetall(lKey);
+      const leaderboard = Object.values(rawScores || {}).map((item) => JSON.parse(item));
+
+      console.log(`[LIVE][END] ${battleId} out of questions -> ROOM_COMPLETED`);
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({
+          type: 'ROOM_COMPLETED',
+          battleId,
+          leaderboard,
+          message: 'The session has finished and results are saved.',
+        })
+      );
+      return;
+    }
+
+    const startedAt = Date.now();
+    const timeLimit = 60; // Enforce 60s
+
+    await redisPublisher.hset(sKey, {
+      currentIndex: String(nextIndex),
+      startedAt: String(startedAt),
+      timeLimit: String(timeLimit),
+      distributionMode,
+    });
+    await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
+
+    await redisPublisher.publish(
+      channel,
+      JSON.stringify({
+        type: 'QUESTION_ADVANCED',
+        battleId,
+        distributionMode,
+        adaptive: distributionMode === 'adaptive',
+        currentIndex: nextIndex,
+        startedAt,
+        timeLimit,
+        isLastQuestion: nextIndex === questions.length - 1,
+        questions: distributionMode === 'uniform' ? questions : [],
+      })
+    );
+
+    this.scheduleQuestionTimeout(battleId, timeLimit * 1000, redisPublisher, roomCode);
   }
 
   /**
@@ -278,6 +398,7 @@ class LiveBattleHandler {
     // ── ACTION: PROFESSOR STARTS THE BATTLE ──
     if (type === 'PROF_START_BATTLE') {
       const startedAt = Date.now();
+      const timeLimit = 60; // Enforce 60s per question
 
       const distributionMode = payload.distributionMode || (payload.adaptive ? 'adaptive' : 'uniform');
 
@@ -285,6 +406,7 @@ class LiveBattleHandler {
         currentIndex: '0',
         status: 'active',
         startedAt: String(startedAt),
+        timeLimit: String(timeLimit),
         roomCode: roomCode || '',
         distributionMode,
       });
@@ -318,46 +440,39 @@ class LiveBattleHandler {
         })
       );
 
+      this.scheduleQuestionTimeout(battleId, timeLimit * 1000, redisPublisher, roomCode);
       console.log(`Professor started Battle Room ${battleId} with ${parsedQuestions.length} synchronized questions.`);
       return;
     }
 
     // ── ACTION B: PROFESSOR ADVANCES QUESTION (synchronous for all students) ──
     if (type === 'ADVANCE_QUESTION') {
-      const nextIndex = payload.currentIndex ?? 0;
-      const isLastQuestion = payload.isLastQuestion ?? false;
-      const roomState = await redisPublisher.hgetall(sKey);
-      const distributionMode = roomState.distributionMode || 'uniform';
+      console.log(`[LIVE][server] manual ADVANCE_QUESTION received for ${battleId}`);
+      if (payload.isLastQuestion) {
+        this.clearQuestionTimer(battleId);
+        await redisPublisher.hset(sKey, { status: 'completed' });
+        await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
+        await redisPublisher.expire(hKey, COMPLETED_ROOM_TTL_SECONDS);
 
-      await redisPublisher.hset(sKey, {
-        currentIndex: String(nextIndex),
-        startedAt: String(Date.now()),
-        distributionMode,
-      });
-      await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
+        const rawScores = await redisPublisher.hgetall(lKey);
+        const leaderboard = Object.values(rawScores).map((item) => JSON.parse(item));
 
-      const rawQuestions = await redisPublisher.get(`battle:${battleId}:questions`);
-      const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
+        // 1. Sync to Supabase
+        await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
 
-      await redisPublisher.publish(
-        channel,
-        JSON.stringify({
-          type: 'QUESTION_ADVANCED',
-          battleId,
-          distributionMode,
-          adaptive: distributionMode === 'adaptive',
-          currentIndex: nextIndex,
-          startedAt: Date.now(),
-          timeLimit: payload.nextTimeLimit || 60,
-          isLastQuestion,
-          questions: distributionMode === 'uniform' ? questions : [],
-        })
-      );
-
-      console.log(`[LiveBattle] Advanced question in ${distributionMode} mode to ${nextIndex}/${questions.length || 'adaptive'}`, {
-        battleId,
-        isLastQuestion,
-      });
+        // 2. Notify Room
+        await redisPublisher.publish(
+          channel,
+          JSON.stringify({
+            type: 'ROOM_COMPLETED',
+            battleId,
+            leaderboard,
+            message: 'The session has finished and results are saved.',
+          })
+        );
+      } else {
+        await this.triggerAdvance(battleId, redisPublisher, roomCode);
+      }
       return;
     }
 
@@ -390,6 +505,7 @@ class LiveBattleHandler {
 
     // ── ACTION C: PROFESSOR MANUALLY ENDS BATTLE ──
     if (type === 'END_BATTLE' || type === 'PROF_END_BATTLE') {
+      this.clearQuestionTimer(battleId);
       await redisPublisher.hset(sKey, { status: 'completed' });
       await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
       await redisPublisher.expire(hKey, COMPLETED_ROOM_TTL_SECONDS);
@@ -415,6 +531,7 @@ class LiveBattleHandler {
 
     // ── ACTION D: RESET ROOM BACK TO QUESTION 1 ──
     if (type === 'RESET_ROOM') {
+      this.clearQuestionTimer(battleId);
       const startedAt = Date.now();
       await redisPublisher.hset(sKey, {
         currentIndex: '0',
@@ -459,6 +576,7 @@ class LiveBattleHandler {
 
       if (roomClients.size === 0) {
         this.activeRooms.delete(battleId);
+        this.clearQuestionTimer(battleId);
         const channel = roomChannel(battleId);
 
         redisSubscriber.unsubscribe(channel, (err) => {
@@ -502,6 +620,7 @@ class LiveBattleHandler {
    * see the note in server.ts wiring below.
    */
   private async completeAbandonedRoom(battleId: string): Promise<void> {
+    this.clearQuestionTimer(battleId);
     if (!this.redisPublisherRef) return;
     const redisPublisher = this.redisPublisherRef;
 

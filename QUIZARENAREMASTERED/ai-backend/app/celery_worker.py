@@ -668,8 +668,19 @@ Based on the following {len(chunks)} text chunks from "{filename}", generate exa
 
 Allowed Question Types: {types_str}
 Each question MUST be one of the Allowed Question Types.
-Each question must strictly be derived from formulas and concepts in its corresponding chunk.
 
+Each question must strictly be derived from formulas and concepts in its corresponding chunk.
+STYLE & PHRASING GUIDELINES:
+- Questions MUST be self-contained exam questions as seen on a real quiz or competition test.
+- NEVER include meta-references such as:
+  * "According to the provided text..."
+  * "According to the passage..."
+  * "Based on the text/chunk..."
+  * "As mentioned in the document..."
+- Ask the question directly:
+  - ❌ BAD: "According to the provided text, what is the primary focus of calculus?"
+  - ✅ GOOD: "What is the primary focus of calculus?"
+  
 DIFFICULTY & ADAPTIVE INSTRUCTIONS:
 {adaptive_instruction}
 - Do NOT introduce information not supported by the document.
@@ -686,7 +697,7 @@ SPECIAL TYPE INSTRUCTIONS:
 - If type is 'Step-by-step Solution': Leave choices empty. Set `answer` to final answer string, and supply sequential strings in `answerData.steps` (e.g. ["Step 1: ...", "Step 2: ..."]).
 - If type is 'Numerical Input': Leave choices empty. Set `answer` to numeric string, and provide `numericAnswer` (float) in `answerData`.
 - If type is 'Graphing/Plotting': Provide mathematical equation in `answerData.expression` and graph type in `answerData.graphType`.
-- If type is 'Multiple Choice': You must generate exactly 4 choices, with exactly 1 marked `isCorrect=True`.
+- If type is 'Multiple Choice':Each question must strictly be derived You must generate exactly 4 choices, with exactly 1 marked `isCorrect=True`.
 
 Preserve the requested question-type distribution.
 

@@ -55,6 +55,8 @@ export interface BattlePayload {
  */
 class EndlessBattleHandler {
   private redisPublisherRef: Redis | null = null;
+  private questionTimers = new Map<string, NodeJS.Timeout>();
+  private advancingBattles = new Set<string>();
 
   public initSubscriber(_redisSubscriber: Redis): void {
   }
@@ -62,6 +64,111 @@ class EndlessBattleHandler {
   /** Wires this handler's completion logic into RoomPresenceHandler's grace-period timer. */
   public registerAbandonHook(): void {
     roomPresenceHandler.setAbandonHook((battleId) => this.completeAbandonedRoom(battleId));
+  }
+
+  private clearQuestionTimer(battleId: string): void {
+    const existing = this.questionTimers.get(battleId);
+    if (existing) {
+      clearTimeout(existing);
+      this.questionTimers.delete(battleId);
+      console.log(`[ENDLESS][TIMER] cleared existing timer for ${battleId}`);
+    }
+  }
+
+  private scheduleQuestionTimeout(
+    battleId: string,
+    delayMs: number,
+    redisPublisher: Redis,
+    roomCode?: string
+  ): void {
+    this.clearQuestionTimer(battleId);
+    console.log(`[ENDLESS][TIMER] scheduling auto-advance for ${battleId} in ${delayMs}ms`);
+    const handle = setTimeout(() => {
+      console.log(`[ENDLESS][TIMER] timer FIRED for ${battleId}`);
+      this.triggerAdvance(battleId, redisPublisher, roomCode).catch((err) =>
+        console.error(`[ENDLESS][TIMER] advanceOrEnd failed for ${battleId}:`, err)
+      );
+    }, delayMs);
+    this.questionTimers.set(battleId, handle);
+  }
+
+  private async triggerAdvance(
+    battleId: string,
+    redisPublisher: Redis,
+    roomCode: string | undefined
+  ): Promise<void> {
+    if (this.advancingBattles.has(battleId)) return;
+    this.advancingBattles.add(battleId);
+    try {
+      await this.advanceOrEnd(battleId, redisPublisher, roomCode);
+    } finally {
+      this.advancingBattles.delete(battleId);
+    }
+  }
+
+  private async advanceOrEnd(
+    battleId: string,
+    redisPublisher: Redis,
+    roomCode: string | undefined
+  ): Promise<void> {
+    console.log(`[ENDLESS][ADVANCE] triggered for ${battleId}`);
+    this.clearQuestionTimer(battleId);
+
+    const sKey = stateKey(battleId);
+    const channel = roomChannel(battleId);
+    const lKey = leaderboardKey(battleId);
+    const hKey = historyKey(battleId);
+
+    const [rawQuestions, roomState] = await Promise.all([
+      redisPublisher.get(`battle:${battleId}:questions`),
+      redisPublisher.hgetall(sKey),
+    ]);
+    const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
+    const currentIndex = parseInt(roomState.currentIndex || '0', 10);
+    const nextIndex = currentIndex + 1;
+
+    console.log(`[ENDLESS][ADVANCE] ${battleId} currentIndex=${currentIndex} nextIndex=${nextIndex}`);
+
+    if (nextIndex >= questions.length && questions.length > 0) {
+      await redisPublisher.hset(sKey, { status: 'completed' });
+      await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
+      await redisPublisher.expire(hKey, COMPLETED_ROOM_TTL_SECONDS);
+
+      await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
+
+      const rawScores = await redisPublisher.hgetall(lKey);
+      const leaderboard = Object.values(rawScores || {}).map((item) => JSON.parse(item));
+
+      console.log(`[ENDLESS][END] ${battleId} out of questions -> QUIZ_COMPLETED`);
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({ type: 'QUIZ_COMPLETED', battleId, leaderboard })
+      );
+      return;
+    }
+
+    const startedAt = Date.now();
+    const timeLimit = 60; // Enforce 60s for endless questions
+
+    await redisPublisher.hset(sKey, {
+      currentIndex: String(nextIndex),
+      startedAt: String(startedAt),
+      timeLimit: String(timeLimit),
+    });
+    await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
+
+    await redisPublisher.publish(
+      channel,
+      JSON.stringify({
+        type: 'QUESTION_ADVANCED',
+        battleId,
+        currentIndex: nextIndex,
+        startedAt,
+        timeLimit,
+      })
+    );
+
+    this.scheduleQuestionTimeout(battleId, timeLimit * 1000, redisPublisher, roomCode);
   }
 
   public async syncBattleToSupabase(
@@ -182,11 +289,13 @@ class EndlessBattleHandler {
       const startedAt = Date.now();
       const mode = payload.mode || 'ENDLESS';
       const initialIndex = 0;
+      const timeLimit = 60; // Enforce 60s
 
       await redisPublisher.hset(sKey, {
         currentIndex: String(initialIndex),
         status: 'active',
         startedAt: String(startedAt),
+        timeLimit: String(timeLimit),
         roomCode: roomCode || '',
         mode,
       });
@@ -212,19 +321,19 @@ class EndlessBattleHandler {
           mode,
           currentIndex: initialIndex,
           startedAt,
+          timeLimit,
           questions: parsedQuestions,
         })
       );
 
-      console.log(`[LiveBattle] Started ${battleId} with ${parsedQuestions.length} synchronized questions.`);
+      console.log(`[EndlessBattle] Started ${battleId} with ${parsedQuestions.length} synchronized questions.`);
+      this.scheduleQuestionTimeout(battleId, timeLimit * 1000, redisPublisher, roomCode);
       return;
     }
 
     if (type === 'ADVANCE_QUESTION') {
-      const startedAt = Date.now();
-      const newLimit = nextTimeLimit || 15;
-
       if (isLastQuestion) {
+        this.clearQuestionTimer(battleId);
         await redisPublisher.hset(sKey, { status: 'completed' });
         await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
         await redisPublisher.expire(hKey, COMPLETED_ROOM_TTL_SECONDS);
@@ -239,28 +348,13 @@ class EndlessBattleHandler {
           JSON.stringify({ type: 'QUIZ_COMPLETED', battleId, leaderboard })
         );
       } else {
-        const nextIndex = await redisPublisher.hincrby(sKey, 'currentIndex', 1);
-        const updateData: Record<string, string> = {
-          startedAt: String(startedAt),
-          timeLimit: String(newLimit),
-        };
-        await redisPublisher.hset(sKey, updateData);
-        await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
-        await redisPublisher.publish(
-          channel,
-          JSON.stringify({
-            type: 'QUESTION_ADVANCED',
-            battleId,
-            currentIndex: Number(nextIndex),
-            startedAt,
-            timeLimit: Number(newLimit),
-          })
-        );
+        await this.triggerAdvance(battleId, redisPublisher, roomCode);
       }
       return;
     }
 
     if (type === 'END_BATTLE' || type === 'PROF_END_BATTLE') {
+      this.clearQuestionTimer(battleId);
       await redisPublisher.hset(sKey, { status: 'completed' });
       await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
       await redisPublisher.expire(hKey, COMPLETED_ROOM_TTL_SECONDS);
@@ -283,6 +377,7 @@ class EndlessBattleHandler {
     }
 
     if (type === 'RESET_ROOM') {
+      this.clearQuestionTimer(battleId);
       const startedAt = Date.now();
       await redisPublisher.hset(sKey, {
         currentIndex: '0',
@@ -304,6 +399,7 @@ class EndlessBattleHandler {
   }
 
   private async completeAbandonedRoom(battleId: string): Promise<void> {
+    this.clearQuestionTimer(battleId);
     if (!this.redisPublisherRef) return;
     const redisPublisher = this.redisPublisherRef;
 
