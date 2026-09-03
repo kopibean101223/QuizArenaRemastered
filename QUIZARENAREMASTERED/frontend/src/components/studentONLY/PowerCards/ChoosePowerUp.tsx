@@ -1,24 +1,38 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { PowerCard } from './PowerCard';
 import type { PowerCardData } from './types';
 
 interface ChoosePowerUpProps {
   drawnCards: PowerCardData[];
-  onSelectCard: (card: PowerCardData) => void;
+  onSelectCard?: (card: PowerCardData) => void;
+  onVoteCard?: (card: PowerCardData) => void;
+  onVoteEnd?: () => void;
+  voteDeadline?: number | null;
 }
 
-export function ChoosePowerUp({ drawnCards, onSelectCard }: ChoosePowerUpProps) {
+export function ChoosePowerUp({ drawnCards, onSelectCard, onVoteCard, onVoteEnd, voteDeadline }: ChoosePowerUpProps) {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(10);
+
+  useEffect(() => {
+    if (!onVoteCard) return;
+    const timer = window.setInterval(() => {
+      const next = voteDeadline ? Math.max(0, Math.ceil((voteDeadline - Date.now()) / 1000)) : 10;
+      setSecondsLeft(next);
+      if (next === 0) onVoteEnd?.();
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [onVoteCard, onVoteEnd, voteDeadline]);
 
   const handleCardClick = (card: PowerCardData) => {
-    if (selectedCardId) return; // Prevent multiple clicks
+    if (selectedCardId) return;
     setSelectedCardId(card.id);
-    
-    // Wait for the reveal animation and transition to finish before adding to deck
-    setTimeout(() => {
-      onSelectCard(card);
-    }, 1200);
+    if (onVoteCard) {
+      onVoteCard(card);
+    } else {
+      window.setTimeout(() => onSelectCard?.(card), 1200);
+    }
   };
 
   return (  
@@ -27,7 +41,7 @@ export function ChoosePowerUp({ drawnCards, onSelectCard }: ChoosePowerUpProps) 
         <h2 className="text-3xl font-[Fredoka] font-bold text-[var(--gm-yellow)] mb-2 uppercase animate-[gm-pulse_1s_infinite]">
           Select Ultimate Protocol
         </h2>
-        <p className="text-[var(--gm-muted)] mb-8">Click a mystery card.</p>
+        <p className="text-[var(--gm-muted)] mb-8">{onVoteCard ? `Blind team vote · ${secondsLeft}s` : 'Click a mystery card.'}</p>
         
         <div className="flex gap-8 items-center justify-center relative">
           {drawnCards.map((card) => {

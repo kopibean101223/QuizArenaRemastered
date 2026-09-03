@@ -198,6 +198,7 @@ export function BattleSocketProvider({
           mode: 'TEAM',
           battleId: sessionId,
           userId: resolvedUserId,
+          sender: resolvedName,
           ...extraJoinPayload,
         }));
         socket.send(JSON.stringify({
@@ -205,6 +206,7 @@ export function BattleSocketProvider({
           mode: 'TEAM',
           battleId: sessionId,
           userId: resolvedUserId,
+          sender: resolvedName,
           teamId: extraJoinPayload?.teamId ?? null,
           ...extraJoinPayload,
         }));
@@ -331,6 +333,38 @@ export function BattleSocketProvider({
           };
         });
         setPlayers(restoredPlayers);
+      }
+
+      if ((data.type === 'TEAM_LOBBY_STATE_SYNC' || data.type === 'TEAM_ROSTER_UPDATED' || data.type === 'TEAM_ASSIGNMENT_UPDATE') && Array.isArray(data.players)) {
+        setPlayers(data.players.map((player: any, index: number) => ({
+          id: player.id || player.userId,
+          name: player.name || player.userId || `Student ${index + 1}`,
+          initials: String(player.name || player.userId || 'ST').substring(0, 2).toUpperCase(),
+          color: AVATAR_COLORS[index % AVATAR_COLORS.length],
+          isHost: false,
+          isReady: true,
+        })));
+      }
+
+      if (data.type === 'ROOM_STATE_SYNC' && Array.isArray(data.history)) {
+        setPlayers((previous) => {
+          const next = [...previous];
+          data.history
+            .filter((item: any) => item?.isJoinEvent && item?.sender !== 'Professor')
+            .forEach((item: any) => {
+              const id = item.userId || item.sender;
+              if (!id || next.some((player) => player.id === id || player.name === item.sender)) return;
+              next.push({
+                id,
+                name: item.sender || 'Student',
+                initials: String(item.sender || 'ST').substring(0, 2).toUpperCase(),
+                color: AVATAR_COLORS[next.length % AVATAR_COLORS.length],
+                isHost: false,
+                isReady: true,
+              });
+            });
+          return next;
+        });
       }
 
       if (data.type === 'ROOM_STATE_SYNC' && data.status === 'active') {

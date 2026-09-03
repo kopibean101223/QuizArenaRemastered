@@ -16,6 +16,9 @@ function stateKey(battleId: string): string {
 function teamAnswersKey(battleId: string, questionIndex: number): string {
   return `battle:team:${battleId}:q:${questionIndex}:answers`;
 }
+function teamScopedAnswersKey(battleId: string, questionIndex: number, teamId: string): string {
+  return `${teamAnswersKey(battleId, questionIndex)}:${teamId}`;
+}
 function leaderboardKey(battleId: string): string {
   return `battle:team:${battleId}:leaderboard`;
 }
@@ -70,6 +73,7 @@ class TeamBattleHandler {
   // whole room. Populated on JOIN_TEAM_BATTLE and kept in sync by
   // TEAM_ASSIGNMENT_UPDATE.
   private clientTeamMap: Map<WebSocket, string>;
+  private clientDetails: Map<WebSocket, { id: string; name: string }>;
 
   constructor() {
     this.activeRooms = new Map<string, Set<WebSocket>>();
@@ -77,6 +81,7 @@ class TeamBattleHandler {
     this.questionTimers = new Map<string, NodeJS.Timeout>();
     this.advancingBattles = new Set<string>();
     this.clientTeamMap = new Map<WebSocket, string>();
+    this.clientDetails = new Map<WebSocket, { id: string; name: string }>();
   }
 
   public initSubscriber(redisSubscriber: Redis): void {
@@ -94,7 +99,7 @@ class TeamBattleHandler {
       let restrictToTeamId: string | null = null;
       try {
         const parsed = JSON.parse(message);
-        if (parsed.type === 'TEAM_CHAT_MESSAGE') {
+          if (parsed.type === 'TEAM_CHAT_MESSAGE' || parsed.type === 'TEAM_ANSWERS_UPDATED' || parsed.type === 'TEAM_POWERUP_RESULT') {
           restrictToTeamId = parsed.teamId ?? null;
         }
       } catch {
@@ -127,6 +132,33 @@ class TeamBattleHandler {
     this.activeRooms.get(battleId)!.add(ws);
     this.clientRoomMap.set(ws, battleId);
     console.log('[TEAM][server] registered client. room size now:', this.activeRooms.get(battleId)!.size);
+  }
+
+  private rememberClient(ws: WebSocket, userId?: string, sender?: string): void {
+    if (!userId) return;
+    this.clientDetails.set(ws, { id: userId, name: sender || userId });
+  }
+
+  private getLobbyPlayers(battleId: string): Array<{ id: string; name: string; teamId: string | null }> {
+    const clients = this.activeRooms.get(battleId) ?? new Set<WebSocket>();
+    return Array.from(clients)
+      .map((client) => this.clientDetails.get(client))
+      .filter((player): player is { id: string; name: string } => Boolean(player))
+      .map((player) => ({
+        ...player,
+        teamId: null,
+      }));
+  }
+
+  private async getLobbyRoster(
+    battleId: string,
+    redisPublisher: Redis
+  ): Promise<Array<{ id: string; name: string; teamId: string | null }>> {
+    const assignments = await redisPublisher.hgetall(teamsKey(battleId));
+    return this.getLobbyPlayers(battleId).map((player) => ({
+      ...player,
+      teamId: assignments[player.id] || null,
+    }));
   }
 
   // ── Timer bookkeeping ────────────────────────────────────────────────
@@ -316,18 +348,21 @@ class TeamBattleHandler {
     if (type === 'JOIN_TEAM_LOBBY') {
       roomPresenceHandler.setBattleMode(battleId, 'TEAM');
       this.registerClient(ws, battleId, channel, redisSubscriber);
+      this.rememberClient(ws, userId, payload.sender);
 
       const rawTeams = await redisPublisher.hgetall(tKey);
       const rawGroups = await redisPublisher.get(gKey);
       const groups = rawGroups ? JSON.parse(rawGroups) : ['Team 1', 'Team 2'];
       const rawTeamSize = await redisPublisher.get(szKey);
       const teamSize = rawTeamSize ? parseInt(rawTeamSize, 10) : 4;
+      const players = await this.getLobbyRoster(battleId, redisPublisher);
 
       ws.send(
         JSON.stringify({
           type: 'TEAM_LOBBY_STATE_SYNC',
           battleId,
           teams: rawTeams,
+          players,
           groups,
           teamSize,
         })
@@ -339,6 +374,7 @@ class TeamBattleHandler {
           type: 'TEAM_LOBBY_STATE_SYNC',
           battleId,
           teams: rawTeams,
+          players,
           groups,
           teamSize,
         })
@@ -350,6 +386,7 @@ class TeamBattleHandler {
     if (type === 'TEAM_ASSIGNMENT_UPDATE') {
       console.log('[TEAM][server] received TEAM_ASSIGNMENT_UPDATE', { battleId, userId, teamId });
       this.registerClient(ws, battleId, channel, redisSubscriber);
+      this.rememberClient(ws, userId, payload.sender);
 
       if (!userId) return;
 
@@ -371,6 +408,25 @@ class TeamBattleHandler {
           battleId,
           userId,
           teamId: teamId ?? null,
+          players: await this.getLobbyRoster(battleId, redisPublisher),
+        })
+      );
+      await redisPublisher.publish(
+        `battle:${battleId}`,
+        JSON.stringify({
+          type: 'TEAM_ASSIGNMENT_UPDATE',
+          battleId,
+          userId,
+          teamId: teamId ?? null,
+          players: await this.getLobbyRoster(battleId, redisPublisher),
+        })
+      );
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({
+          type: 'TEAM_ROSTER_UPDATED',
+          battleId,
+          players: await this.getLobbyRoster(battleId, redisPublisher),
         })
       );
       return;
@@ -383,6 +439,7 @@ class TeamBattleHandler {
     // of truth for where in the question set this room currently is.
     if (type === 'JOIN_TEAM_BATTLE') {
       this.registerClient(ws, battleId, channel, redisSubscriber);
+      this.rememberClient(ws, userId, payload.sender);
 
       // NEW: remember this socket's team for TEAM_CHAT_MESSAGE scoping.
       // The battle socket is a fresh connection from the lobby socket that
@@ -403,7 +460,10 @@ class TeamBattleHandler {
 
       const ansKey = teamAnswersKey(battleId, serverQuestionIndex);
       const rawAnswers = await redisPublisher.hgetall(ansKey);
-      const teamAnswers = Object.values(rawAnswers || {}).map((item) => JSON.parse(item));
+      const assignedTeam = userId ? await redisPublisher.hget(tKey, userId) : null;
+      const scopedAnsKey = assignedTeam ? teamScopedAnswersKey(battleId, serverQuestionIndex, assignedTeam) : '';
+      const rawScopedAnswers = scopedAnsKey ? await redisPublisher.hgetall(scopedAnsKey) : rawAnswers;
+      const teamAnswers = Object.values(rawScopedAnswers || {}).map((item) => JSON.parse(item));
 
       const rawQuestions = await redisPublisher.get(qKey);
       const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
@@ -538,21 +598,27 @@ class TeamBattleHandler {
       const roomState = await redisPublisher.hgetall(sKey);
       const serverQuestionIndex = parseInt(roomState.questionIndex || '0', 10);
       const ansKey = teamAnswersKey(battleId, serverQuestionIndex);
+      const assignedTeam = userId ? await redisPublisher.hget(tKey, userId) : null;
+      if (!assignedTeam || answer.memberId !== userId) return;
+      const scopedAnsKey = teamScopedAnswersKey(battleId, serverQuestionIndex, assignedTeam);
 
       console.log(
         `[TEAM][ANSWER] ${battleId} member=${answer.memberId} option=${answer.selectedOption} at serverQuestionIndex=${serverQuestionIndex}`
       );
 
       await redisPublisher.hset(ansKey, answer.memberId, JSON.stringify(answer));
+      await redisPublisher.hset(scopedAnsKey, answer.memberId, JSON.stringify(answer));
       await redisPublisher.expire(ansKey, COMPLETED_ROOM_TTL_SECONDS);
 
       const rawAnswers = await redisPublisher.hgetall(ansKey);
       const teamAnswers: TeamMemberAnswerPayload[] = Object.values(rawAnswers).map((item) => JSON.parse(item));
+      const rawScopedAnswers = await redisPublisher.hgetall(scopedAnsKey);
+      const scopedTeamAnswers: TeamMemberAnswerPayload[] = Object.values(rawScopedAnswers).map((item) => JSON.parse(item));
 
       const voteCounts: Record<string, number> = {};
       let leaderVote = '';
 
-      teamAnswers.forEach((ans) => {
+      scopedTeamAnswers.forEach((ans) => {
         voteCounts[ans.selectedOption] = (voteCounts[ans.selectedOption] || 0) + 1;
         if ((ans as any).isDesignatedLeader) leaderVote = ans.selectedOption;
       });
@@ -575,20 +641,25 @@ class TeamBattleHandler {
         winningOption = leaderVote;
       }
 
+      const assignedPlayers = await redisPublisher.hgetall(tKey);
+      const assignedPlayerCount = Object.keys(assignedPlayers || {}).length;
+      const teamMemberCount = Object.values(assignedPlayers || {}).filter((value) => String(value) === String(assignedTeam)).length;
+
       await redisPublisher.publish(
         channel,
         JSON.stringify({
           type: 'TEAM_ANSWERS_UPDATED',
           battleId,
           questionIndex: serverQuestionIndex,
-          teamAnswers,
+          teamAnswers: scopedTeamAnswers,
+          teamId: assignedTeam,
+          teamMemberCount,
+          isComplete: scopedTeamAnswers.length >= teamMemberCount,
           currentWinningOption: winningOption,
           isTieResolvedByLeader: isTie,
         })
       );
 
-      const assignedPlayers = await redisPublisher.hgetall(tKey);
-      const assignedPlayerCount = Object.keys(assignedPlayers || {}).length;
       if (assignedPlayerCount > 0 && teamAnswers.length >= assignedPlayerCount) {
         await this.triggerAdvance(battleId, redisPublisher, roomCode, 'all-answered');
       }
@@ -678,6 +749,7 @@ class TeamBattleHandler {
     this.clientRoomMap.delete(ws);
     // NEW: drop the chat-team bookkeeping for this socket along with everything else.
     this.clientTeamMap.delete(ws);
+    this.clientDetails.delete(ws);
   }
 }
 

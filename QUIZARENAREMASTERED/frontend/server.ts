@@ -9,6 +9,7 @@ import liveBattleHandler, { BattlePayload } from './handlers/LiveBattle';
 import BossRaidHandler, { BossBattlePayload } from './handlers/BossRaid';
 import BattleRoyaleHandler, { RoyalePayload } from './handlers/BattleRoyale';
 import TeamBattleHandler, { TeamBattlePayload } from './handlers/TeamBattle';
+import { finishTeamPowerUpVote, submitTeamPowerUpVote, TeamPowerUpVote } from './handlers/TeamPowerUpActions';
 import selfPacedBattleHandler, { SelfPacedPayload } from './handlers/OwnPace';
 import bingoBattleHandler, { BingoPayload } from './handlers/BingoBattle';
 import { applyLivePowerCard, LivePowerCardAction } from './handlers/PowerCardActions';
@@ -56,6 +57,15 @@ wss.on('connection', (ws: WebSocket) => {
         redisSubscriber
       );
       if (presenceHandled && payload.type !== 'JOIN_BATTLE') return;
+
+      if (payload.type === 'TEAM_POWERUP_VOTE') {
+        await submitTeamPowerUpVote(payload as TeamPowerUpVote, redisPublisher);
+        return;
+      }
+      if (payload.type === 'TEAM_POWERUP_VOTE_END') {
+        await finishTeamPowerUpVote(payload as TeamPowerUpVote, redisPublisher);
+        return;
+      }
 
       if (payload.type === 'USE_POWER_CARD' && (!payload.mode || payload.mode === 'LIVE')) {
         const result = await applyLivePowerCard(payload as LivePowerCardAction, redisPublisher);
