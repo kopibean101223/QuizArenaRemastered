@@ -10,85 +10,81 @@ datasource db {
   schemas   = ["auth", "public"]
 }
 
-// 2. Enum Definition (MUST BE PRESENT)
-enum QuestionStatus {
-  PENDING
-  APPROVED
-  REJECTED
-
-  @@schema("public")
-}
-
 model SyllabusDoc {
   id        Int                 @id @default(autoincrement())
-  userId    String              @db.Uuid // Keep only this line
   filename  String
   chunks    Json?
-  questions GeneratedQuestion[]
   createdAt DateTime            @default(now())
-
-  // Relation linked to public.profiles
-  profile profiles @relation(fields: [userId], references: [user_id], onDelete: Cascade)
+  userId    String              @db.Uuid
+  questions GeneratedQuestion[]
+  profile   profiles            @relation(fields: [userId], references: [user_id], onDelete: Cascade)
 
   @@schema("public")
 }
 
 model GeneratedQuestion {
-  id              Int            @id @default(autoincrement())
-  userId          String         @db.Uuid
-  docId           Int?
-  doc             SyllabusDoc?   @relation(fields: [docId], references: [id], onDelete: SetNull)
+  id              Int               @id @default(autoincrement())
   text            String
   type            String
   difficulty      String
   topic           String?
   answer          String?
-  choices         QuestionChoice[]
-  citation        QuestionCitation?
-  status          QuestionStatus @default(PENDING)
-  timeLimit       Int            @default(60)
+  docId           Int?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @default(now()) @updatedAt
+  status          QuestionStatus    @default(PENDING)
+  profilesUser_id String?           @db.Uuid
+  userId          String            @db.Uuid
   testCases       Json?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @default(now()) @updatedAt
-  profiles        profiles?      @relation(fields: [profilesUser_id], references: [user_id])
-  profilesUser_id String?        @db.Uuid
+  timeLimit       Int               @default(60)
+  doc             SyllabusDoc?      @relation(fields: [docId], references: [id])
+  profiles        profiles?         @relation(fields: [profilesUser_id], references: [user_id])
+  choiceRows      QuestionChoice[]
+  citationRow     QuestionCitation?
+
+  itemParameters  ItemParameters?
+  responseLogs    StudentResponseLog[]
 
   @@schema("public")
 }
 
 model QuestionChoice {
-  id          Int               @id @default(autoincrement())
-  questionId  Int
-  question    GeneratedQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  label       String
-  text        String
-  isCorrect   Boolean
+  id         Int               @id @default(autoincrement())
+  questionId Int
+  label      String
+  text       String
+  isCorrect  Boolean
+  question   GeneratedQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@schema("public")
 }
 
 model QuestionCitation {
-  id          Int               @id @default(autoincrement())
-  questionId  Int               @unique
-  question    GeneratedQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  docName     String
-  section     String?
-  pageRange   String?
-  excerpt     String?
-  confidence  String?
+  id         Int               @id @default(autoincrement())
+  questionId Int               @unique
+  docName    String
+  section    String?
+  pageRange  String?
+  excerpt    String?
+  confidence String?
+  question   GeneratedQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@schema("public")
 }
 
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model documents {
-  id        String                 @id @db.Uuid 
+  id        String                   @id @db.Uuid
   content   String?
   metadata  Json?
   embedding Unsupported("vector")?
+  fts       Unsupported("tsvector")? @default(dbgenerated("to_tsvector('english'::regconfig, COALESCE(content, ''::text))"))
 
+  @@index([fts], type: Gin)
   @@ignore
   @@schema("public")
 }
+
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model audit_log_entries {
@@ -485,10 +481,9 @@ model sso_providers {
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model users {
-  instance_id String? @db.Uuid
-  id          String  @id @db.Uuid
-  aud         String? @db.VarChar(255)
-
+  instance_id                 String?                @db.Uuid
+  id                          String                 @id @db.Uuid
+  aud                         String?                @db.VarChar(255)
   role                        String?                @db.VarChar(255)
   email                       String?                @db.VarChar(255)
   encrypted_password          String?                @db.VarChar(255)
@@ -577,13 +572,134 @@ model webauthn_credentials {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model profiles {
-  username     String              @unique @default("")
-  user_id      String              @id @db.Uuid
-  created_at   DateTime            @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @db.Timestamptz(6)
-  role         String
-  users        users               @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  syllabusDocs SyllabusDoc[]
-  questions    GeneratedQuestion[]
+  username         String              @default("")
+  user_id          String              @id @db.Uuid
+  created_at       DateTime            @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @db.Timestamptz(6)
+  role             String
+  questions        GeneratedQuestion[]
+  syllabusDocs     SyllabusDoc[]
+  users            users               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  quiz_sessions    quiz_sessions[]
+  section_students section_students[]
+  sections         sections[]
+
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model document_chunks {
+  id          String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  document_id String
+  content     String
+  metadata    Json?                    @default("{}")
+  embedding   Unsupported("vector")?
+  fts         Unsupported("tsvector")? @default(dbgenerated("to_tsvector('english'::regconfig, COALESCE(content, ''::text))"))
+
+  @@index([document_id], map: "document_chunks_doc_id_idx")
+  @@index([fts], type: Gin)
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model generation_logs {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  request_id            String?
+  document_id           String?
+  model                 String?
+  dense_candidate_count Int?
+  fts_candidate_count   Int?
+  generation_latency    Float?
+  retrieval_latency     Float?
+  critic_result         String?
+  grounding_score       Float?
+  final_status          String?
+  created_at            DateTime? @default(now()) @db.Timestamptz(6)
+
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model quiz_results {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  session_id      String        @db.Uuid
+  room_code       String?       @db.VarChar(50)
+  user_id         String        @db.Uuid
+  score           Int?          @default(0)
+  correct_answers Int?          @default(0)
+  total_questions Int?          @default(0)
+  accuracy        Decimal?      @default(0.00) @db.Decimal(5, 2)
+  rank            Int?
+  completed_at    DateTime?     @default(now()) @db.Timestamptz(6)
+  quiz_sessions   quiz_sessions @relation(fields: [session_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([session_id, user_id], map: "unique_session_user")
+  @@index([session_id], map: "idx_quiz_results_session")
+  @@index([user_id], map: "idx_quiz_results_user")
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model quiz_sessions {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  section_id   String         @db.Uuid
+  room_code    String?        @unique @db.VarChar(50)
+  status       String?        @default("WAITING") @db.VarChar(50)
+  mode         String?        @default("LIVE") @db.VarChar(50)
+  created_at   DateTime?      @default(now()) @db.Timestamptz(6)
+  finished_at  DateTime?      @db.Timestamptz(6)
+  deadline     DateTime?      @db.Timestamptz(6)
+  is_live      Boolean?       @default(true)
+  professor_id String?        @db.Uuid
+  team_size    Int?
+  quiz_results quiz_results[]
+  profiles     profiles?      @relation(fields: [professor_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+  sections     sections       @relation(fields: [section_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([section_id], map: "idx_quiz_sessions_section_id")
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model quiz_teams {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  session_id String @db.Uuid
+  name       String
+
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model section_students {
+  section_id String   @db.Uuid
+  student_id String   @db.Uuid
+  joined_at  DateTime @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @db.Timestamptz(6)
+  sections   sections @relation(fields: [section_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  profiles   profiles @relation(fields: [student_id], references: [user_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([section_id, student_id])
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model sections {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String
+  description      String?
+  join_code        String             @unique
+  professor_id     String             @db.Uuid
+  created_at       DateTime           @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @db.Timestamptz(6)
+  quiz_sessions    quiz_sessions[]
+  section_students section_students[]
+  profiles         profiles           @relation(fields: [professor_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@schema("public")
+}
+
+enum QuestionStatus {
+  PENDING
+  APPROVED
+  REJECTED
 
   @@schema("public")
 }
@@ -656,4 +772,64 @@ enum one_time_token_type {
   phone_change_token
 
   @@schema("auth")
+}
+
+// Per-student, per-topic BKT mastery state.
+model StudentMastery {
+  id                    Int      @id @default(autoincrement())
+  studentId             String   @db.Uuid
+  knowledgeComponentId  String
+  pLt                   Float    @default(0.5)
+  responseCount         Int      @default(0)
+  updatedAt             DateTime @default(now()) @updatedAt
+
+  @@unique([studentId, knowledgeComponentId])
+  @@index([studentId])
+  @@schema("public")
+}
+
+// Per-student IRT ability estimate.
+model StudentAbility {
+  id             Int      @id @default(autoincrement())
+  studentId      String   @db.Uuid @unique
+  theta          Float    @default(0)
+  responseCount  Int      @default(0)
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  @@schema("public")
+}
+
+// Per-question IRT item parameters — replaces LLM difficulty label over time.
+model ItemParameters {
+  id                  Int      @id @default(autoincrement())
+  questionId          Int      @unique
+  bI                  Float    @default(0)
+  aI                  Float?
+  cI                  Float?
+  responseCount       Int      @default(0)
+  llmDifficultyLabel  String
+  isCalibrated        Boolean  @default(false)
+  updatedAt           DateTime @default(now()) @updatedAt
+
+  question GeneratedQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+}
+
+// Append-only response log for BKT/IRT updates and recalibration.
+model StudentResponseLog {
+  id            Int      @id @default(autoincrement())
+  studentId     String   @db.Uuid
+  questionId    Int
+  battleId      String?
+  isCorrect     Boolean
+  thetaAtTime   Float
+  bIAtTime      Float
+  answeredAt    DateTime @default(now())
+
+  question GeneratedQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([questionId])
+  @@schema("public")
 }

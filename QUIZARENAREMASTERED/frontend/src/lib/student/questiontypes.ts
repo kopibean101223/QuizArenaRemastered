@@ -160,7 +160,8 @@ export type QuestionType =
   | 'Short Answer'
   | 'Multiple Choice'
   | 'Numerical Input'
-  | 'Identification';
+  | 'Identification'
+  | 'Step-by-step Solution';
 
 export interface BaseQuestion {
   id: string | number;
@@ -203,6 +204,7 @@ export interface MultipleChoiceQuestion extends BaseQuestion {
 export interface NumericalInputQuestion extends BaseQuestion {
   type: 'Numerical Input';
   correctValue: number;
+  correctAnswerText?: string;
   tolerance?: number; // +/- range considered correct
   unit?: string; // e.g. "kg", "m/s"
 }
@@ -213,10 +215,24 @@ export interface IdentificationQuestion extends BaseQuestion {
   caseSensitive: boolean;
 }
 
+export interface StepByStepSolutionQuestion extends BaseQuestion {
+  type: 'Step-by-step Solution';
+  acceptedAnswers: string[];
+  caseSensitive: boolean;
+  steps?: string[];
+  stepWeights?: Array<{
+    stepDescription?: string;
+    description?: string;
+    pointsAwarded?: number;
+    commonMistake?: string;
+  }>;
+}
+
 export type NormalizedQuestion =
   | TrueFalseQuestion
   | MathematicsQuestion
   | ShortAnswerQuestion
   | MultipleChoiceQuestion
   | NumericalInputQuestion
-  | IdentificationQuestion;
+  | IdentificationQuestion
+  | StepByStepSolutionQuestion;

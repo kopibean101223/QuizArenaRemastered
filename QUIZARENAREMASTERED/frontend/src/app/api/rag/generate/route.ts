@@ -48,6 +48,80 @@ export async function POST(req: Request) {
     const pyData = await pyRes.json();
     return NextResponse.json(pyData, { status: pyRes.status });
 
+    if (!pyRes.ok) {
+      const errorMessage = pyData?.detail || pyData?.error || 'FastAPI generation failed';
+      return NextResponse.json({ error: errorMessage }, { status: pyRes.status });
+    }
+
+   const rawQuestions = Array.isArray(pyData) ? pyData : pyData.questions || [];
+    const validQuestions = rawQuestions.filter((q: any) => 
+      q.text && 
+      q.answer && 
+      q.citation && 
+      (!types.includes("Step-by-step Solution") || (q.stepWeights && q.partialCreditRules))
+    );
+
+    if (validQuestions.length === 0) {
+      return NextResponse.json({ error: 'AI failed to generate valid Mathematics schemas with partial credit rubrics.' }, { status: 422 });
+    }
+
+    const savedQuestions = await Promise.all(
+      rawQuestions.map((q: any) =>
+        prisma.generatedQuestion.create({
+          data: {
+            userId: userId, 
+            doc: { connect: { id: doc.id } },
+            text: q.text,
+            type: q.type || 'Multiple Choice',
+            difficulty: q.difficulty || difficulty || 'Medium',
+            topic: category && category !== 'General' ? category : (doc.filename || 'General'),
+            answer: q.answer || '',
+            status: 'PENDING',
+            choiceRows: {
+                create: (q.choices || []).map((c: any) => ({
+                    label: c.label || '',
+                    text: c.text || '',
+                    isCorrect: !!c.isCorrect,
+                }))
+            },
+            citationRow: q.citation ? {
+                create: {
+                    docName: q.citation.docName || doc.filename || '',
+                    section: q.citation.section || '',
+                    pageRange: q.citation.pageRange || '',
+                    excerpt: q.citation.excerpt || '',
+                    confidence: q.citation.confidence || 'medium'
+                }
+            } : undefined
+          },
+          include: { choiceRows: true, citationRow: true }
+        })
+      )
+    );
+
+    const normalizedQuestions = savedQuestions.map((question: any) => ({
+      ...question,
+      choices: Array.isArray(question.choiceRows)
+        ? question.choiceRows.map((choice: any) => ({
+            id: choice.id,
+            label: choice.label,
+            text: choice.text,
+            isCorrect: choice.isCorrect,
+          }))
+        : [],
+      citation: question.citationRow ? {
+        id: question.citationRow.id,
+        docName: question.citationRow.docName,
+        section: question.citationRow.section,
+        pageRange: question.citationRow.pageRange,
+        excerpt: question.citationRow.excerpt,
+        confidence: question.citationRow.confidence,
+      } : null,
+      choiceRows: undefined,
+      citationRow: undefined,
+    }));
+
+    return NextResponse.json(normalizedQuestions);
   } catch (error: any) {
     console.error('Error in /api/rag/generate:', error);
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });

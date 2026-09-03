@@ -15,6 +15,11 @@ import {
 import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
 import { CountdownDisplay } from "../studentONLY/ComponentsLobby/CountdownDisplay";
+import {
+  getQuestionDistributionMode,
+  buildUniformQuestionSet,
+  buildDistributionQuestionSet,
+} from '@/lib/battle/questionDistribution';
 
 const C = {
   indigo: "#5B3DF6", indigoLight: "rgba(91,61,246,0.07)", indigoMid: "rgba(91,61,246,0.14)",
@@ -249,6 +254,7 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [isLive, setIsLive] = useState(true);
   const [deadline, setDeadline] = useState('');
   const [adaptive, setAdaptive] = useState(true);
+  const questionMode = getQuestionDistributionMode(adaptive);
   const [teamSize, setTeamSize] = useState(3);
   const [tolerance, setTolerance] = useState(5);
   const [previewed, setPreviewed] = useState(false);
@@ -390,10 +396,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
               : formatted;
 
             const targetQuestions = filtered.length > 0 ? filtered : formatted;
-
-            // Fisher-Yates shuffle for questions and individual choices
-            const shuffled = shuffleArray(targetQuestions);
-            const fullyRandomized = shuffled.map((q: QuestionItem) => ({
+            const distributionSet = buildDistributionQuestionSet(targetQuestions, adaptive, true);
+            const fullyRandomized = distributionSet.map((q: QuestionItem) => ({
               ...q,
               choices: q.choices && q.choices.length > 0 ? shuffleArray(q.choices) : []
             }));
@@ -661,7 +665,9 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
         type: 'PROF_START_BATTLE',
         battleId: activeSessionId,
         bankId: selectedBank.id,
-        questions: randomizedQuestions,
+        adaptive,
+        distributionMode: questionMode,
+        questions: questionMode === 'uniform' ? randomizedQuestions : [],
       }));
     }
   };
@@ -691,10 +697,8 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     } else {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
-          type: 'ADVANCE_QUESTION',
+          type: 'PROF_END_BATTLE',
           battleId: activeSessionId,
-          currentIndex: currentIndex,
-          isLastQuestion: true
         }));
       }
       toast.success("Quiz completed!");
@@ -965,7 +969,9 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
                 <div style={{ background: C.offWhite, borderRadius: 16, padding: "16px 18px", border: `1.5px solid ${adaptive ? C.indigoBorder : C.border}`, display: "flex", flexDirection: "column", gap: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Adaptive Randomization</span>
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>
+                      {adaptive ? 'Adaptive Quiz Logic' : 'Uniform Quiz Logic'}
+                    </span>
                     <ToggleSwitch on={adaptive} onChange={v => setAdaptive(v)} disabled={activeSessionExists} />
                   </div>
                 </div>

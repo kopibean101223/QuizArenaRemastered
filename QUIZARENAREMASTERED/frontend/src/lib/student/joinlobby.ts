@@ -21,9 +21,8 @@ export async function resolveRoomCode(
 
   const { data, error } = await supabase
     .from("quiz_sessions")
-    .select("id, mode, deadline, created_at")
+    .select("id, mode, status, deadline, created_at")
     .eq("room_code", trimmed)
-    .eq("status", "ACTIVE")
     .maybeSingle();
 
   if (error) return { ok: false, message: "Database error: " + error.message };
@@ -40,6 +39,10 @@ export async function resolveRoomCode(
     if (pastResult) {
       return { ok: false, message: "You have already completed this quiz!" };
     }
+  }
+
+  if (data.status !== "ACTIVE") {
+    return { ok: false, message: "Invalid or inactive room code." };
   }
 
   if (data.deadline) {

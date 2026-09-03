@@ -3,14 +3,16 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import {
   Check, ChevronRight, CircleHelp, Clock3, Grid3X3,
-  RefreshCcw, Send as SendIcon, Shield, Trophy, X, Zap,
+  RefreshCcw, Send as SendIcon, Shield, Trophy, X, Zap, Sparkles,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { getStudentIdentity } from '@/lib/student/battle/useBattleConnection';
 import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProvider';
 import { CountdownBar } from './LiveBattleCOMPONENTONLY/CountdownBar';
 import { BattleChat, BattleChatMessage } from './battle/BattleChat';
-import { PowerCard } from './PowerCards/PowerCard';
+import { PowerCardTray } from './PowerCards/PowerCardTray';
+import { BINGO_STEAL_CARDS, BINGO_RETAKE_CARDS } from './PowerCards/CardCatalog';
+import { ChoosePowerUp } from './PowerCards/ChoosePowerUp';
 import type { PowerCardData } from './PowerCards/types';
 
 type CellStatus = 'unanswered' | 'correct' | 'wrong';
@@ -65,36 +67,20 @@ export function BattleBingo({ battleId }: { battleId: string }) {
   const [discardValue, setDiscardValue] = useState('');
   const [retakeValue, setRetakeValue] = useState('');
   const [winner, setWinner] = useState<BingoPlayer | null>(null);
-  const [retakeStarted, setRetakeStarted] = useState(false);   // ADD
-  const [retakeUsed, setRetakeUsed] = useState(false);          // ADD
-  const [retakeChoiceIndex, setRetakeChoiceIndex] = useState<number | null>(null); // ADD
+  const [retakeStarted, setRetakeStarted] = useState(false);
+  const [retakeUsed, setRetakeUsed] = useState(false);
+  const [retakeChoiceIndex, setRetakeChoiceIndex] = useState<number | null>(null);
+  
+  // Power-up card system states
+  const [collectedPowerCards, setCollectedPowerCards] = useState<PowerCardData[]>([]);
+  const [showChoosePowerUP, setShowChoosePowerUP] = useState(false);
+  const [correctAnswersCount, setCorrectAnswersCount] = useState(0);
 
   const me = players.find((player) => player.id === currentUserId);
   const currentQuestionText = question?.text || question?.question || '';
   const questionChoices = (question?.choices || question?.options || []).map((choice: any) =>
     typeof choice === 'string' ? choice : choice?.text || choice?.label || choice?.value || String(choice)
   );
-
-  const buffCards: PowerCardData[] = [
-    ...Array.from({ length: (me?.stealBuffs || 0) }, (_, i) => ({
-      id: `steal-${i}`,
-      category: 'shield' as const,
-      name: 'Steal',
-      description: 'Blindly swap a number with another player.',
-      cost: 0,
-      rarity: 'rare' as const,
-      effect: { category: 'shield' as const, target: 'enemy' as const },
-    })),
-    ...Array.from({ length: (me?.retakeBuffs || 0)}, (_, i ) => ({
-      id: `retake-${i}`,
-      category: 'hp' as const,
-      name: 'Retake',
-      description: 'Recover one of your incorrect numbers.',
-      cost: 0,
-      rarity: 'rare' as const,
-      effect: { category: 'hp' as const, target: 'self' as const },
-    })),
-  ];
   
   const bingoProgress = useMemo(() => {
     const green = new Set(cells.filter((cell) => cell.status === 'correct').map((cell) => cell.value));
@@ -139,6 +125,15 @@ export function BattleBingo({ battleId }: { battleId: string }) {
       setCells(normalizeCells(data.card));
       setAnswer('');
       setSelectedChoiceIndex(null);
+      
+      // Track correct answers and show power-up chooser when 2 correct answers achieved
+      if (data.isCorrect) {
+        const newCount = correctAnswersCount + 1;
+        setCorrectAnswersCount(newCount);
+        if (newCount === 2) {
+          setShowChoosePowerUP(true);
+        }
+      }
     }
     if (data.type === 'BINGO_MATCH_ENDED') {
       setWinner(data.winner || null);
@@ -213,6 +208,27 @@ export function BattleBingo({ battleId }: { battleId: string }) {
     send({ type: 'BINGO_CHAT', mode: 'BINGO', battleId, sender: studentName, userId: currentUserId, message: text });
   }
 
+  function handleChoosePowerUP(selectedCard: PowerCardData) {
+  setCollectedPowerCards((prev) => [
+    ...prev,
+    { ...selectedCard, id: `${selectedCard.id}-${Date.now()}` },
+  ]);
+  setShowChoosePowerUP(false);
+  setCorrectAnswersCount(0);
+}
+
+  function handleUsePowerCard(card: PowerCardData, selectedTargetId?: string) {
+    if (card.name === 'Steal') {
+      if (!selectedTargetId || !discardValue || phase !== 'stealing') return;
+      send({ type: 'USE_BINGO_STEAL', mode: 'BINGO', battleId, targetUserId: selectedTargetId, discardValue: Number(discardValue) });
+    } else if (card.name === 'Retake') {
+      if (phase !== 'retake' || !answer || retakeUsed) return;
+      send({ type: 'USE_BINGO_RETAKE', mode: 'BINGO', battleId, answer, retakeValue: Number(retakeValue) });
+      setRetakeUsed(true);
+    }
+    setCollectedPowerCards((previous) => previous.filter((item) => item.id !== card.id));
+  }
+
   if (phase === 'finished') {
     return (
       <div className="min-h-screen bg-[#131524] text-white flex flex-col items-center justify-center gap-3 font-sans">
@@ -253,27 +269,15 @@ export function BattleBingo({ battleId }: { battleId: string }) {
         </div>
       </header>
 
-      {buffCards.length > 0 && (
-        <div className="fixed left-[30px] top-60 z-30">
-          <div className="relative flex h-44 w-64 items-center">
-            {buffCards.map((card, index) => {
-              const mid = (buffCards.length - 1) / 2;
-              return (
-                <div
-                  key={card.id}
-                  className="absolute left-0 top-1/2 transition-all duration-500"
-                  style={{
-                    transform: `translateY(-50%) rotate(${90 + (index - mid) * 12}deg) translateX(${index * 20}px)`,
-                    transformOrigin: 'left center',
-                    zIndex: buffCards.length - index,
-                  }}
-                >
-                  <PowerCard card={card} state="revealed" size="md" />
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      {/* Power Card Tray */}
+      {collectedPowerCards.length > 0 && (
+        <PowerCardTray
+          cards={collectedPowerCards}
+          topClassName="top-60"
+          size="md"
+          onCardUse={handleUsePowerCard}
+          targetOptions={players.filter((player) => player.id !== currentUserId).map((player) => ({ id: player.id, name: player.name }))}
+        />
       )}
 
 
@@ -602,6 +606,15 @@ export function BattleBingo({ battleId }: { battleId: string }) {
           </div>
         </div>
       </div>
+
+      {/* Choose Power-Up Modal */}
+      {/* Choose Power-Up Modal */}
+      {showChoosePowerUP && (
+        <ChoosePowerUp
+          drawnCards={[BINGO_STEAL_CARDS[0], BINGO_RETAKE_CARDS[0]]}
+          onSelectCard={handleChoosePowerUP}
+        />
+      )}
     </div>
   );
 }

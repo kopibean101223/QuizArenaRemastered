@@ -1,7 +1,7 @@
   'use client';
 
   import React, { useState, useEffect } from 'react';
-  import { Skull, Zap, ChevronRight } from 'lucide-react';
+  import { Flame, Skull, Zap, ChevronRight, Sparkles } from 'lucide-react';
   import { useApp } from '../../context/AppContext';
   import {
     formatBattleQuestions,
@@ -15,9 +15,10 @@
   import { AnswerInput } from './battle/Answer_Input';
   import { BattleChat, BattleChatMessage } from './battle/BattleChat';
   import { PowerCard } from './PowerCards/PowerCard';
-  import { CARD_CATALOG } from './PowerCards/CardCatalog';
+  import { CARD_CATALOG, BATTLE_ROYALE_CARDS } from './PowerCards/CardCatalog';
   import type { PowerCardData } from './PowerCards/types';
   import { PowerCardTray } from './PowerCards/PowerCardTray';
+  import { ChoosePowerUp } from './PowerCards/ChoosePowerUp';
 
   export interface Survivor {
     id: string;
@@ -44,9 +45,10 @@
         return question.correct ? 'True' : 'False';
       case 'Identification':
       case 'Short Answer':
+      case 'Step-by-step Solution':
         return question.acceptedAnswers[0] ?? '';
       case 'Numerical Input':
-        return String(question.correctValue);
+        return question.correctAnswerText ?? String(question.correctValue);
       case 'Mathematics':
         return question.correctExpression;
       default:
@@ -70,7 +72,7 @@
   const DEFAULT_TIME_LIMIT = 20;
 
   function drawBattleCards(count: number): PowerCardData[] {
-    return [...CARD_CATALOG].sort(() => Math.random() - 0.5).slice(0, count);
+    return [...BATTLE_ROYALE_CARDS].sort(() => Math.random() - 0.5).slice(0, count);
   }
 
   /**
@@ -104,8 +106,15 @@
     const [locked, setLocked] = useState(false);
     const [survivors, setSurvivors] = useState<Survivor[]>([]);
     const [eliminated, setEliminated] = useState(false);
+    const [cardEffect, setCardEffect] = useState<{ targetId: string; label: string } | null>(null);
 
     const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
+    
+    // Power-up card system states
+    const [collectedPowerCards, setCollectedPowerCards] = useState<PowerCardData[]>([]);
+    const [availablePowerChoices, setAvailablePowerChoices] = useState<PowerCardData[]>([]);
+    const [showChoosePowerUP, setShowChoosePowerUP] = useState(false);
+    const [correctAnswersCount, setCorrectAnswersCount] = useState(0);
 
     const { studentName: myName, currentUserId: myId } = getStudentIdentity(user);
 
@@ -171,6 +180,17 @@
         }
         if (data.playerId === myId && typeof data.isCorrect === 'boolean') {
           setAnswerFeedback(data.isCorrect);
+          
+          // Every 2 correct answers grants a random Royale power-up.
+          if (data.isCorrect) {
+            const newCount = correctAnswersCount + 1;
+            setCorrectAnswersCount(newCount);
+            if (newCount >= 2) {
+              setAvailablePowerChoices(drawBattleCards(3));
+              setShowChoosePowerUP(true);
+              setCorrectAnswersCount(0);
+            }
+          }
         }
       }
 
@@ -245,6 +265,42 @@
       });
     };
 
+    const handleChoosePowerUP = (card: PowerCardData) => {
+      setCollectedPowerCards((prev) => [...prev, { ...card, id: `${card.id}-${Date.now()}` }]);
+      setShowChoosePowerUP(false);
+      setAvailablePowerChoices([]);
+      setCorrectAnswersCount(0);
+    };
+
+    const handleUsePowerCard = (card: PowerCardData, targetId?: string) => {
+      send({
+        type: 'BATTLE_ACTION',
+        battleId,
+        userId: myId,
+        sender: myName,
+        action: 'USE_POWER_CARD',
+        cardId: card.id,
+        targetId,
+        questionIndex,
+        message: `used power card: ${card.name}`,
+      });
+      const amount = Number(card.effect.amount ?? 0);
+      if (targetId && card.effect.category === 'damage') {
+        setSurvivors((previous) => previous.map((player) =>
+          player.id === targetId ? { ...player, lives: Math.max(0, player.lives - amount) } : player
+        ));
+        setCardEffect({ targetId, label: `-${amount} HP` });
+        window.setTimeout(() => setCardEffect(null), 1200);
+      } else if (card.effect.target === 'self' && card.effect.category === 'hp') {
+        setSurvivors((previous) => previous.map((player) =>
+          player.isYou ? { ...player, lives: Math.min(startingHp, player.lives + amount) } : player
+        ));
+        setCardEffect({ targetId: myId, label: `+${amount} HP` });
+        window.setTimeout(() => setCardEffect(null), 1200);
+      }
+      setCollectedPowerCards((previous) => previous.filter((item) => item.id !== card.id));
+    };
+
     const activeSurvivorsCount = survivors.filter((s) => s.lives > 0).length;
     const me = survivors.find((s) => s.isYou);
     const myLives = me?.lives ?? startingHp;
@@ -278,6 +334,7 @@
 
     return (
       <div className="min-h-screen bg-[#131524] text-white flex flex-col font-sans">
+        <style>{`@keyframes royaleHit{0%,100%{transform:scale(1)}35%{transform:scale(1.22);filter:brightness(1.5)}}@keyframes royaleFlame{0%{opacity:0;transform:translateY(8px) scale(.5) rotate(-12deg)}35%{opacity:1;transform:translateY(-2px) scale(1.1) rotate(8deg)}100%{opacity:0;transform:translateY(-18px) scale(.8)}}@keyframes royaleDamage{0%{opacity:0;transform:translate(-50%,8px)}30%{opacity:1}100%{opacity:0;transform:translate(-50%,-18px)}}`}</style>
         {/* Header Bar */}
         <header className="px-6 py-3 flex items-center justify-between border-b border-white/10">
           <div className="flex items-center gap-4">
@@ -304,7 +361,12 @@
           </div>
         </header>
 
-                        <PowerCardTray topClassName="top-60" />
+                        <PowerCardTray
+                          cards={collectedPowerCards}
+                          topClassName="top-60"
+                          onCardUse={handleUsePowerCard}
+                          targetOptions={survivors.filter((player) => !player.isYou && player.lives > 0).map((player) => ({ id: player.id, name: player.name }))}
+                        />
 
                         
         {/* Main Grid */}
@@ -419,10 +481,20 @@
                         </span>
                       )}
                       <div
-                        className="size-9 rounded-full flex items-center justify-center font-extrabold text-xs text-white border-2 border-white/10 relative"
+                        className={`size-9 rounded-full flex items-center justify-center font-extrabold text-xs text-white border-2 border-white/10 relative ${cardEffect?.targetId === s.id ? 'animate-[royaleHit_700ms_ease-in-out]' : ''}`}
                         style={{ backgroundColor: s.color }}
                       >
                         {isDead ? <Skull size={18} /> : s.initials}
+                        {cardEffect?.targetId === s.id && (
+                          <>
+                            <span className="pointer-events-none absolute -right-3 -top-3 text-[#FF8A3D] animate-[royaleFlame_900ms_ease-out]">
+                              <Flame size={22} fill="currentColor" />
+                            </span>
+                            <span className="pointer-events-none absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] font-black text-[#FFC93C] animate-[royaleDamage_900ms_ease-out]">
+                              {cardEffect.label}
+                            </span>
+                          </>
+                        )}
                       </div>
                       <span className="text-[10px] text-[#8F93A8] font-bold">{s.name}</span>
                       <div className="flex gap-0.5">
@@ -440,6 +512,14 @@
             </div>
           </div>
         </div>
+
+        {/* Choose Power-Up Modal */}
+        {showChoosePowerUP && availablePowerChoices.length > 0 && (
+          <ChoosePowerUp
+            drawnCards={availablePowerChoices}
+            onSelectCard={handleChoosePowerUP}
+          />
+        )}
       </div>
     );
     }

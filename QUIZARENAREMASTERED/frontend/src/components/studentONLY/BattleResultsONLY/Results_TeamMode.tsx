@@ -50,7 +50,11 @@ export function TeamBattleResults({ battleId = "team-demo", myResultData }: { ba
     wsRef.current = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'JOIN_TEAM_BATTLE', battleId }));
+      ws.send(JSON.stringify({
+        type: 'JOIN_TEAM_BATTLE',
+        battleId,
+        userId: currentUserId,
+      }));
     };
 
     ws.onmessage = (event) => {

@@ -64,6 +64,7 @@ class TeamBattleHandler {
   // process. This is what makes the timer/question-index "real" instead of
   // each client silently deciding on its own when to move on.
   private questionTimers: Map<string, NodeJS.Timeout>;
+  private advancingBattles: Set<string>;
   // NEW: remembers which team each connected socket belongs to, so
   // TEAM_CHAT_MESSAGE can be fanned out to teammates only instead of the
   // whole room. Populated on JOIN_TEAM_BATTLE and kept in sync by
@@ -74,6 +75,7 @@ class TeamBattleHandler {
     this.activeRooms = new Map<string, Set<WebSocket>>();
     this.clientRoomMap = new Map<WebSocket, string>();
     this.questionTimers = new Map<string, NodeJS.Timeout>();
+    this.advancingBattles = new Set<string>();
     this.clientTeamMap = new Map<WebSocket, string>();
   }
 
@@ -150,11 +152,26 @@ class TeamBattleHandler {
     console.log(`[TEAM][TIMER] scheduling auto-advance for ${battleId} in ${delayMs}ms`);
     const handle = setTimeout(() => {
       console.log(`[TEAM][TIMER] timer FIRED for ${battleId}`);
-      this.advanceOrEnd(battleId, redisPublisher, roomCode, 'timeout').catch((err) =>
+      this.triggerAdvance(battleId, redisPublisher, roomCode, 'timeout').catch((err) =>
         console.error(`[TEAM][TIMER] advanceOrEnd failed for ${battleId}:`, err)
       );
     }, delayMs);
     this.questionTimers.set(battleId, handle);
+  }
+
+  private async triggerAdvance(
+    battleId: string,
+    redisPublisher: Redis,
+    roomCode: string | undefined,
+    reason: 'timeout' | 'manual' | 'all-answered'
+  ): Promise<void> {
+    if (this.advancingBattles.has(battleId)) return;
+    this.advancingBattles.add(battleId);
+    try {
+      await this.advanceOrEnd(battleId, redisPublisher, roomCode, reason);
+    } finally {
+      this.advancingBattles.delete(battleId);
+    }
   }
 
   // NEW: the single source of truth for moving every client in the room to
@@ -166,7 +183,7 @@ class TeamBattleHandler {
     battleId: string,
     redisPublisher: Redis,
     roomCode: string | undefined,
-    reason: 'timeout' | 'manual'
+    reason: 'timeout' | 'manual' | 'all-answered'
   ): Promise<void> {
     console.log(`[TEAM][ADVANCE] triggered for ${battleId} reason=${reason}`);
     this.clearQuestionTimer(battleId);
@@ -512,9 +529,9 @@ class TeamBattleHandler {
 
     // ── SUBMIT MEMBER ANSWER & BROADCAST ALL TEAM ANSWERS ──
     // NOTE: submitting no longer moves the question forward by itself — it
-    // only records the vote. The server's timer (scheduled above) is the
-    // only thing that advances the room, so every member sees the same
-    // question at the same time regardless of who answered first.
+    // only records the vote. Once every assigned player has answered, the
+    // server advances immediately; otherwise the scheduled timer remains the
+    // source of truth for the round boundary.
     if (type === 'SUBMIT_TEAM_MEMBER_ANSWER') {
       if (!answer || !answer.memberId) return;
 
@@ -569,13 +586,19 @@ class TeamBattleHandler {
           isTieResolvedByLeader: isTie,
         })
       );
+
+      const assignedPlayers = await redisPublisher.hgetall(tKey);
+      const assignedPlayerCount = Object.keys(assignedPlayers || {}).length;
+      if (assignedPlayerCount > 0 && teamAnswers.length >= assignedPlayerCount) {
+        await this.triggerAdvance(battleId, redisPublisher, roomCode, 'all-answered');
+      }
       return;
     }
 
     // ── MANUAL ADVANCE (professor override) ──
     if (type === 'ADVANCE_QUESTION') {
       console.log(`[TEAM][server] manual ADVANCE_QUESTION received for ${battleId}`);
-      await this.advanceOrEnd(battleId, redisPublisher, roomCode, 'manual');
+      await this.triggerAdvance(battleId, redisPublisher, roomCode, 'manual');
       return;
     }
 
@@ -606,9 +629,16 @@ class TeamBattleHandler {
     if (type === 'TEAM_CHAT_MESSAGE') {
       if (!message) return;
 
-      // Prefer the remembered team for this socket; fall back to whatever
-      // teamId came with the message itself.
-      const senderTeamId = this.clientTeamMap.get(ws) || (teamId != null ? String(teamId) : null);
+      let senderTeamId = this.clientTeamMap.get(ws) || (teamId != null ? String(teamId) : null);
+
+      if (!senderTeamId && userId) {
+        const storedTeamId = await redisPublisher.hget(tKey, userId);
+        if (storedTeamId) {
+          senderTeamId = String(storedTeamId);
+          this.clientTeamMap.set(ws, senderTeamId);
+        }
+      }
+
       if (!senderTeamId) {
         console.warn('[TEAM][CHAT] dropped message — sender has no known teamId', { battleId, userId });
         return;

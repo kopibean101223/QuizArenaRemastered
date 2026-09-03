@@ -940,7 +940,7 @@ async function handleConfirmAndDeploy() {
         setActiveSessionExists(true);
         setInLobby(true);
         setJoinedStudents([]); 
-        const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "chaosclash" ? "ChaosClash" : lobbyType === "team" ? "Team" : "Individual" || "Live";
+        const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "chaosclash" ? "ChaosClash" : lobbyType === "team" ? "Team" : lobbyType === "individual" ? "Individual" : "Live";
         toast.success(`${modeLabel} Live Session initialized using bank: ${selectedBank.name}! Session Locked.`);
       } else if (sessionData) {
         // For Async/Endless modes, seed the questions into Redis so students can fetch them

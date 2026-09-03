@@ -11,6 +11,7 @@ import BattleRoyaleHandler, { RoyalePayload } from './handlers/BattleRoyale';
 import TeamBattleHandler, { TeamBattlePayload } from './handlers/TeamBattle';
 import selfPacedBattleHandler, { SelfPacedPayload } from './handlers/OwnPace';
 import bingoBattleHandler, { BingoPayload } from './handlers/BingoBattle';
+import { applyLivePowerCard, LivePowerCardAction } from './handlers/PowerCardActions';
 
 
 const PORT = Number(process.env.PORT) || 8080;
@@ -55,6 +56,14 @@ wss.on('connection', (ws: WebSocket) => {
         redisSubscriber
       );
       if (presenceHandled && payload.type !== 'JOIN_BATTLE') return;
+
+      if (payload.type === 'USE_POWER_CARD' && (!payload.mode || payload.mode === 'LIVE')) {
+        const result = await applyLivePowerCard(payload as LivePowerCardAction, redisPublisher);
+        if (!result.success) {
+          ws.send(JSON.stringify({ type: 'POWER_CARD_REJECTED', battleId: payload.battleId, message: result.message }));
+        }
+        return;
+      }
 
 
       if (!payload.mode && payload.battleId && AMBIGUOUS_TYPES[payload.type]) {

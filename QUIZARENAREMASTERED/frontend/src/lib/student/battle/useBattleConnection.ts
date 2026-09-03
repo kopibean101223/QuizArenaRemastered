@@ -195,6 +195,31 @@ function parseAcceptedAnswers(q: any): string[] {
   return q.answer ? [q.answer] : [];
 }
 
+export function parseNumericValue(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    const compact = trimmed.replace(/,/g, '').replace(/\s+/g, '');
+    const fractionMatch = compact.match(/^([-+]?\d+(?:\.\d+)?)\/([-+]?\d+(?:\.\d+)?)$/);
+    if (fractionMatch) {
+      const numerator = Number(fractionMatch[1]);
+      const denominator = Number(fractionMatch[2]);
+      if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) {
+        return null;
+      }
+      return numerator / denominator;
+    }
+
+    const parsed = Number(compact);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
 // Builds the type-specific fields for a single raw row. Legacy rows from
 // the DB have no `type` column at all, so anything untyped is treated as
 // 'Multiple Choice' — that was the only shape that existed before this union.
@@ -206,7 +231,7 @@ function buildTypedFields(q: any, options: string[]): NormalizedQuestion {
     topic: q.topic || 'General',
     subject: q.subject || q.topic || 'General Knowledge',
     text: q.text || q.question,
-    points: Number(q.points) || 10,
+    points: Number.isFinite(Number(q.points)) ? Number(q.points) : 0,
     timeLimit: Number(q.timeLimit) || 60,
     explanation: q.explanation ?? undefined,
     mediaUrl: q.mediaUrl ?? undefined,
@@ -239,11 +264,39 @@ function buildTypedFields(q: any, options: string[]): NormalizedQuestion {
       };
     }
 
+    case 'Step-by-step Solution': {
+      const stepWeights = Array.isArray(q.stepWeights)
+        ? q.stepWeights.map((step: any) => ({
+            stepDescription: step?.stepDescription ?? step?.description ?? '',
+            description: step?.description ?? step?.stepDescription ?? '',
+            pointsAwarded: Number(step?.pointsAwarded ?? step?.points ?? 0),
+            commonMistake: step?.commonMistake ?? '',
+          }))
+        : [];
+      const steps = Array.isArray(q.steps)
+        ? q.steps
+        : stepWeights.length > 0
+          ? stepWeights.map((step: any) => step.stepDescription || step.description || '')
+          : ['Step 1'];
+
+      return {
+        ...base,
+        type: 'Step-by-step Solution',
+        acceptedAnswers: parseAcceptedAnswers(q),
+        caseSensitive: Boolean(q.caseSensitive),
+        steps,
+        stepWeights,
+      };
+    }
+
     case 'Numerical Input': {
+      const rawCorrectValue = q.correctValue ?? q.answer ?? 0;
+      const parsedCorrectValue = parseNumericValue(rawCorrectValue) ?? 0;
       return {
         ...base,
         type: 'Numerical Input',
-        correctValue: Number(q.correctValue ?? q.answer ?? 0),
+        correctValue: parsedCorrectValue,
+        correctAnswerText: typeof rawCorrectValue === 'string' ? rawCorrectValue.trim() : String(rawCorrectValue ?? ''),
         tolerance: q.tolerance != null ? Number(q.tolerance) : undefined,
         unit: q.unit ?? undefined,
       };

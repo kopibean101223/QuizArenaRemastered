@@ -220,6 +220,71 @@ export const PROF_CARDS: PowerCardData[] = [
   }
 ];
 
+/** Bingo-specific cards — Steal and Retake buffs for the Bingo game mode. */
+export const BINGO_STEAL_CARDS: PowerCardData[] = [
+  {
+    id: 'bingo-steal',
+    category: 'shield',
+    name: 'Steal',
+    description: 'Blindly swap a number with another player.',
+    cost: 0,
+    rarity: 'rare',
+    effect: { category: 'shield', target: 'enemy' },
+  },
+];
+
+export const BINGO_RETAKE_CARDS: PowerCardData[] = [
+  {
+    id: 'bingo-retake',
+    category: 'hp',
+    name: 'Retake',
+    description: 'Recover one of your incorrect numbers.',
+    cost: 0,
+    rarity: 'rare',
+    effect: { category: 'hp', target: 'self' },
+  },
+];
+
+export const LIVE_QUIZ_CARDS: PowerCardData[] = [
+  ...POINTS_CARDS,
+  ...REMOVE_CHOICES_CARDS,
+];
+
+export const TEAM_MODE_CARDS: PowerCardData[] = [
+  ...POINTS_CARDS,
+  ...REMOVE_CHOICES_CARDS,
+];
+
+export const BATTLE_ROYALE_CARDS: PowerCardData[] = [
+  ...ENEMY_TIMER_CARDS,
+  ...SELF_TIMER_CARDS,
+  ...POINTS_CARDS,
+  ...REMOVE_CHOICES_CARDS,
+  ...HP_CARDS,
+  ...SHIELD_CARDS,
+  ...DAMAGE_CARDS,
+];
+
+export const ENDLESS_CARDS: PowerCardData[] = [
+  // Populate endless mode cards here
+];
+
+export const BOSS_MODE_CARDS: PowerCardData[] = [
+  // Populate boss mode cards here
+];
+
+// Helper functions
+
+export function getEndlessCards(): PowerCardData[] {
+  return ENDLESS_CARDS;
+}
+
+export function getBossModeCards(): PowerCardData[] {
+  return BOSS_MODE_CARDS;
+}
+
+
+
 export const CARD_CATALOG: PowerCardData[] = [
   ...DAMAGE_CARDS,
   ...SHIELD_CARDS,
@@ -229,6 +294,8 @@ export const CARD_CATALOG: PowerCardData[] = [
   ...ENEMY_TIMER_CARDS,
   ...REMOVE_CHOICES_CARDS,
   ...PROF_CARDS,
+  ...BINGO_STEAL_CARDS,
+  ...BINGO_RETAKE_CARDS,
 ];
 
 export const CARD_CATALOG_BY_CATEGORY = {

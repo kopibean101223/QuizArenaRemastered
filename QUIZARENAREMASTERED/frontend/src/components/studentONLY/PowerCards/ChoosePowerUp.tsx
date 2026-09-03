@@ -21,7 +21,7 @@ export function ChoosePowerUp({ drawnCards, onSelectCard }: ChoosePowerUpProps) 
     }, 1200);
   };
 
-  return (
+  return (  
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md">
       <div className="flex flex-col items-center">
         <h2 className="text-3xl font-[Fredoka] font-bold text-[var(--gm-yellow)] mb-2 uppercase animate-[gm-pulse_1s_infinite]">
