@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
-import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
@@ -10,51 +8,45 @@ if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 export async function POST(req: Request) {
   try {
-   
-   const supabase = await createServerSupabaseClient();
-
+    const supabase = await createServerSupabaseClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized user' }, { status: 401 });
     }
-
     const userId = user.id;
 
- 
-    const { count, difficulty, types, document_id, category } = await req.json();
+    const { count, types, document_id, category, isAdaptive } = await req.json();
 
     if (!document_id) {
       return NextResponse.json({ error: 'document_id is required' }, { status: 400 });
     }
 
-
-   const doc = await prisma.syllabusDoc.findFirst({
-  where: { id: Number(document_id), userId },
-});
+    const doc = await prisma.syllabusDoc.findFirst({
+      where: { id: Number(document_id), userId },
+    });
 
     if (!doc) {
       return NextResponse.json({ error: 'Document not found in database' }, { status: 404 });
     }
 
-  
     const fastapiUrl = process.env.FASTAPI_URL || 'http://127.0.0.1:8000';
-   const pyRes = await fetch(`${fastapiUrl}/generate`, {
+    const pyRes = await fetch(fastapiUrl + '/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        user_id: userId,
         count: Number(count) || 5,
-        difficulty: difficulty || 'Medium',
         types: Array.isArray(types) ? types : ['Multiple Choice'],
         document_id: doc.id,
-        chunks: doc.chunks || [],
         filename: doc.filename,
-        category: 'Mathematics', 
-        requireRubric: true
+        category: category || 'Mathematics',
+        isAdaptive: isAdaptive !== undefined ? Boolean(isAdaptive) : true
       }),
     });
 
     const pyData = await pyRes.json();
+    return NextResponse.json(pyData, { status: pyRes.status });
 
     if (!pyRes.ok) {
       const errorMessage = pyData?.detail || pyData?.error || 'FastAPI generation failed';

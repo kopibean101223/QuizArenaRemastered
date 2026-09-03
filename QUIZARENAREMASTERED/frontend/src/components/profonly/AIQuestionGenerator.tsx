@@ -86,6 +86,11 @@ export interface GeneratedQuestion {
   citation: Citation;
   flagged?: boolean;
   flagReason?: string;
+  bloomLevel?: string;
+  estimated_difficulty?: number;
+  reject_reason?: string;
+  rejected_by?: string;
+  reject_note?: string;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -94,6 +99,39 @@ const DIFF_STYLE: Record<string, { bg: string; text: string; border: string }> =
   Medium: { bg: C.yellowLight, text: "#9A6C00", border: C.yellowBorder },
   Hard:   { bg: C.coralLight,  text: "#C8441E", border: "rgba(255,107,74,0.25)" },
 };
+
+const BLOOM_STYLE: Record<string, { bg: string; text: string }> = {
+  REMEMBER:    { bg: "rgba(46,212,122,0.08)",  text: "#18A058" },
+  UNDERSTAND:  { bg: "rgba(46,212,122,0.12)",  text: "#15803d" },
+  APPLY:       { bg: "rgba(255,201,60,0.12)",  text: "#9A6C00" },
+  ANALYZE:     { bg: "rgba(255,165,0,0.12)",   text: "#c2410c" },
+  EVALUATE:    { bg: "rgba(255,107,74,0.12)",  text: "#C8441E" },
+  CREATE:      { bg: "rgba(91,61,246,0.1)",    text: "#5B3DF6" },
+};
+
+const REJECT_REASONS = [
+  { value: "hallucinated", label: "Hallucinated — not in source" },
+  { value: "wrong_answer", label: "Wrong answer" },
+  { value: "ambiguous", label: "Ambiguous — multiple valid answers" },
+  { value: "duplicate", label: "Duplicate question" },
+  { value: "off_topic", label: "Off-topic — not from evidence" },
+  { value: "poorly_worded", label: "Poorly worded" },
+  { value: "structurally_broken", label: "Structurally broken" },
+  { value: "other", label: "Other (specify in note)" },
+];
+
+function getDiffStyle(difficulty: string): { bg: string; text: string; border: string; label: string } {
+  // Try parsing as numeric first (new format: 0.00-1.00)
+  const num = parseFloat(difficulty);
+  if (!isNaN(num) && num >= 0 && num <= 1) {
+    if (num < 0.33) return { ...DIFF_STYLE.Easy, label: `${(num * 100).toFixed(0)}% Easy` };
+    if (num <= 0.66) return { ...DIFF_STYLE.Medium, label: `${(num * 100).toFixed(0)}% Medium` };
+    return { ...DIFF_STYLE.Hard, label: `${(num * 100).toFixed(0)}% Hard` };
+  }
+  // Fallback to string matching (backward compat)
+  const style = DIFF_STYLE[difficulty] || DIFF_STYLE.Medium;
+  return { ...style, label: difficulty };
+}
 
 const STATUS_STYLE: Record<QuestionStatus, { bg: string; text: string; border: string; label: string }> = {
   pending:  { bg: C.yellowLight, text: "#9A6C00", border: C.yellowBorder, label: "Pending" },
@@ -179,13 +217,13 @@ function CitationPanel({ citation, flagged, flagReason, onFlag }:
 
 // ─── Question Card ─────────────────────────────────────────────────────────────
 function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
-  { q: GeneratedQuestion; onStatusChange: (id: number, s: QuestionStatus) => void; onFlag: (id: number, reason: string) => void; onEdit: (id: number, data: Partial<GeneratedQuestion>) => void; }) {
+  { q: GeneratedQuestion; onStatusChange: (id: number, s: QuestionStatus, reject_reason?: string, reject_note?: string) => void; onFlag: (id: number, reason: string) => void; onEdit: (id: number, data: Partial<GeneratedQuestion>) => void; }) {
   const [expanded, setExpanded] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState({ text: q.text, answer: q.answer, choices: q.choices || [] });
 
   const statusS = STATUS_STYLE[q.status] || STATUS_STYLE.pending;
-  const diffS = DIFF_STYLE[q.difficulty] || DIFF_STYLE.Medium;
+  const diffS = getDiffStyle(q.estimated_difficulty?.toString() ?? q.difficulty);
   const labels = ["A", "B", "C", "D", "E", "F"];
 
   const handleSaveEdit = () => {
@@ -221,7 +259,7 @@ function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
   };
 
   return (
-    <div style={{ background: C.white, borderRadius: 20, border: `1.5px solid ${q.status === "approved" ? C.greenBorder : q.status === "rejected" ? C.redBorder : C.border}`, boxShadow: "0 2px 14px rgba(0,0,0,0.05)", overflow: "hidden", opacity: q.status === "rejected" ? 0.72 : 1, transition: "all 0.18s" }}>
+    <div style={{ background: C.white, borderRadius: 20, border: `1.5px solid ${String(q.status).toLowerCase() === "approved" ? C.greenBorder : String(q.status).toLowerCase() === "rejected" ? C.redBorder : C.border}`, boxShadow: "0 2px 14px rgba(0,0,0,0.05)", overflow: "hidden", opacity: String(q.status).toLowerCase() === "rejected" ? 0.72 : 1, transition: "all 0.18s" }}>
       <div style={{ padding: "16px 18px 14px", display: "flex", alignItems: "flex-start", gap: 10 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -230,8 +268,16 @@ function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
               {statusS.label}
             </span>
             <span style={{ background: diffS.bg, color: diffS.text, border: `1.5px solid ${diffS.border}`, borderRadius: 7, padding: "2px 8px", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700 }}>
-              {q.difficulty}
+              {diffS.label}
             </span>
+            {q.bloomLevel && (() => {
+              const bs = BLOOM_STYLE[q.bloomLevel.toUpperCase()] || BLOOM_STYLE.UNDERSTAND;
+              return (
+                <span style={{ background: bs.bg, color: bs.text, borderRadius: 7, padding: "2px 8px", fontFamily: "Manrope, sans-serif", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                  {q.bloomLevel}
+                </span>
+              );
+            })()}
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: C.inputBg, color: C.muted, borderRadius: 7, padding: "2px 8px", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600 }}>
               {QTYPE_ICON[q.type] || <Circle size={10} strokeWidth={2.5} />}{q.type}
             </span>
@@ -348,10 +394,10 @@ function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
             <div style={{ display: "flex", gap: 6 }}>
               <ActionBtn icon={<Pencil size={13} strokeWidth={2} />} label="Edit" bg={C.yellowLight} color="#9A6C00" onClick={() => setIsEditing(true)} />
             </div>
-            {q.status !== "approved" && q.status !== "rejected" ? (
+            {String(q.status).toLowerCase() !== "approved" && String(q.status).toLowerCase() !== "rejected" ? (
               <div style={{ display: "flex", gap: 6 }}>
                 <ActionBtn icon={<Check size={13} strokeWidth={2.5} />} label="Approve" bg={C.greenLight} color="#18A058" border={C.greenBorder} onClick={() => onStatusChange(q.id, "approved")} />
-                <ActionBtn icon={<XCircle size={13} strokeWidth={2.5} />} label="Reject" bg={C.redLight} color={C.red} border={C.redBorder} onClick={() => onStatusChange(q.id, "rejected")} />
+                <RejectButton questionId={q.id} onReject={(id, reason, note) => onStatusChange(id, "rejected", reason, note)} />
               </div>
             ) : (
               <button type="button" onClick={() => onStatusChange(q.id, "pending")} style={{ background: "transparent", border: `1.5px solid ${C.border}`, borderRadius: 9, padding: "6px 12px", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: C.muted, cursor: "pointer" }}>Reset to Pending</button>
@@ -360,6 +406,45 @@ function QuestionCard({ q, onStatusChange, onFlag, onEdit }:
         )}
       </div>
     </div>
+  );
+}
+
+function RejectButton({ questionId, onReject }: { questionId: number; onReject: (id: number, reason: string, note: string) => void }) {
+  const [showModal, setShowModal] = useState(false);
+  const [reason, setReason] = useState("");
+  const [note, setNote] = useState("");
+
+  const handleConfirm = () => {
+    if (!reason) { toast.error("Please select a reject reason."); return; }
+    if (reason === "other" && !note.trim()) { toast.error("Please provide a note for 'Other' reason."); return; }
+    onReject(questionId, reason, note);
+    setShowModal(false);
+    setReason("");
+    setNote("");
+  };
+
+  return (
+    <>
+      <ActionBtn icon={<XCircle size={13} strokeWidth={2.5} />} label="Reject" bg={C.redLight} color={C.red} border={C.redBorder} onClick={() => setShowModal(true)} />
+      {showModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }} onClick={() => setShowModal(false)}>
+          <div style={{ background: C.white, borderRadius: 18, padding: "24px", width: 380, maxWidth: "90vw", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontFamily: "Manrope, sans-serif", fontSize: 16, fontWeight: 800, color: C.navy, margin: "0 0 16px" }}>Reject Question</h3>
+            <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 6 }}>Reason *</label>
+            <select value={reason} onChange={e => setReason(e.target.value)} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 600, color: C.navy, marginBottom: 14, background: C.offWhite, cursor: "pointer" }}>
+              <option value="">Select a reason...</option>
+              {REJECT_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+            </select>
+            <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em", display: "block", marginBottom: 6 }}>Note (optional{reason === "other" ? " — required for 'Other'" : ""})</label>
+            <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Additional context..." style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontFamily: "Manrope, sans-serif", fontSize: 13, minHeight: 70, resize: "vertical", marginBottom: 16 }} />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => setShowModal(false)} style={{ padding: "8px 16px", borderRadius: 9, border: `1.5px solid ${C.border}`, background: C.offWhite, fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: C.muted, cursor: "pointer" }}>Cancel</button>
+              <button type="button" onClick={handleConfirm} style={{ padding: "8px 16px", borderRadius: 9, border: "none", background: C.red, fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: "#fff", cursor: "pointer", boxShadow: "0 2px 8px rgba(255,71,87,0.3)" }}>Confirm Reject</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -378,13 +463,13 @@ function GeneratePanel({
   generating 
 }: { 
   docs: SyllabusDoc[]; 
-  onGenerate: (config: { count: string; difficulty: string; qtypes: string[]; docId: number | "all" }) => void; 
+  onGenerate: (config: { count: string; qtypes: string[]; docId: number | "all"; isAdaptive?: boolean }) => void; 
   generating: boolean;
 }) {
   const [count, setCount] = useState("5");
-  const [difficulty, setDifficulty] = useState("Medium");
   const [selectedQtypes, setSelectedQtypes] = useState<string[]>(["Multiple Choice"]);
   const [selectedDoc, setSelectedDoc] = useState<number | "all">("all");
+  const [isAdaptive, setIsAdaptive] = useState(true);
   
   const readyDocs = docs.filter(d => d.status === "ready");
 
@@ -413,8 +498,8 @@ function GeneratePanel({
           <button type="button" onClick={() => setSelectedDoc("all")} style={{ background: selectedDoc === "all" ? C.indigoLight : C.offWhite, border: `1.5px solid ${selectedDoc === "all" ? C.indigo : C.border}`, borderRadius: 10, padding: "7px 12px", cursor: "pointer", textAlign: "left", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: selectedDoc === "all" ? C.indigo : C.muted }}>
             All ready documents ({readyDocs.length})
           </button>
-          {readyDocs.map(d => (
-            <button key={d.id} type="button" onClick={() => setSelectedDoc(d.id)} style={{ background: selectedDoc === d.id ? C.indigoLight : "transparent", border: `1.5px solid ${selectedDoc === d.id ? C.indigo : C.border}`, borderRadius: 10, padding: "7px 12px", cursor: "pointer", textAlign: "left", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600, color: selectedDoc === d.id ? C.indigo : C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {readyDocs.map((d, i) => (
+            <button key={d.id || `ready-${i}`} type="button" onClick={() => setSelectedDoc(d.id)} style={{ background: selectedDoc === d.id ? C.indigoLight : "transparent", border: `1.5px solid ${selectedDoc === d.id ? C.indigo : C.border}`, borderRadius: 10, padding: "7px 12px", cursor: "pointer", textAlign: "left", fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 600, color: selectedDoc === d.id ? C.indigo : C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {d.filename}
             </button>
           ))}
@@ -433,18 +518,40 @@ function GeneratePanel({
         </div>
       </div>
 
-      {/* Difficulty */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-        <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: "0.07em" }}>Difficulty</label>
-        <div style={{ display: "flex", gap: 5 }}>
-          {["Easy", "Medium", "Hard"].map(d => (
-            <button key={d} type="button" onClick={() => setDifficulty(d)} style={{ flex: 1, background: difficulty === d ? C.indigoLight : C.offWhite, border: `1.5px solid ${difficulty === d ? C.indigo : C.border}`, borderRadius: 8, padding: "6px 0", fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: difficulty === d ? C.indigo : C.muted, cursor: "pointer" }}>
-              {d}
-            </button>
-          ))}
+      {/* EMERSON CANLAS POGI KO */}
+      {/* Adaptive Mode Indicator / Toggle */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: isAdaptive ? C.indigoLight : C.offWhite, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${isAdaptive ? C.indigoBorder : C.border}` }}>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 700, color: isAdaptive ? C.indigo : C.navy }}>Adaptive Question Pool</span>
+          <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 10, color: C.muted }}>Generates 3x candidate pool (30% Easy, 40% Med, 30% Hard)</span>
         </div>
+        <button
+          type="button"
+          onClick={() => setIsAdaptive(prev => !prev)}
+          style={{
+            background: isAdaptive ? C.indigo : "#CBD5E1",
+            border: "none",
+            borderRadius: 16,
+            width: 38,
+            height: 22,
+            cursor: "pointer",
+            position: "relative",
+            transition: "background 0.2s"
+          }}
+          title={isAdaptive ? "Adaptive pool enabled (3x surplus)" : "Standard exact count"}
+        >
+          <span style={{
+            position: "absolute",
+            top: 3,
+            left: isAdaptive ? 19 : 3,
+            width: 16,
+            height: 16,
+            borderRadius: "50%",
+            background: "#fff",
+            transition: "left 0.2s"
+          }} />
+        </button>
       </div>
-
      
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -484,8 +591,7 @@ function GeneratePanel({
 
       {/* Action Button */}
       <button 
-        type="button" 
-        onClick={() => onGenerate({ count, difficulty, qtypes: selectedQtypes, docId: selectedDoc })}
+        onClick={() => onGenerate({ count, qtypes: selectedQtypes, docId: selectedDoc, isAdaptive })}
         disabled={generating || readyDocs.length === 0 || selectedQtypes.length === 0} 
         style={{ 
           width: "100%", 
@@ -520,6 +626,66 @@ export function AIQuestionGenerator() {
   const [generating, setGenerating] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const refreshQuestions = async () => {
+    try {
+      const refreshRes = await fetch('/api/rag/data');
+      if (refreshRes.ok) {
+        const freshData = await refreshRes.json();
+        if (freshData.questions) {
+          const normalized = (freshData.questions || []).map((q: any) => ({
+            ...q,
+            status: String(q.status || "pending").toLowerCase() as QuestionStatus
+          }));
+          setQuestions(normalized);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to refresh questions:", e);
+    }
+  };
+
+  const startPolling = (requestId: string) => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+
+    setGenerating(true);
+
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const pollRes = await fetch('/api/rag/generate/status?request_id=' + requestId);
+        if (!pollRes.ok) throw new Error("Backend error fetching status");
+        
+        const pollData = await pollRes.json();
+        const stage = pollData.stage || "Processing...";
+        const progress = pollData.progress ? ` (${Math.round(pollData.progress)}%)` : "";
+        toast.loading(`AI is crafting questions... ${stage}${progress}`, { id: "generating" });
+        
+        if (pollData.status === "COMPLETED" || pollData.status === "PARTIAL") {
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+          localStorage.removeItem("activeGenerationTask");
+          toast.success(pollData.status === "COMPLETED" ? "Questions generated and saved successfully!" : "Partial questions saved!", { id: "generating" });
+          setGenerating(false);
+          await refreshQuestions();
+        } else if (pollData.status === "FAILED") {
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+          localStorage.removeItem("activeGenerationTask");
+          toast.error(pollData.error || "Generation failed", { id: "generating" });
+          setGenerating(false);
+        }
+      } catch (err: any) {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        toast.error("Polling interrupted: " + err.message, { id: "generating" });
+        setGenerating(false);
+      }
+    }, 2500);
+  };
 
   useEffect(() => {
     async function fetchInitialData() {
@@ -539,6 +705,34 @@ export function AIQuestionGenerator() {
       }
     }
     fetchInitialData();
+
+    // UI Recovery: check if background generation was running before page refresh
+    const savedTaskId = localStorage.getItem("activeGenerationTask");
+    if (savedTaskId) {
+      fetch('/api/rag/generate/status?request_id=' + savedTaskId)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status && !["COMPLETED", "FAILED", "PARTIAL", "NOT_FOUND"].includes(data.status)) {
+            toast.loading(`Resuming generation... (${data.stage || "Processing"})`, { id: "generating" });
+            startPolling(savedTaskId);
+          } else {
+            localStorage.removeItem("activeGenerationTask");
+            if (data.status === "COMPLETED" || data.status === "PARTIAL") {
+              refreshQuestions();
+            }
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem("activeGenerationTask");
+        });
+    }
+
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
   }, []);
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -595,9 +789,9 @@ export function AIQuestionGenerator() {
 
   const handleGenerate = async (config: {
     count: string;
-    difficulty: string;
     qtypes: string[];
     docId: number | "all";
+    isAdaptive?: boolean;
   }) => {
     if (docs.length === 0) {
       toast.error("Please upload at least one syllabus document first.");
@@ -605,6 +799,7 @@ export function AIQuestionGenerator() {
     }
 
     setGenerating(true);
+    toast.loading("AI is crafting questions... initializing", { id: "generating" });
 
     try {
       const activeDocId = config.docId === "all" ? docs[0].id : config.docId;
@@ -614,52 +809,41 @@ export function AIQuestionGenerator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           count: parseInt(config.count, 10),
-          difficulty: config.difficulty,
           types: config.qtypes,
           document_id: activeDocId,
-          category: "General", 
+          category: "General",
+          isAdaptive: config.isAdaptive !== undefined ? config.isAdaptive : true,
         }),
       });
 
       const resData = await response.json().catch(() => ({}));
 
-      if (!response.ok) {
-        const errorMessage = resData?.detail || resData?.error || "Failed to generate questions.";
-        if (errorMessage.includes("still reading") || errorMessage.includes("wait a moment") || errorMessage.includes("processing")) {
-          // Keep the button spinning and poll again in 5 seconds
-          toast.loading("AI is crafting questions... this can take a moment.", { id: "generating", duration: 6000 });
-          setTimeout(() => {
-            handleGenerate(config);
-          }, 5000);
-          return; // Do NOT set generating to false
-        } else {
-          toast.error(errorMessage, { id: "generating" });
-          setGenerating(false);
-          return;
-        }
+      if (!response.ok && response.status !== 202) {
+        throw new Error(resData?.error || resData?.detail || "Failed to start generation");
       }
-      
-      const normalizedData = (Array.isArray(resData) ? resData : resData.questions || []).map((q: any) => ({
-        ...q,
-        status: String(q.status || "pending").toLowerCase() as QuestionStatus
-      }));
 
-      setQuestions((prev) => [...normalizedData, ...prev]);
-      toast.success("Questions generated successfully!", { id: "generating" });
-      setGenerating(false);
+      const requestId = resData.requestId;
+      if (!requestId) {
+        throw new Error("No requestId returned from server");
+      }
+
+      localStorage.setItem("activeGenerationTask", requestId);
+      startPolling(requestId);
+
     } catch (error: any) {
       console.error("Error generating questions:", error);
       toast.error(error.message || "Failed to generate questions.", { id: "generating" });
       setGenerating(false);
+      localStorage.removeItem("activeGenerationTask");
     }
   };
 
-  const filtered = statusFilter === "all" ? questions : questions.filter(q => q.status === statusFilter);
+  const filtered = statusFilter === "all" ? questions : questions.filter(q => String(q.status).toLowerCase() === statusFilter);
   const counts = {
     all: questions.length,
-    pending: questions.filter(q => q.status === "pending").length,
-    approved: questions.filter(q => q.status === "approved").length,
-    rejected: questions.filter(q => q.status === "rejected").length,
+    pending: questions.filter(q => String(q.status).toLowerCase() === "pending").length,
+    approved: questions.filter(q => String(q.status).toLowerCase() === "approved").length,
+    rejected: questions.filter(q => String(q.status).toLowerCase() === "rejected").length,
   };
 
   const handleDeleteDoc = async (id: number) => {
@@ -675,16 +859,20 @@ export function AIQuestionGenerator() {
     }
   };
 
-  const handleStatusChange = async (questionId: number, newStatus: QuestionStatus) => {
+  const handleStatusChange = async (questionId: number, newStatus: QuestionStatus, reject_reason?: string, reject_note?: string) => {
     setQuestions((prev) =>
-      prev.map((q) => (q.id === questionId ? { ...q, status: newStatus } : q))
+      prev.map((q) => (q.id === questionId ? { ...q, status: newStatus, reject_reason, reject_note, rejected_by: newStatus === "rejected" ? "human" : undefined } : q))
     );
 
     try {
       await fetch("/api/rag/status", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId, status: newStatus.toUpperCase() }),
+        body: JSON.stringify({ 
+          questionId, 
+          status: newStatus.toUpperCase(),
+          ...(newStatus === "rejected" && { reject_reason, rejected_by: "human", reject_note })
+        }),
       });
     } catch (error) {
       console.error("Failed to update status:", error);
@@ -692,13 +880,13 @@ export function AIQuestionGenerator() {
   };
 
   const handleBulkStatusChange = async (targetStatus: QuestionStatus) => {
-    const pendingQuestions = questions.filter(q => q.status === "pending");
+    const pendingQuestions = questions.filter(q => String(q.status).toLowerCase() === "pending");
     if (pendingQuestions.length === 0) return;
 
     const pendingIds = pendingQuestions.map(q => q.id);
 
     setQuestions(prev =>
-      prev.map(q => (q.status === "pending" ? { ...q, status: targetStatus } : q))
+      prev.map(q => (String(q.status).toLowerCase() === "pending" ? { ...q, status: targetStatus } : q))
     );
 
     try {
@@ -713,10 +901,10 @@ export function AIQuestionGenerator() {
   };
 
   const handleDeleteAllRejected = async () => {
-    const rejectedQuestions = questions.filter(q => q.status === "rejected");
+    const rejectedQuestions = questions.filter(q => String(q.status).toLowerCase() === "rejected");
     if (rejectedQuestions.length === 0) return;
 
-    setQuestions(prev => prev.filter(q => q.status !== "rejected"));
+    setQuestions(prev => prev.filter(q => String(q.status).toLowerCase() !== "rejected"));
 
     try {
       await fetch("/api/rag/status/bulk", {
@@ -827,8 +1015,8 @@ export function AIQuestionGenerator() {
 
               <div style={{ flex: 1, overflowY: "auto", padding: "12px" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {docs.map(doc => (
-                    <div key={doc.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", background: C.offWhite, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                  {docs.map((doc, i) => (
+                    <div key={doc.id || `doc-${i}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", background: C.offWhite, border: `1px solid ${C.border}`, borderRadius: 10 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
                         <FileText size={16} color={C.indigo} style={{ flexShrink: 0 }} />
                         <span style={{ fontSize: 12, fontWeight: 600, color: C.navy, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.filename}</span>
@@ -979,7 +1167,7 @@ export function AIQuestionGenerator() {
                       <QuestionCard
                         key={q.id}
                         q={q}
-                        onStatusChange={(id, s) => handleStatusChange(id, s)}
+                        onStatusChange={(id, s, reason, note) => handleStatusChange(id, s, reason, note)}
                         onEdit={handleEditQuestion} 
                         onFlag={(id, reason) =>
                           setQuestions((qs) =>
