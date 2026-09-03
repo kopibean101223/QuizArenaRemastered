@@ -6,7 +6,7 @@ import {
   Trophy, LayoutDashboard, Library, BarChart2, Settings,
   Layers, LogOut, Sparkles, Users, Shuffle, CheckCircle2,
   Download, ChevronDown, Info, AlertTriangle, Zap,
-  ArrowRight, RefreshCw, Shield, TrendingUp, Clock, Copy, Check, Crown, User, Star, Database, Lock, Eye, Loader2
+  ArrowRight, RefreshCw, Shield, TrendingUp, Clock, Copy, Check, Crown, User, Star, Database, Lock, Eye, Loader2, X
 } from "lucide-react";
 import { createBrowserSupabaseClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
@@ -289,6 +289,9 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
   const [teamSize, setTeamSize] = useState(3);
   const [previewed, setPreviewed] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
+  const [showQuestionModal, setShowQuestionModal] = useState(false);
+  const [questionCount, setQuestionCount] = useState<number>(10);
+  const [targetQuestionCount, setTargetQuestionCount] = useState<number>(10);
   const [asyncQuizzes, setAsyncQuizzes] = useState<any[]>([]);
   const [viewingAsyncQuiz, setViewingAsyncQuiz] = useState<any>(null);
 
@@ -540,6 +543,18 @@ const handleRemoveGroup = (groupName: string) => {
     loadAndRandomizeQuestions();
   }, [selectedBank]);
 
+  // Adjust question count when questions change or adaptive is toggled
+  useEffect(() => {
+    if (randomizedQuestions.length > 0) {
+      const maxQ = randomizedQuestions.length;
+      const defaultCount = adaptive
+        ? Math.max(1, Math.min(10, Math.floor(maxQ / 2)))
+        : Math.max(1, Math.min(10, maxQ));
+      setQuestionCount(prev => (prev <= 0 || prev > maxQ ? defaultCount : prev));
+      setTargetQuestionCount(prev => (prev <= 0 || prev > maxQ ? defaultCount : prev));
+    }
+  }, [randomizedQuestions.length, adaptive]);
+
   // WebSocket Connection Handler
    // WebSocket Connection Handler
   useEffect(() => {
@@ -558,7 +573,7 @@ const handleRemoveGroup = (groupName: string) => {
         ws?.send(JSON.stringify({
           type: 'JOIN_BATTLE',
           battleId: sessionId,
-          totalQuestions: randomizedQuestions.length || 37,
+          totalQuestions: targetQuestionCount || randomizedQuestions.length || 37,
           timeLimit: 30,
           sender: 'Professor'
         }));
@@ -846,7 +861,7 @@ const handleRemoveGroup = (groupName: string) => {
     }
   }, [timeRemaining, battleStarted, quizCompleted, lobbyType]);
    
-async function handleConfirmAndDeploy() {
+  const handleOpenQuestionModal = () => {
     if (activeSessionExists) {
       return toast.error("A live quiz session is currently active. You must end it before deploying a new one.");
     }
@@ -855,6 +870,34 @@ async function handleConfirmAndDeploy() {
     }
     if (lobbyType === "individual" && !isLive && !deadline) {
       return toast.error("Please pick a date/time for this scheduled lobby.");
+    }
+    if (!randomizedQuestions || randomizedQuestions.length === 0) {
+      return toast.error("No questions found in the selected question bank.");
+    }
+    setShowQuestionModal(true);
+  };
+
+  async function handleConfirmAndDeploy(overrideCount?: number) {
+    const finalCount = typeof overrideCount === 'number' ? overrideCount : questionCount;
+    setTargetQuestionCount(finalCount);
+
+    if (activeSessionExists) {
+      return toast.error("A live quiz session is currently active. You must end it before deploying a new one.");
+    }
+    if (!selectedSection.id || selectedSection.id === 'none') {
+      return toast.error("Please select a valid section.");
+    }
+    if (lobbyType === "individual" && !isLive && !deadline) {
+      return toast.error("Please pick a date/time for this scheduled lobby.");
+    }
+    if (!randomizedQuestions || randomizedQuestions.length === 0) {
+      return toast.error("No questions found in the selected question bank.");
+    }
+    if (finalCount < 1 || finalCount > randomizedQuestions.length) {
+      return toast.error(`Question count must be between 1 and ${randomizedQuestions.length}.`);
+    }
+    if (adaptive && randomizedQuestions.length < finalCount * 2) {
+      return toast.error(`Adaptive mode requires at least ${finalCount * 2} questions in the question bank (currently ${randomizedQuestions.length}).`);
     }
 
     setIsDeploying(true);
@@ -915,7 +958,7 @@ async function handleConfirmAndDeploy() {
           professor_id: currentProfId, 
           room_code: finalRoomCode, 
           is_live: isLive,
-          status: 'ACTIVE',
+          status: 'ACTIVE', 
           deadline: isLive ? null : deadline || null
         };
 
@@ -935,13 +978,19 @@ async function handleConfirmAndDeploy() {
         return;
       }
 
+      const activeQuestions = adaptive ? randomizedQuestions : randomizedQuestions.slice(0, finalCount);
+      if (!adaptive) {
+        setRandomizedQuestions(activeQuestions);
+      }
+      setShowQuestionModal(false);
+
       if (isLive && sessionData) {
         setSessionId(sessionData.id); 
         setActiveSessionExists(true);
         setInLobby(true);
         setJoinedStudents([]); 
         const modeLabel = lobbyType === "royale" ? "Battle Royale" : lobbyType === "chaosclash" ? "ChaosClash" : lobbyType === "team" ? "Team" : lobbyType === "individual" ? "Individual" : "Live";
-        toast.success(`${modeLabel} Live Session initialized using bank: ${selectedBank.name}! Session Locked.`);
+        toast.success(`${modeLabel} Live Session initialized with ${finalCount} questions (${selectedBank.name})! Session Locked.`);
       } else if (sessionData) {
         // For Async/Endless modes, seed the questions into Redis so students can fetch them
         const wsUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080';
@@ -953,12 +1002,14 @@ async function handleConfirmAndDeploy() {
             battleId: sessionData.id,
             bankId: selectedBank.id,
             forceReset: true,
-            questions: randomizedQuestions,
+            adaptive,
+            totalQuestions: finalCount,
+            questions: activeQuestions,
             startingHp: 3,
           }));
           setTimeout(() => ws.close(), 1000);
         };
-        toast.success("Quiz created!");
+        toast.success(`Quiz created with ${finalCount} questions!`);
       }
     } finally {
       setIsDeploying(false);
@@ -967,11 +1018,14 @@ async function handleConfirmAndDeploy() {
 
    const handleStartBattle = () => {
     setBattleStarted(true);
-      if (lobbyType === 'bingo') setProfessorView("bingo-monitor");
+    if (lobbyType === 'bingo') setProfessorView("bingo-monitor");
     setCurrentIndex(0);
     setTimeRemaining(60);
     const startType = lobbyType === 'bingo' ? 'PROF_START_BINGO' : lobbyType === 'royale' || lobbyType === 'chaosclash' ? 'PROF_START_ROYALE' : lobbyType === 'team' ? 'PROF_START_TEAM' : 'PROF_START_BATTLE';
     
+    const count = targetQuestionCount || randomizedQuestions.length;
+    const activeQuestions = adaptive ? randomizedQuestions : randomizedQuestions.slice(0, count);
+
     if (wsRef.current?.readyState === WebSocket.OPEN) {
        wsRef.current.send(JSON.stringify({
          type: startType,
@@ -979,7 +1033,9 @@ async function handleConfirmAndDeploy() {
          battleId: sessionId,
          bankId: selectedBank.id,
          forceReset: true,
-         questions: randomizedQuestions,
+         adaptive,
+         totalQuestions: count,
+         questions: activeQuestions,
        }));
     }
   };
@@ -993,7 +1049,7 @@ async function handleConfirmAndDeploy() {
       customQ = undefined;
     }
 
-    const totalQCount = randomizedQuestions.length || 1;
+    const totalQCount = targetQuestionCount || randomizedQuestions.length || 1;
     const nextIdx = currentIndex + 1;
 
     if (lobbyType === 'bossraid' || nextIdx < totalQCount) {
@@ -1394,9 +1450,15 @@ async function handleConfirmAndDeploy() {
                     <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", display: "block" }}>Timer</span>
                     <span style={{ fontSize: 22, fontFamily: "Fredoka, sans-serif", color: timeRemaining <= 10 ? C.coral : C.yellow }}>{timeRemaining}s</span>
                   </div>
-                  <button type="button" onClick={handleNextQuestion} style={{ background: C.coral, border: "none", borderRadius: 14, padding: "12px 24px", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: "#fff", cursor: "pointer" }}>
-                    {currentIndex >= totalQCount - 1 ? 'Finish Quiz' : 'Next Question →'}
-                  </button>
+                 {currentIndex === totalQCount - 1 && (
+  <button 
+    type="button" 
+    onClick={handleNextQuestion} 
+    style={{ background: C.coral, border: "none", borderRadius: 14, padding: "12px 24px", fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: "#fff", cursor: "pointer" }}
+  >
+    Finish Quiz
+  </button>
+)}
                 </div>
               </div>
 
@@ -1405,7 +1467,7 @@ async function handleConfirmAndDeploy() {
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
                   <Eye size={18} color={C.yellow} />
                   <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800, color: C.yellow, textTransform: "uppercase" }}>
-                    Professor Testing Panel (Synchronized Live Item)
+                    Professor View
                   </span>
                 </div>
 
@@ -1667,7 +1729,7 @@ async function handleConfirmAndDeploy() {
                     <style>{`
                       @keyframes spin { to { transform: rotate(360deg); } }
                     `}</style>
-                    <button type="button" onClick={handleConfirmAndDeploy} disabled={isDeploying} style={{
+                    <button type="button" onClick={handleOpenQuestionModal} disabled={isDeploying} style={{
                       display: "inline-flex", alignItems: "center", gap: 5, background: C.coral, border: "none", borderRadius: 9, padding: "9px 18px", fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: "#fff", cursor: isDeploying ? "not-allowed" : "pointer", opacity: isDeploying ? 0.7 : 1
                     }}>
                       {isDeploying ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle2 size={15} />}
@@ -1750,6 +1812,354 @@ async function handleConfirmAndDeploy() {
           
         </div>
       </div>
+
+      {/* Question Amount & Adaptive Validation Modal */}
+      {showQuestionModal && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 9999,
+          background: "rgba(27,30,43,0.72)",
+          backdropFilter: "blur(6px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 20,
+        }}>
+          <div style={{
+            background: C.white,
+            borderRadius: 24,
+            maxWidth: 520,
+            width: "100%",
+            boxShadow: "0 24px 64px rgba(0,0,0,0.35)",
+            border: `1.5px solid ${C.border}`,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              padding: "20px 24px",
+              borderBottom: `1.5px solid ${C.border}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: C.offWhite,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 12,
+                  background: C.indigoLight,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center"
+                }}>
+                  <Database size={18} color={C.indigo} strokeWidth={2.5} />
+                </div>
+                <div>
+                  <h3 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, color: C.navy, margin: 0, fontWeight: 700 }}>
+                    Configure Question Count
+                  </h3>
+                  <p style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, color: C.muted, margin: 0, fontWeight: 500 }}>
+                    Specify questions to serve students from the question bank
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQuestionModal(false)}
+                disabled={isDeploying}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: isDeploying ? "not-allowed" : "pointer",
+                  color: C.muted,
+                  padding: 4,
+                  display: "flex",
+                  borderRadius: 8,
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: "22px 24px", display: "flex", flexDirection: "column", gap: 18 }}>
+              {/* Question Bank Info Summary */}
+              <div style={{
+                background: C.offWhite,
+                borderRadius: 14,
+                padding: "12px 16px",
+                border: `1px solid ${C.border}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}>
+                <div>
+                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Question Bank</span>
+                  <div style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 800, color: C.navy }}>{selectedBank.name}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>Total in Bank</span>
+                  <div style={{ fontFamily: "Fredoka, sans-serif", fontSize: 17, fontWeight: 700, color: C.indigo }}>
+                    {randomizedQuestions.length} Questions
+                  </div>
+                </div>
+              </div>
+
+              {/* Number of Questions Selector */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <label style={{ fontFamily: "Manrope, sans-serif", fontSize: 12, fontWeight: 800, color: C.navy, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                    Questions For Student
+                  </label>
+                  <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 11, fontWeight: 600, color: C.muted }}>
+                    Min: 1 · Max: {randomizedQuestions.length}
+                  </span>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    background: C.offWhite,
+                    border: `1.5px solid ${C.border}`,
+                    borderRadius: 12,
+                    padding: 3,
+                    flex: 1,
+                  }}>
+                    <button
+                      type="button"
+                      onClick={() => setQuestionCount(v => Math.max(1, v - 1))}
+                      disabled={questionCount <= 1 || isDeploying}
+                      style={{
+                        width: 36,
+                        height: 36,
+                        background: C.white,
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 8,
+                        cursor: questionCount <= 1 ? "not-allowed" : "pointer",
+                        fontWeight: 800,
+                        fontSize: 16,
+                        color: C.navy,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      max={randomizedQuestions.length}
+                      value={questionCount}
+                      onChange={e => {
+                        const val = parseInt(e.target.value, 10);
+                        setQuestionCount(isNaN(val) ? 1 : Math.max(1, Math.min(randomizedQuestions.length, val)));
+                      }}
+                      disabled={isDeploying}
+                      style={{
+                        flex: 1,
+                        textAlign: "center",
+                        border: "none",
+                        background: "transparent",
+                        fontFamily: "Fredoka, sans-serif",
+                        fontSize: 22,
+                        fontWeight: 700,
+                        color: C.indigo,
+                        outline: "none",
+                        width: "100%",
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setQuestionCount(v => Math.min(randomizedQuestions.length, v + 1))}
+                      disabled={questionCount >= randomizedQuestions.length || isDeploying}
+                      style={{
+                        width: 36,
+                        height: 36,
+                        background: C.white,
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 8,
+                        cursor: questionCount >= randomizedQuestions.length ? "not-allowed" : "pointer",
+                        fontWeight: 800,
+                        fontSize: 16,
+                        color: C.navy,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  {/* Preset Quick-Picks */}
+                  <div style={{ display: "flex", gap: 5 }}>
+                    {[5, 10, 15, 20].filter(n => n <= randomizedQuestions.length).map(n => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setQuestionCount(n)}
+                        style={{
+                          background: questionCount === n ? C.indigo : C.offWhite,
+                          color: questionCount === n ? "#fff" : C.navy,
+                          border: `1px solid ${questionCount === n ? C.indigo : C.border}`,
+                          borderRadius: 8,
+                          padding: "6px 10px",
+                          fontFamily: "Fredoka, sans-serif",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                    {randomizedQuestions.length > 0 && !adaptive && (
+                      <button
+                        type="button"
+                        onClick={() => setQuestionCount(randomizedQuestions.length)}
+                        style={{
+                          background: questionCount === randomizedQuestions.length ? C.indigo : C.offWhite,
+                          color: questionCount === randomizedQuestions.length ? "#fff" : C.navy,
+                          border: `1px solid ${questionCount === randomizedQuestions.length ? C.indigo : C.border}`,
+                          borderRadius: 8,
+                          padding: "6px 8px",
+                          fontFamily: "Manrope, sans-serif",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        All
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Adaptive Status & 2x Question Pool Validation Box */}
+              <div style={{
+                borderRadius: 14,
+                padding: "14px 16px",
+                border: `1.5px solid ${adaptive ? (randomizedQuestions.length >= questionCount * 2 ? C.greenBorder : "rgba(255,71,87,0.4)") : C.border}`,
+                background: adaptive ? (randomizedQuestions.length >= questionCount * 2 ? C.greenLight : C.redLight) : C.offWhite,
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <Zap size={15} color={adaptive ? (randomizedQuestions.length >= questionCount * 2 ? C.green : C.red) : C.muted} />
+                    <span style={{ fontFamily: "Manrope, sans-serif", fontSize: 13, fontWeight: 700, color: C.navy }}>
+                      {adaptive ? "Adaptive Randomization is on" : "Normal Mode"}
+                    </span>
+                  </div>
+                  <ToggleSwitch on={adaptive} onChange={v => setAdaptive(v)} disabled={isDeploying} />
+                </div>
+
+                {adaptive ? (
+                  <div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, fontSize: 11, fontFamily: "Manrope, sans-serif", color: C.muted, marginBottom: 8 }}>
+                      <span>Student gets: <b style={{ color: C.navy }}>{questionCount} Qs</b></span>
+                      <span>Min bank required (2×): <b style={{ color: C.navy }}>{questionCount * 2} Qs</b></span>
+                      <span>Reserve adaptive pool: <b style={{ color: C.indigo }}>{Math.max(0, randomizedQuestions.length - questionCount)} excess Qs</b></span>
+                    </div>
+
+                    {randomizedQuestions.length >= questionCount * 2 ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.green, fontSize: 12, fontFamily: "Manrope, sans-serif", fontWeight: 600 }}>
+                        <CheckCircle2 size={15} color={C.green} />
+                        <span>Adaptive pool verified ({randomizedQuestions.length} available ≥ {questionCount * 2} required). Excess questions will serve as the adaptive calibration branch.</span>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 6, color: C.red, fontSize: 12, fontFamily: "Manrope, sans-serif", fontWeight: 600, lineHeight: 1.4 }}>
+                        <AlertTriangle size={16} color={C.red} style={{ flexShrink: 0, marginTop: 2 }} />
+                        <span>
+                          <b>Adaptive 2× Rule Failed:</b> For {questionCount} questions, the question bank must have at least {questionCount * 2} questions (currently {randomizedQuestions.length}).
+                          Please reduce questions to {Math.floor(randomizedQuestions.length / 2)} or less, or turn off Adaptive mode.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p style={{ margin: 0, fontSize: 12, fontFamily: "Manrope, sans-serif", color: C.muted, lineHeight: 1.4 }}>
+                    Standard quiz delivery: Each student will answer the exact same set of <b>{questionCount} questions</b> in randomized order without IRT/BKT adaptation.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{
+              padding: "16px 24px",
+              borderTop: `1.5px solid ${C.border}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              gap: 10,
+              background: C.offWhite,
+            }}>
+              <button
+                type="button"
+                onClick={() => setShowQuestionModal(false)}
+                disabled={isDeploying}
+                style={{
+                  background: C.white,
+                  border: `1.5px solid ${C.border}`,
+                  borderRadius: 10,
+                  padding: "9px 16px",
+                  fontFamily: "Manrope, sans-serif",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: C.navy,
+                  cursor: isDeploying ? "not-allowed" : "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleConfirmAndDeploy(questionCount)}
+                disabled={
+                  isDeploying ||
+                  randomizedQuestions.length === 0 ||
+                  questionCount < 1 ||
+                  questionCount > randomizedQuestions.length ||
+                  (adaptive && randomizedQuestions.length < questionCount * 2)
+                }
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  background: (adaptive && randomizedQuestions.length < questionCount * 2) || questionCount < 1 || questionCount > randomizedQuestions.length
+                    ? "#CBD0D8"
+                    : C.coral,
+                  border: "none",
+                  borderRadius: 10,
+                  padding: "9px 20px",
+                  fontFamily: "Manrope, sans-serif",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "#fff",
+                  cursor: (adaptive && randomizedQuestions.length < questionCount * 2) || questionCount < 1 || questionCount > randomizedQuestions.length || isDeploying
+                    ? "not-allowed"
+                    : "pointer",
+                  boxShadow: (adaptive && randomizedQuestions.length < questionCount * 2) || isDeploying
+                    ? "none"
+                    : "0 4px 14px rgba(255,107,74,0.3)",
+                }}
+              >
+                {isDeploying ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle2 size={15} />}
+                {isDeploying ? "Deploying..." : (isLive ? `Confirm & Launch (${questionCount} Qs)` : `Confirm & Create Quiz (${questionCount} Qs)`)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
