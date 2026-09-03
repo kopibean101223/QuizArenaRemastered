@@ -1,4 +1,0 @@
-question,answer,contexts,ground_truth,faithfulness,answer_relevancy,context_precision,context_recall
-What is Antigravity AI?,Antigravity AI is a revolutionary framework for multi-agent systems.,['Antigravity AI is a revolutionary framework for multi-agent systems. It was released in 2024 and introduces the concept of hyper-threaded agents.'],A framework for multi-agent systems.,1.0,0.95,1.0,1.0
-What communication protocol is used?,The core communication protocol uses asynchronous message passing over Redis.,['The core communication protocol uses asynchronous message passing over Redis.'],Asynchronous message passing over Redis.,1.0,0.92,1.0,1.0
-What is the primary database?,The primary database for Antigravity is Supabase pgvector.,['The primary database for Antigravity is Supabase pgvector.'],Supabase pgvector.,1.0,0.98,1.0,1.0

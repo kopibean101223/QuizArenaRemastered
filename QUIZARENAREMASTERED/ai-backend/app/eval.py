@@ -19,6 +19,11 @@ from ragas.metrics import (
 )
 from ragas.run_config import RunConfig
 from dotenv import load_dotenv
+import pandas as pd
+import nest_asyncio
+
+# Fix for Windows asyncio "Timeout should be used inside a task" error in RAGAS
+nest_asyncio.apply()
 
 # Import LangChain Google GenAI wrappers to bypass OpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
