@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     }
     const userId = user.id;
 
-    const { count, types, document_id, category } = await req.json();
+    const { count, types, document_id, category, isAdaptive } = await req.json();
 
     if (!document_id) {
       return NextResponse.json({ error: 'document_id is required' }, { status: 400 });
@@ -40,7 +40,8 @@ export async function POST(req: Request) {
         types: Array.isArray(types) ? types : ['Multiple Choice'],
         document_id: doc.id,
         filename: doc.filename,
-        category: category || 'Mathematics'
+        category: category || 'Mathematics',
+        isAdaptive: isAdaptive !== undefined ? Boolean(isAdaptive) : true
       }),
     });
 
