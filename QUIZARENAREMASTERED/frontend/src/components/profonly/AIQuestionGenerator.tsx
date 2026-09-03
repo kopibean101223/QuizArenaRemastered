@@ -803,6 +803,8 @@ export function AIQuestionGenerator() {
 
     try {
       const activeDocId = config.docId === "all" ? docs[0].id : config.docId;
+      const selectedDoc = docs.find(d => d.id === activeDocId);
+      const category = selectedDoc?.subject || "Mathematics";
 
       const response = await fetch("/api/rag/generate", {
         method: "POST",
@@ -811,7 +813,7 @@ export function AIQuestionGenerator() {
           count: parseInt(config.count, 10),
           types: config.qtypes,
           document_id: activeDocId,
-          category: "General",
+          category:category,
           isAdaptive: config.isAdaptive !== undefined ? config.isAdaptive : true,
         }),
       });

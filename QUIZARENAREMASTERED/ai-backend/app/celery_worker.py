@@ -626,6 +626,7 @@ class AnswerData(BaseModel):
 class GeneratedQuestion(BaseModel):
     chunk_index: int = 0
     text: str
+    topic: str = "Mathematics"
     type: str = "Multiple Choice"
     difficulty: str = "Medium"
     estimated_difficulty: Optional[float] = 0.5
@@ -688,6 +689,7 @@ DIFFICULTY & ADAPTIVE INSTRUCTIONS:
 - Difficulty should reflect true cognitive demand.
 
 For every question, return:
+- topic: specific mathematical topic or subtopic (e.g., "Calculus - Derivatives", "Trigonometric Identities", "Limits & Continuity", "Quadratic Equations"). NEVER output "General"
 - question type
 - bloom_level: one of REMEMBER, UNDERSTAND, APPLY, ANALYZE, EVALUATE, CREATE
 - estimated_difficulty: a normalized number from 0.00 (very easy) to 1.00 (very difficult)
@@ -697,7 +699,7 @@ SPECIAL TYPE INSTRUCTIONS:
 - If type is 'Step-by-step Solution': Leave choices empty. Set `answer` to final answer string, and supply sequential strings in `answerData.steps` (e.g. ["Step 1: ...", "Step 2: ..."]).
 - If type is 'Numerical Input': Leave choices empty. Set `answer` to numeric string, and provide `numericAnswer` (float) in `answerData`.
 - If type is 'Graphing/Plotting': Provide mathematical equation in `answerData.expression` and graph type in `answerData.graphType`.
-- If type is 'Multiple Choice':Each question must strictly be derived You must generate exactly 4 choices, with exactly 1 marked `isCorrect=True`.
+- If type is 'Multiple Choice': You must generate exactly 4 choices, with exactly 1 marked `isCorrect=True`.
 
 Preserve the requested question-type distribution.
 
