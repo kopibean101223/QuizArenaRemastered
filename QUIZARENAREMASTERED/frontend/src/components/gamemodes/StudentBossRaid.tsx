@@ -433,7 +433,7 @@ export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth =
               "h-full transition-all duration-1000 linear",
               timeLeft <= 5 && timeLeft > 0 ? "bg-[var(--gm-red)] animate-[gm-pulse_1s_infinite]" : "bg-[var(--gm-yellow)]"
             )}
-            style={{ width: `${(timeLeft / 30) * 100}%` }}
+            style={{ width: `${Math.min(100, (timeLeft / 60) * 100)}%` }}
           />
         </div>
       </div>

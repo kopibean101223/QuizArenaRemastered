@@ -51,8 +51,12 @@ if (error || !user) {
 
     if (existingDoc) {
       return NextResponse.json(
-        { error: `File '${file.name}' has already been uploaded.` },
-        { status: 400 }
+        { 
+          message: `File '${file.name}' already exists. Using existing version.`,
+          id: existingDoc.id,
+          filename: existingDoc.filename
+        },
+        { status: 200 }
       );
     }
 

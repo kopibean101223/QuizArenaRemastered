@@ -65,6 +65,7 @@ export interface BossBattlePayload {
 class BossRaidHandler {
   private redisPublisherRef: Redis | null = null;
   private questionTimers = new Map<string, NodeJS.Timeout>();
+  private advancingBattles = new Set<string>();
 
   public initSubscriber(_redisSubscriber: Redis): void {
     // No-op now — RoomPresenceHandler owns the battle:{battleId} subscription
@@ -77,10 +78,80 @@ class BossRaidHandler {
     roomPresenceHandler.setAbandonHook((battleId) => this.completeAbandonedRoom(battleId));
   }
 
-  private scheduleTimeUp(battleId: string, timeLimit: number, redisPublisher: Redis): void {
-    if (this.questionTimers.has(battleId)) {
-      clearTimeout(this.questionTimers.get(battleId));
+  private clearQuestionTimer(battleId: string): void {
+    const existing = this.questionTimers.get(battleId);
+    if (existing) {
+      clearTimeout(existing);
+      this.questionTimers.delete(battleId);
     }
+  }
+
+  private async triggerAdvance(
+    battleId: string,
+    redisPublisher: Redis,
+    roomCode: string | undefined
+  ): Promise<void> {
+    if (this.advancingBattles.has(battleId)) return;
+    this.advancingBattles.add(battleId);
+    try {
+      this.clearQuestionTimer(battleId);
+      const sKey = stateKey(battleId);
+      const channel = roomChannel(battleId);
+      const lKey = leaderboardKey(battleId);
+      const hKey = historyKey(battleId);
+
+      const [rawQuestions, roomState] = await Promise.all([
+        redisPublisher.get(`battle:${battleId}:questions`),
+        redisPublisher.hgetall(sKey),
+      ]);
+      const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
+      const currentIndex = parseInt(roomState.currentIndex || '0', 10);
+      const nextIndex = currentIndex + 1;
+
+      if (nextIndex >= questions.length) {
+        await redisPublisher.hset(sKey, { status: 'completed' });
+        await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
+        await redisPublisher.expire(hKey, COMPLETED_ROOM_TTL_SECONDS);
+        await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
+        const rawScores = await redisPublisher.hgetall(lKey);
+        const leaderboard = Object.values(rawScores || {}).map((item) => JSON.parse(item));
+        await redisPublisher.publish(
+          channel,
+          JSON.stringify({ type: 'QUIZ_COMPLETED', battleId, leaderboard })
+        );
+        return;
+      }
+
+      const startedAt = Date.now();
+      const timeLimit = 60;
+
+      await redisPublisher.hset(sKey, {
+        currentIndex: String(nextIndex),
+        startedAt: String(startedAt),
+        timeLimit: String(timeLimit),
+        customQuestion: "",
+      });
+      await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
+
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({
+          type: 'QUESTION_ADVANCED',
+          battleId,
+          currentIndex: nextIndex,
+          startedAt,
+          timeLimit,
+          customQuestion: undefined,
+        })
+      );
+      this.scheduleTimeUp(battleId, timeLimit, redisPublisher, roomCode);
+    } finally {
+      this.advancingBattles.delete(battleId);
+    }
+  }
+
+  private scheduleTimeUp(battleId: string, timeLimit: number, redisPublisher: Redis, roomCode?: string): void {
+    this.clearQuestionTimer(battleId);
     const timer = setTimeout(async () => {
       const numStudents = Math.max(1, roomPresenceHandler.getPlayerCount(battleId) - 1);
       // "the fewer the more damage"
@@ -101,6 +172,11 @@ class BossRaidHandler {
         damageTaken: damage,
         message: "Time's up! BRACE FOR IMPACT!"
       }));
+      
+      // Auto-advance after showing damage
+      setTimeout(() => {
+        this.triggerAdvance(battleId, redisPublisher, roomCode).catch(console.error);
+      }, 2000);
     }, timeLimit * 1000);
     this.questionTimers.set(battleId, timer);
   }
@@ -229,11 +305,13 @@ class BossRaidHandler {
       const startedAt = Date.now();
       const mode = payload.mode || 'LIVE';
       const initialIndex = mode === 'BOSSRAID' ? -1 : 0;
+      const timeLimit = 60; // Enforce 60s
 
       await redisPublisher.hset(sKey, {
         currentIndex: String(initialIndex),
         status: 'active',
         startedAt: String(startedAt),
+        timeLimit: String(timeLimit),
         roomCode: roomCode || '',
         mode,
       });
@@ -259,21 +337,19 @@ class BossRaidHandler {
           mode,
           currentIndex: initialIndex,
           startedAt,
-          timeLimit: 60,
+          timeLimit,
           questions: parsedQuestions,
         })
       );
 
       console.log(`[LiveBattle] Started ${battleId} with ${parsedQuestions.length} synchronized questions.`);
-      this.scheduleTimeUp(battleId, 60, redisPublisher);
+      this.scheduleTimeUp(battleId, timeLimit, redisPublisher, roomCode);
       return;
     }
 
     if (type === 'ADVANCE_QUESTION') {
-      const startedAt = Date.now();
-      const newLimit = nextTimeLimit || 15;
-
       if (isLastQuestion) {
+        this.clearQuestionTimer(battleId);
         await redisPublisher.hset(sKey, { status: 'completed' });
         await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
         await redisPublisher.expire(hKey, COMPLETED_ROOM_TTL_SECONDS);
@@ -288,6 +364,8 @@ class BossRaidHandler {
           JSON.stringify({ type: 'QUIZ_COMPLETED', battleId, leaderboard })
         );
       } else {
+        const startedAt = Date.now();
+        const newLimit = 60; // Enforce 60s
         const nextIndex = await redisPublisher.hincrby(sKey, 'currentIndex', 1);
         const updateData: Record<string, string> = {
           startedAt: String(startedAt),
@@ -326,16 +404,13 @@ class BossRaidHandler {
             customQuestion: payload.customQuestion,
           })
         );
-        this.scheduleTimeUp(battleId, newLimit, redisPublisher);
+        this.scheduleTimeUp(battleId, newLimit, redisPublisher, roomCode);
       }
       return;
     }
 
     if (type === 'END_BATTLE' || type === 'PROF_END_BATTLE') {
-      if (this.questionTimers.has(battleId)) {
-        clearTimeout(this.questionTimers.get(battleId));
-        this.questionTimers.delete(battleId);
-      }
+      this.clearQuestionTimer(battleId);
       await redisPublisher.hset(sKey, { status: 'completed' });
       await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
       await redisPublisher.expire(hKey, COMPLETED_ROOM_TTL_SECONDS);
@@ -358,6 +433,7 @@ class BossRaidHandler {
     }
 
     if (type === 'RESET_ROOM') {
+      this.clearQuestionTimer(battleId);
       const startedAt = Date.now();
       await redisPublisher.hset(sKey, {
         currentIndex: '0',
@@ -394,10 +470,7 @@ class BossRaidHandler {
   }
 
   private async completeAbandonedRoom(battleId: string): Promise<void> {
-    if (this.questionTimers.has(battleId)) {
-      clearTimeout(this.questionTimers.get(battleId));
-      this.questionTimers.delete(battleId);
-    }
+    this.clearQuestionTimer(battleId);
     if (!this.redisPublisherRef) return;
     const redisPublisher = this.redisPublisherRef;
 

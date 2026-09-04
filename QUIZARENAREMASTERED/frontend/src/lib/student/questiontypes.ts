@@ -166,6 +166,9 @@ export type QuestionType =
 export interface BaseQuestion {
   id: string | number;
   difficulty: string;
+ //remove if nageeroror hanngang bloom level
+ estimated_difficulty?: number;
+  bloomLevel?: string;
   topic: string;
   subject: string;
   text: string;

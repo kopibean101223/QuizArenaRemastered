@@ -92,7 +92,7 @@ def get_embedding_model():
     if gemini_key:
         try:
             return GoogleGenerativeAIEmbeddings(
-                model="text-embedding-004", 
+                model="models/gemini-embedding-2", 
                 google_api_key=gemini_key
             )
         except Exception as gemini_err:
@@ -213,8 +213,8 @@ async def ingest_file(file: UploadFile = File(...), docId: str = Form(...)):
                 # We assume supabase_client is available
                 if supabase_client and embeddings:
                     emb = embeddings.embed_query(full_content)
-                    supabase_client.table('documents').insert({
-                        "id": f"{docId}_{i}",
+                    supabase_client.table('document_chunks').insert({
+                        "document_id": docId,
                         "content": full_content,
                         "metadata": chunk.metadata,
                         "embedding": emb
@@ -246,7 +246,9 @@ class MathCitation(BaseModel):
 class MathQuestion(BaseModel):
     text: str = Field(description="The mathematical problem to be solved.")
     type: str = Field(description="Must be one of: 'Multiple Choice', 'Step-by-step Solution', 'Numerical Input', 'Graphing'")
-    difficulty: str = Field(description="Must be 'Easy', 'Medium', or 'Hard'")
+    difficulty: str = Field(description="Human-readable label: 'Easy', 'Medium', or 'Hard'")
+    estimated_difficulty: Optional[float] = Field(default=None, description="Normalized difficulty from 0.00 (very easy) to 1.00 (very difficult)")
+    bloom_level: Optional[str] = Field(default=None, description="Bloom's Taxonomy level: REMEMBER, UNDERSTAND, APPLY, ANALYZE, EVALUATE, CREATE")
     answer: str = Field(description="The final, correct mathematical answer.")
     choices: Optional[List[str]] = Field(default=None, description="Provide exactly 4 plausible choices if the type is 'Multiple Choice'. Otherwise null.")
     
@@ -265,58 +267,113 @@ class MathQuestion(BaseModel):
 class MathQuestionList(BaseModel):
     questions: List[MathQuestion]
 
-class GenerateRequest(BaseModel):
-    count: int = 5
-    difficulty: str = "Medium"
-    types: List[str] = ["Multiple Choice"]
-    document_id: Optional[Any] = "all"
-    chunks: Optional[List[dict]] = None
-    filename: Optional[str] = None
-    category: str = "General"
+import uuid
+from datetime import datetime
 
+class GenerateRequest(BaseModel):
+    document_id: int
+    user_id: str
+    count: int = 5
+    types: List[str] = ["Multiple Choice"]
+    filename: str = "Unknown"
+    category: str = "General"
+    isAdaptive: Optional[bool] = True
+    is_adaptive: Optional[bool] = None
 
 @fastapi_app.post("/generate")
 async def generate_questions(req: GenerateRequest):
-    """Starts Celery with dynamic config if not started, or fetches results if done."""
-    doc_key = str(req.document_id)
-    redis_key = f"generated_questions:{doc_key}"
-    task_key = f"celery_task:{doc_key}"
+    """Starts generation pipeline and returns a requestId for polling."""
+    request_id = str(uuid.uuid4())
     
-    # Check if done
-    cached = redis_client.get(redis_key)
-    if cached:
-        questions = json.loads(cached)
-        if isinstance(questions, list) and len(questions) > 0 and "error" in questions[0]:
-            raise HTTPException(status_code=400, detail=questions[0]["error"])
-        return questions[:req.count]
-        
-    # Check if already running
-    is_running = redis_client.get(task_key)
-    if is_running:
-        raise HTTPException(
-            status_code=202, 
-            detail="The AI is still reading your document and crafting questions. This usually takes about 30-45 seconds. Please wait a moment and click Generate again!"
-        )
-        
-    # Start generation
-    if not req.chunks:
-        raise HTTPException(status_code=400, detail="No chunks provided for generation.")
-        
-    redis_client.setex(task_key, 300, "running")
+    # Determine adaptive mode (defaults to True as per specification)
+    adaptive_mode = True
+    if req.is_adaptive is not None:
+        adaptive_mode = req.is_adaptive
+    elif req.isAdaptive is not None:
+        adaptive_mode = req.isAdaptive
+
+    # EMERSON CANLAS POGI KO
+    target_pool_size = (req.count * 3) if adaptive_mode else req.count
+
+    # Store initial state in Supabase
+    if supabase_client:
+        try:
+            base_payload = {
+                "request_id": request_id,
+                "document_id": req.document_id,
+                "user_id": req.user_id,
+                "status": "QUEUED",
+                "stage": "Initializing generation run...",
+                "progress": 0.0,
+                "requested_count": req.count,
+                "types": req.types,
+                "created_at": datetime.utcnow().isoformat()
+            }
+            try:
+                # Include adaptive tracking columns if table has them
+                supabase_client.table("generation_runs").insert({
+                    **base_payload,
+                    "is_adaptive": adaptive_mode,
+                    "target_pool_size": target_pool_size
+                }).execute()
+            except Exception:
+                # Fallback if migration hasn't been applied yet
+                supabase_client.table("generation_runs").insert(base_payload).execute()
+        except Exception as e:
+            print(f"Supabase init run error: {e}")
+            raise HTTPException(status_code=500, detail="Failed to initialize generation run in database.")
     
     config = {
         "count": req.count,
-        "difficulty": req.difficulty,
-        "types": req.types
+        "types": req.types,
+        "category": req.category,
+        "is_adaptive": adaptive_mode,
+        "target_pool_size": target_pool_size
     }
     
     from app.celery_worker import process_and_generate_quiz
-    process_and_generate_quiz.delay(doc_key, req.filename, req.chunks, config)
+    process_and_generate_quiz.delay(request_id, req.document_id, req.user_id, req.filename, config)
     
-    raise HTTPException(
-        status_code=202, 
-            detail="The AI is still reading your document and crafting questions. This usually takes about 30-45 seconds. Please wait a moment and click Generate again!"
-    )
+    return {
+        "requestId": request_id,
+        "status": "QUEUED",
+        "isAdaptive": adaptive_mode,
+        "targetPoolSize": target_pool_size,
+        "message": "Generation started."
+    }
+
+@fastapi_app.get("/generate/status/{request_id}")
+async def get_generation_status(request_id: str):
+    """Polls the status of a generation run."""
+    # Check Redis first for low-latency progress
+    redis_key = f"generation:{request_id}"
+    cached = redis_client.get(redis_key)
+    if cached:
+        return json.loads(cached)
+        
+    # Fallback to Supabase if not in Redis (e.g. expired or completed)
+    if supabase_client:
+        try:
+            res = supabase_client.table("generation_runs").select("*").eq("request_id", request_id).execute()
+            if res.data and len(res.data) > 0:
+                run = res.data[0]
+                return {
+                    "requestId": run["request_id"],
+                    "status": run["status"],
+                    "stage": run["stage"],
+                    "progress": run["progress"],
+                    "requestedCount": run.get("requested_count", 0),
+                    "rawGenerated": run.get("raw_generated", 0),
+                    "validated": run.get("validated_count", 0),
+                    "saved": run.get("saved_count", 0),
+                    "isAdaptive": run.get("is_adaptive", True),
+                    "targetPoolSize": run.get("target_pool_size", run.get("requested_count", 0)),
+                    "error": run.get("error_message")
+                }
+        except Exception as e:
+            print(f"Supabase status fetch error: {e}")
+            
+    raise HTTPException(status_code=404, detail="Generation run not found")
 
 app = socketio.ASGIApp(sio, other_asgi_app=fastapi_app)
 
