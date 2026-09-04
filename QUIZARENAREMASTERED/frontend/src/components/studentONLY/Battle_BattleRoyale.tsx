@@ -174,10 +174,12 @@
         if (data.phase === 'powerup') {
           setRoundPhase('powerup');
           setPowerupDeadline(Number(data.phaseEndsAt) || null);
+          const currentPlayer = data.players?.find((player: any) => player.id === myId);
+          const shouldChoose = (currentPlayer?.correctAnswers ?? 0) > 0 && (currentPlayer.correctAnswers % 2 === 0);
+          setAvailablePowerChoices(shouldChoose ? drawBattleCards(3) : []);
+          setShowChoosePowerUP(true);
           if (data.questionIndex === 0) {
             setCollectedPowerCards([]);
-            setAvailablePowerChoices(drawBattleCards(3));
-            setShowChoosePowerUP(true);
           }
         }
         if (data.phase === 'feedback') setRoundPhase('feedback');
@@ -191,14 +193,12 @@
       if (data.type === 'ROYALE_POWERUP_PHASE') {
         if (Array.isArray(data.players)) applyPlayers(data.players);
         const currentPlayer = data.players?.find((player: any) => player.id === myId);
-        const shouldChoose = data.questionIndex === 0 || (currentPlayer?.correctAnswers ?? 0) > 0 && (currentPlayer.correctAnswers % 2 === 0);
+        const shouldChoose = (currentPlayer?.correctAnswers ?? 0) > 0 && (currentPlayer.correctAnswers % 2 === 0);
         setRoundPhase('powerup');
         setPowerupDeadline(Number(data.phaseEndsAt) || null);
         if (data.questionIndex === 0) setCollectedPowerCards([]);
-        if (shouldChoose) {
-          setAvailablePowerChoices(drawBattleCards(3));
-          setShowChoosePowerUP(true);
-        }
+        setAvailablePowerChoices(shouldChoose ? drawBattleCards(3) : []);
+        setShowChoosePowerUP(true);
       }
 
       if (data.type === 'ROYALE_ROUND_FEEDBACK') {
@@ -289,10 +289,7 @@
     }, [currentQuestion?.id, questionIndex]);
 
     useEffect(() => {
-      if (!roundStartedAt || roundPhase !== 'playing') {
-        setTimeLeft(timeLimit);
-        return;
-      }
+      if (!roundStartedAt || roundPhase === 'powerup') return;
       const tick = () => {
         const elapsedSeconds = Math.floor((Date.now() - roundStartedAt) / 1000);
         const left = Math.max(timeLimit - elapsedSeconds, 0);
@@ -493,14 +490,16 @@
           </div>
         </header>
 
-                        <PowerCardTray
-                          cards={collectedPowerCards}
-                          size="md"
-                          phaseLocked={roundPhase === 'powerup'}
-                          topClassName="top-60"
-                          onCardUse={handleUsePowerCard}
-                          targetOptions={survivors.filter((player) => !player.isYou && player.lives > 0).map((player) => ({ id: player.id, name: player.name }))}
-                        />
+                        {!showChoosePowerUP && (
+                          <PowerCardTray
+                            cards={collectedPowerCards}
+                            size="md"
+                            phaseLocked={roundPhase === 'powerup'}
+                            topClassName="top-60"
+                            onCardUse={handleUsePowerCard}
+                            targetOptions={survivors.filter((player) => !player.isYou && player.lives > 0).map((player) => ({ id: player.id, name: player.name }))}
+                          />
+                        )}
 
                         
         {/* Main Grid */}
@@ -684,6 +683,7 @@
             deadline={powerupDeadline}
             onTimeout={handleChoosePowerUP}
             onSelectCard={handleChoosePowerUP}
+            emptyMessage="There is no powerup available"
           />
         )}
       </div>

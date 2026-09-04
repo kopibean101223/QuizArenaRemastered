@@ -12,9 +12,10 @@ interface ChoosePowerUpProps {
   onVoteEnd?: () => void;
   onTimeout?: (card: PowerCardData) => void;
   voteDeadline?: number | null;
+  emptyMessage?: string;
 }
 
-export function ChoosePowerUp({ drawnCards, onSelectCard, onVoteCard, onVoteEnd, onTimeout, voteDeadline, deadline }: ChoosePowerUpProps) {
+export function ChoosePowerUp({ drawnCards, onSelectCard, onVoteCard, onVoteEnd, onTimeout, voteDeadline, deadline, emptyMessage = 'You have no available cards' }: ChoosePowerUpProps) {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(10);
   const completedRef = useRef(false);
@@ -61,7 +62,7 @@ export function ChoosePowerUp({ drawnCards, onSelectCard, onVoteCard, onVoteEnd,
         
         {drawnCards.length === 0 ? (
           <p className="rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-sm font-bold text-white/70">
-            You have no available cards
+            {emptyMessage}
           </p>
         ) : (
           <div className="flex gap-8 items-center justify-center relative">
