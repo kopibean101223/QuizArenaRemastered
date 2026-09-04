@@ -9,6 +9,7 @@
     computeTimeLeft,
     AVATAR_COLORS,
   } from '@/lib/student/battle/useBattleConnection';
+  import { getBaseRoyaleDamage } from '@/lib/student/battle/royaleScoring';
   import type { BattleQuestion } from '@/lib/student/battle/useBattleConnection';
   import { useBattleSocketContext } from '@/lib/student/battle/useBattleSocketProvider';
   import { CountdownBar } from './LiveBattleCOMPONENTONLY/CountdownBar';
@@ -109,6 +110,7 @@
     const [cardEffect, setCardEffect] = useState<{ targetId: string; label: string } | null>(null);
 
     const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
+    const [playerStreak, setPlayerStreak] = useState(0);
     
     // Power-up card system states
     const [collectedPowerCards, setCollectedPowerCards] = useState<PowerCardData[]>([]);
@@ -179,7 +181,8 @@
         }
         if (data.playerId === myId && typeof data.isCorrect === 'boolean') {
           setAnswerFeedback(data.isCorrect);
-          
+          setPlayerStreak((prev) => (data.isCorrect ? prev + 1 : 0));
+
           // Every 2 correct answers grants a random Royale power-up.
           if (data.isCorrect) {
             const newCount = correctAnswersCount + 1;
@@ -303,6 +306,7 @@
     const activeSurvivorsCount = survivors.filter((s) => s.lives > 0).length;
     const me = survivors.find((s) => s.isYou);
     const myLives = me?.lives ?? startingHp;
+    const currentQuestionBaseDamage = getBaseRoyaleDamage(currentQuestion?.number ?? questionIndex + 1, Math.max(questions.length, 1));
 
     const handleSendChat = (text: string) => {
       send({
@@ -397,12 +401,18 @@
 
             {/* Question Box */}
             <div className="bg-[#FF4757]/10 border border-[#FF4757]/30 rounded-2xl p-6">
-              <div className="flex gap-2 mb-3">
+              <div className="flex gap-2 mb-3 flex-wrap">
                 <span className="bg-[#FF4757]/20 text-[#FF4757] text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
                   {currentQuestion.subject}
                 </span>
                 <span className="bg-[#FF4757]/20 text-[#FF4757] text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
                   WRONG ANSWER = ELIMINATED
+                </span>
+                <span className="bg-[#5B3DF6]/20 text-[#B9A7FF] text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
+                  BASE DAMAGE: {currentQuestionBaseDamage}
+                </span>
+                <span className="bg-[#2ED47A]/15 text-[#7AF0B0] text-[10px] font-extrabold px-2 py-0.5 rounded uppercase">
+                  STREAK: {playerStreak}
                 </span>
               </div>
               <h2 className="m-0 text-xl font-extrabold leading-snug">{currentQuestion.text}</h2>
@@ -484,6 +494,11 @@
                         style={{ backgroundColor: s.color }}
                       >
                         {isDead ? <Skull size={18} /> : s.initials}
+                        {isDead && (
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <div className="h-[2px] w-full bg-red-500 rotate-45 rounded-full shadow-[0_0_8px_rgba(239,68,68,0.9)]" />
+                          </div>
+                        )}
                         {cardEffect?.targetId === s.id && (
                           <>
                             <span className="pointer-events-none absolute -right-3 -top-3 text-[#FF8A3D] animate-[royaleFlame_900ms_ease-out]">
