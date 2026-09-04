@@ -105,6 +105,16 @@ export function Lobby_TeamMode({
       // by others (or by this student, on reconnect) before this socket joined.
       setTeamAssignments((previous) => ({ ...previous, ...data.teams }));
     }
+    if (Array.isArray(data.players) && (data.type === "TEAM_LOBBY_STATE_SYNC" || data.type === "TEAM_ROSTER_UPDATED" || data.type === "TEAM_ASSIGNMENT_UPDATE")) {
+      setTeamAssignments((previous) => {
+        const next = { ...previous };
+        data.players.forEach((player: { id?: string; userId?: string; teamId?: string | null }) => {
+          const id = player.id || player.userId;
+          if (id) next[id] = player.teamId ?? null;
+        });
+        return next;
+      });
+    }
     if (data.type === "TEAM_ASSIGNMENT_UPDATE" && data.userId) {
       setTeamAssignments((previous) => ({
         ...previous,
@@ -124,14 +134,10 @@ export function Lobby_TeamMode({
    */
   useEffect(() => {
     setTeamAssignments((previous) => {
-      const next: LocalTeamAssignments = {};
+      const next: LocalTeamAssignments = { ...previous };
 
       players.forEach((player) => {
-        if (Object.prototype.hasOwnProperty.call(previous, player.id)) {
-          next[player.id] = previous[player.id];
-        } else {
-          next[player.id] = null;
-        }
+        if (!Object.prototype.hasOwnProperty.call(previous, player.id)) next[player.id] = null;
       });
 
       return next;
@@ -228,6 +234,7 @@ export function Lobby_TeamMode({
         // Lets the battle socket tell the server which team's chat
         // (TEAM_CHAT_MESSAGE) this player belongs to.
         teamId={currentPlayerTeam}
+        teamMembers={currentPlayerTeam ? getTeamPlayers(currentPlayerTeam) : []}
       />
     );
   }

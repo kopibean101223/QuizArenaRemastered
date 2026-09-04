@@ -24,6 +24,10 @@ export interface PresencePayload {
   userId?: string;
   sender?: string;
   message?: string;
+  action?: string;
+  cardId?: string;
+  targetId?: string;
+  questionIndex?: number;
   isJoinEvent?: boolean;
   role?: 'host' | 'student';
   totalQuestions?: number;
@@ -88,7 +92,7 @@ class RoomPresenceHandler {
     redisPublisher: Redis,
     redisSubscriber: Redis
   ): Promise<boolean> {
-    const { type, battleId, roomCode, userId, sender, message, isJoinEvent, totalQuestions, timeLimit } = payload;
+    const { type, battleId, roomCode, userId, sender, message, action, cardId, targetId, questionIndex, isJoinEvent, totalQuestions, timeLimit } = payload;
     if (!battleId) return false;
 
     const channel = roomChannel(battleId);
@@ -150,6 +154,10 @@ class RoomPresenceHandler {
         userId: userId ?? null,
         sender: sender || 'Anonymous',
         message,
+        action,
+        cardId,
+        targetId,
+        questionIndex,
         isJoinEvent: isJoinEvent ?? false,
         timestamp: new Date().toISOString(),
       });

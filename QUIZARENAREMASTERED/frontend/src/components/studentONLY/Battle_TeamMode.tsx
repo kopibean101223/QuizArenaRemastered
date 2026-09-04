@@ -18,6 +18,7 @@ import { PowerCardTray } from './PowerCards/PowerCardTray';
 import { TEAM_MODE_CARDS } from './PowerCards/CardCatalog';
 import type { PowerCardData } from './PowerCards/types';
 import { ChoosePowerUp } from './PowerCards/ChoosePowerUp';
+import type { LobbyPlayerT } from './ComponentsLobby/LobbyConstants';
 export interface TeamMemberAnswer {
   memberId: string;
   memberName: string;
@@ -119,6 +120,7 @@ export interface TeamBattleProps {
   // socket's JOIN_TEAM_BATTLE (sent by BattleSocketProvider) tells the
   // server which team's chat this player should join.
   teamId?: string | null;
+  teamMembers?: LobbyPlayerT[];
 }
 
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
@@ -133,7 +135,7 @@ const DEFAULT_TIME_LIMIT = 30;
  * Message handling that used to live in useBattleSocket's onMessage is now
  * a useEffect watching `lastMessage` from context.
  */
-export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: TeamBattleProps) {
+export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null, teamMembers = [] }: TeamBattleProps) {
   const { user, navigate } = useApp();  
   const { send, lastMessage } = useBattleSocketContext();
 
@@ -148,6 +150,7 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
   const [selectedOption, setSelectedOption] = useState<string>('');
   const [confirmed, setConfirmed] = useState(false);
   const [teamMemberAnswers, setTeamMemberAnswers] = useState<TeamMemberAnswer[]>([]);
+  const [teamRoundComplete, setTeamRoundComplete] = useState(false);
 
   const [chatMessages, setChatMessages] = useState<BattleChatMessage[]>([]);
   
@@ -155,6 +158,7 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
   const [collectedPowerCards, setCollectedPowerCards] = useState<PowerCardData[]>([]);
   const [showChoosePowerUP, setShowChoosePowerUP] = useState(false);
   const [correctAnswersCount, setCorrectAnswersCount] = useState(0);
+  const [powerUpVoteDeadline, setPowerUpVoteDeadline] = useState<number | null>(null);
   const [teamWins, setTeamWins] = useState(0);
   const [teamScore, setTeamScore] = useState(0);
   const [lastResolvedQuestionIndex, setLastResolvedQuestionIndex] = useState<number | null>(null);
@@ -209,6 +213,7 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
       if (data.type === 'TEAM_STATE_SYNC') {
         setSelectedOption('');
         setConfirmed(false);
+        setTeamRoundComplete(false);
       }
     }
 
@@ -220,12 +225,28 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
       setStartedAt(data.startedAt);
       setTimeLimit(data.timeLimit);
       setTeamMemberAnswers(Array.isArray(data.teamAnswers) ? data.teamAnswers : []);
+      setTeamRoundComplete(false);
       setSelectedOption('');
       setConfirmed(false);
     }
 
     if (data.type === 'TEAM_ANSWERS_UPDATED') {
       if (Array.isArray(data.teamAnswers)) setTeamMemberAnswers(data.teamAnswers);
+      setTeamRoundComplete(Boolean(data.isComplete));
+    }
+
+    if (data.type === 'TEAM_POWERUP_RESULT' && String(data.teamId) === String(teamId) && data.questionIndex === questionIndex) {
+      const winningCard = data.card as PowerCardData | undefined;
+      if (winningCard) {
+        setRoundOutcome(`${winningCard.name} won the team vote and was applied to this round.`);
+        setTeamScore((previous) => previous + estimatePowerupBoost(winningCard));
+      }
+      setShowChoosePowerUP(false);
+      setCorrectAnswersCount(0);
+      setPowerUpVoteDeadline(null);
+    }
+    if (data.type === 'TEAM_POWERUP_STARTED' && String(data.teamId) === String(teamId) && data.questionIndex === questionIndex) {
+      setPowerUpVoteDeadline(Number(data.deadline));
     }
 
     if (data.type === 'TEAM_BATTLE_COMPLETED') {
@@ -277,6 +298,7 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
     send({
       type: 'SUBMIT_TEAM_MEMBER_ANSWER',
       battleId,
+      userId: memberId,
       questionIndex,
       answer: myAnswer,
     });
@@ -298,17 +320,11 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
     send({
       type: 'SUBMIT_TEAM_MEMBER_ANSWER',
       battleId,
+      userId: memberId,
       questionIndex,
       answer: myAnswer,
     });
 
-    const newCount = correctAnswersCount + 1;
-    setCorrectAnswersCount(newCount);
-
-    if (newCount >= 2) {
-      setShowChoosePowerUP(true);
-      setCorrectAnswersCount(0);
-    }
   };
 
   const getOptionPercentage = (optionKey: string) => {
@@ -323,7 +339,7 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
     : 'Waiting for team vote…';
 
   useEffect(() => {
-    if (!currentQuestion || teamMemberAnswers.length === 0 || lastResolvedQuestionIndex === questionIndex) return;
+    if (!currentQuestion || !teamRoundComplete || teamMemberAnswers.length === 0 || lastResolvedQuestionIndex === questionIndex) return;
 
     const winningTeamAnswer = getMajorityVote(teamMemberAnswers);
     if (!winningTeamAnswer) return;
@@ -347,7 +363,7 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
       });
       setTeamScore((prev) => prev + 25);
     }
-  }, [currentQuestion, questionIndex, teamMemberAnswers, lastResolvedQuestionIndex]);
+  }, [currentQuestion, questionIndex, teamMemberAnswers, teamRoundComplete, lastResolvedQuestionIndex]);
 
   useEffect(() => {
     const bracketName = teamId === null || teamId === undefined ? 'Team Blue' : `Team ${teamId}`;
@@ -368,14 +384,12 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
   function handleChoosePowerUP(selectedCard: PowerCardData) {
     if (!selectedCard) return;
     send({
-      type: 'BATTLE_ACTION',
+      type: 'TEAM_POWERUP_VOTE',
       battleId,
       userId: memberId,
-      sender: memberName,
-      action: 'USE_TEAM_POWER_CARD',
       cardId: selectedCard.id,
       questionIndex,
-      message: `team majority used power card: ${selectedCard.name}`,
+      teamId,
     });
     setTeamScore((prev) => prev + estimatePowerupBoost(selectedCard));
     setRoundOutcome(`${selectedCard.name} applied to the current round by team majority.`);
@@ -506,6 +520,20 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
             <MessageSquare size={14} /> Team Answers Received ({teamMemberAnswers.length})
           </span>
 
+          <div className="border-b border-white/10 pb-3">
+            <span className="mb-2 block text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#8F93A8]">Team Members</span>
+            <div className="flex flex-wrap gap-2">
+              {teamMembers.length > 0 ? teamMembers.map((member) => {
+                const answered = teamMemberAnswers.some((answer) => answer.memberId === member.id);
+                return (
+                  <span key={member.id} className={`rounded-lg border px-2 py-1 text-[10px] font-bold ${answered ? 'border-[#2ED47A]/50 bg-[#2ED47A]/10 text-[#2ED47A]' : 'border-white/10 bg-white/5 text-white/60'}`}>
+                    {member.name}{answered ? ' ✓' : ''}
+                  </span>
+                );
+              }) : <span className="text-xs text-white/30">Team roster syncing…</span>}
+            </div>
+          </div>
+
           <div className="flex flex-col gap-2">
             {teamMemberAnswers.length === 0 ? (
               <span className="text-xs text-white/30 italic">Waiting for teammates…</span>
@@ -543,7 +571,8 @@ export function TeamBattle({ battleId = '', onLeaveBattle, teamId = null }: Team
       {showChoosePowerUP && (
         <ChoosePowerUp
           drawnCards={TEAM_MODE_CARDS.slice(0, 3)}
-          onSelectCard={handleChoosePowerUP}
+          onVoteCard={(card) => send({ type: 'TEAM_POWERUP_VOTE', battleId, userId: memberId, teamId, cardId: card.id, questionIndex })}
+          voteDeadline={powerUpVoteDeadline}
         />
       )}
     </div>

@@ -1,12 +1,14 @@
 import { WebSocket } from 'ws';
 import Redis from 'ioredis';
 import { finalizeAndSaveBattle, PlayerResult } from '../src/lib/student/battle/battleSync';
+import { resolveRoyaleAttemptOutcome } from '../src/lib/student/battle/royaleScoring';
+import { getCardById } from '../src/components/studentONLY/PowerCards/CardCatalog';
 import roomPresenceHandler from './RoomPresence';
 
 
 const COMPLETED_ROOM_TTL_SECONDS = 3600;
 const ACTIVE_ROOM_TTL_SECONDS = 4 * 60 * 60;
-const DEFAULT_TIME_LIMIT_SECONDS = 20;
+const ROYALE_ROUND_TIME_LIMIT_SECONDS = 60;
 
 function roomChannel(battleId: string): string {
   return `battle:royale:${battleId}`;
@@ -20,6 +22,7 @@ function playersKey(battleId: string): string {
 function questionsKey(battleId: string): string {
   return `battle:royale:${battleId}:questions`;
 }
+const POWERUP_PHASE_MS = 10_000;
 // NEW: tracks who has already answered the CURRENT question, so the
 // timeout handler knows who to auto-eliminate for not answering in time.
 function answeredKey(battleId: string, questionIndex: number): string {
@@ -34,6 +37,11 @@ export interface RoyalePlayerData {
   lives: number;
   isAlive: boolean;
   score?: number;
+  streak?: number;
+  questionIndex?: number;
+  shield?: number;
+  wins?: number;
+  powerupEligible?: boolean;
   correctAnswers?: number;
   totalQuestions?: number;
   accuracy?: number;
@@ -47,6 +55,14 @@ export interface RoyalePayload {
   playerData?: RoyalePlayerData;
   optionKey?: string;
   correctAnswer?: string;
+  timeRemaining?: number;
+  isTimeout?: boolean;
+  phase?: RoyalePhase;
+  phaseStartedAt?: number;
+  phaseEndsAt?: number;
+  cardId?: string;
+  action?: string;
+  targetId?: string;
   isLastQuestion?: boolean;
   questions?: unknown[];
   forceReset?: boolean;
@@ -54,18 +70,23 @@ export interface RoyalePayload {
   sender?: string;
   message?: string;
   userId?: string;
+  mode?: string;
 }
+
+type RoyalePhase = 'waiting' | 'feedback' | 'powerup' | 'round' | 'completed';
 
 class BattleRoyaleHandler {
   private activeRooms: Map<string, Set<WebSocket>>;
   private clientRoomMap: Map<WebSocket, string>;
   // NEW: authoritative per-battle advance timer, same pattern as TeamBattle.
   private questionTimers: Map<string, NodeJS.Timeout>;
+  private advancingBattles: Set<string>;
 
   constructor() {
     this.activeRooms = new Map<string, Set<WebSocket>>();
     this.clientRoomMap = new Map<WebSocket, string>();
     this.questionTimers = new Map<string, NodeJS.Timeout>();
+    this.advancingBattles = new Set<string>();
   }
 
   public initSubscriber(redisSubscriber: Redis): void {
@@ -121,6 +142,8 @@ class BattleRoyaleHandler {
     redisPublisher: Redis,
     roomCode: string | undefined
   ): Promise<void> {
+    if (this.advancingBattles.has(battleId)) return;
+    this.advancingBattles.add(battleId);
     console.log(`[ROYALE][ADVANCE] triggered for ${battleId}`);
     this.clearQuestionTimer(battleId);
 
@@ -136,6 +159,48 @@ class BattleRoyaleHandler {
     const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
     const currentIndex = parseInt(roomState.questionIndex || '0', 10);
 
+    if (roomState.phase === 'powerup') {
+      const startedAt = Date.now();
+      const timeLimit = ROYALE_ROUND_TIME_LIMIT_SECONDS;
+      await redisPublisher.hset(sKey, {
+        phase: 'round',
+        startedAt: String(startedAt),
+        timeLimit: String(timeLimit),
+      });
+      await redisPublisher.publish(channel, JSON.stringify({
+        type: 'ROYALE_ROUND_STARTED',
+        battleId,
+        questionIndex: currentIndex,
+        startedAt,
+        timeLimit,
+      }));
+      this.scheduleQuestionTimeout(battleId, timeLimit * 1000, redisPublisher, roomCode);
+      this.advancingBattles.delete(battleId);
+      return;
+    }
+
+    if (roomState.phase === 'feedback') {
+      const phaseStartedAt = Date.now();
+      const phaseEndsAt = phaseStartedAt + POWERUP_PHASE_MS;
+      await redisPublisher.hset(sKey, {
+        phase: 'powerup',
+        phaseStartedAt: String(phaseStartedAt),
+        phaseEndsAt: String(phaseEndsAt),
+      });
+      await redisPublisher.publish(channel, JSON.stringify({
+        type: 'ROYALE_POWERUP_PHASE',
+        battleId,
+        questionIndex: currentIndex,
+        phase: 'powerup',
+        phaseStartedAt,
+        phaseEndsAt,
+        players: Object.values(await redisPublisher.hgetall(pKey)).map((item) => JSON.parse(item)),
+      }));
+      this.scheduleQuestionTimeout(battleId, POWERUP_PHASE_MS, redisPublisher, roomCode);
+        this.advancingBattles.delete(battleId);
+      return;
+    }
+
     // Anyone who never submitted an answer for the question that just timed
     // out loses a life, same as answering wrong — otherwise AFK players
     // would sit at full HP forever while everyone else takes damage.
@@ -149,9 +214,23 @@ class BattleRoyaleHandler {
         `[ROYALE][ADVANCE] ${battleId} auto-eliminating-on-timeout for: ${notAnswered.map((p) => p.id).join(', ')}`
       );
       for (const p of notAnswered) {
-        p.lives = Math.max(0, p.lives - 1);
+        const timeoutOutcome = resolveRoyaleAttemptOutcome({
+          questionNumber: (p.questionIndex ?? p.totalQuestions ?? currentIndex) + 1,
+          totalQuestions: questions.length || currentIndex + 1,
+          timeRemaining: 0,
+          totalTime: ROYALE_ROUND_TIME_LIMIT_SECONDS,
+          currentStreak: 0,
+          isCorrect: false,
+          isTimeout: true,
+        });
+        const timeoutShield = p.shield || 0;
+        const timeoutAbsorbed = Math.min(timeoutShield, timeoutOutcome.totalDamage);
+        p.shield = timeoutShield - timeoutAbsorbed;
+        p.lives = Math.max(0, p.lives - (timeoutOutcome.totalDamage - timeoutAbsorbed));
         if (p.lives === 0) p.isAlive = false;
         p.totalQuestions = (p.totalQuestions || 0) + 1;
+        p.streak = 0;
+        p.questionIndex = (p.questionIndex ?? p.totalQuestions - 1) + 1;
         await redisPublisher.hset(pKey, p.id, JSON.stringify(p));
       }
       players = Object.values(await redisPublisher.hgetall(pKey)).map((item) => JSON.parse(item));
@@ -186,6 +265,7 @@ class BattleRoyaleHandler {
           players,
         })
       );
+      this.advancingBattles.delete(battleId);
       return;
     }
 
@@ -207,37 +287,39 @@ class BattleRoyaleHandler {
           players,
         })
       );
+      this.advancingBattles.delete(battleId);
       return;
     }
 
-    const startedAt = Date.now();
-    const timeLimit = Number(questions[nextIndex]?.timeLimit) || DEFAULT_TIME_LIMIT_SECONDS;
-
+    const feedbackStartedAt = Date.now();
+    const feedbackEndsAt = feedbackStartedAt + 3000;
     await redisPublisher.hset(sKey, {
       questionIndex: String(nextIndex),
-      startedAt: String(startedAt),
-      timeLimit: String(timeLimit),
+      phase: 'feedback',
+      phaseStartedAt: String(feedbackStartedAt),
+      phaseEndsAt: String(feedbackEndsAt),
     });
     await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
     await redisPublisher.del(answeredKey(battleId, currentIndex));
 
     console.log(
-      `[ROYALE][ADVANCE] ${battleId} -> question ${nextIndex}, timeLimit=${timeLimit}s, broadcasting ROYALE_QUESTION_ADVANCED`
+      `[ROYALE][ADVANCE] ${battleId} -> feedback before power-up phase for question ${nextIndex}`
     );
 
     await redisPublisher.publish(
       channel,
       JSON.stringify({
-        type: 'ROYALE_QUESTION_ADVANCED',
+        type: 'ROYALE_ROUND_FEEDBACK',
         battleId,
         questionIndex: nextIndex,
-        startedAt,
-        timeLimit,
+        phase: 'feedback',
+        phaseStartedAt: feedbackStartedAt,
+        phaseEndsAt: feedbackEndsAt,
         players,
       })
     );
-
-    this.scheduleQuestionTimeout(battleId, timeLimit * 1000, redisPublisher, roomCode);
+    this.scheduleQuestionTimeout(battleId, 3000, redisPublisher, roomCode);
+      this.advancingBattles.delete(battleId);
   }
 
   public async syncBattleToSupabase(
@@ -282,7 +364,7 @@ class BattleRoyaleHandler {
     redisPublisher: Redis,
     redisSubscriber: Redis
   ): Promise<void> {
-    const { type, battleId, roomCode, startingHp = 100, playerData, optionKey, correctAnswer, isLastQuestion, sender, message, userId } = payload;
+    const { type, battleId, roomCode, startingHp = 100, playerData, optionKey, correctAnswer, timeRemaining, isTimeout, isLastQuestion, sender, message, userId, action, cardId } = payload;
     console.log(`[ROYALE][server] handleMessage type=${type} battleId=${battleId}`);
 
     if (!battleId) {
@@ -326,10 +408,21 @@ class BattleRoyaleHandler {
       await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
 
       if (playerData && playerData.id && playerData.id !== 'professor') {
+        const existingPlayerRaw = await redisPublisher.hget(pKey, playerData.id);
+        const existingPlayer = existingPlayerRaw
+          ? JSON.parse(existingPlayerRaw) as RoyalePlayerData
+          : null;
         const initialPlayer: RoyalePlayerData = {
-          ...playerData,
-          lives: Number(roomState.startingHp),
-          isAlive: true,
+          ...(existingPlayer || playerData),
+          name: playerData.name || existingPlayer?.name || 'Player',
+          initials: playerData.initials || existingPlayer?.initials || 'P',
+          color: playerData.color || existingPlayer?.color || '#5B3DF6',
+          lives: existingPlayer?.lives ?? Number(roomState.startingHp),
+          isAlive: existingPlayer?.isAlive ?? true,
+          score: existingPlayer?.score ?? 0,
+          streak: existingPlayer?.streak ?? 0,
+          questionIndex: existingPlayer?.questionIndex ?? existingPlayer?.totalQuestions ?? 0,
+          shield: existingPlayer?.shield ?? 0,
         };
         await redisPublisher.hset(pKey, playerData.id, JSON.stringify(initialPlayer));
       }
@@ -341,38 +434,32 @@ class BattleRoyaleHandler {
       const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
       const questionIndex = parseInt(roomState.questionIndex || '0', 10);
       const startedAt = parseInt(roomState.startedAt || String(Date.now()), 10);
-      const timeLimit = parseInt(roomState.timeLimit || String(DEFAULT_TIME_LIMIT_SECONDS), 10);
+      const timeLimit = ROYALE_ROUND_TIME_LIMIT_SECONDS;
+      const phase = roomState.phase || 'waiting';
+      const phaseStartedAt = Number(roomState.phaseStartedAt || roomState.startedAt || Date.now());
+      const phaseEndsAt = Number(roomState.phaseEndsAt || phaseStartedAt);
+      const stateSync = JSON.stringify({
+        type: 'ROYALE_STATE_SYNC',
+        battleId,
+        startingHp: Number(roomState.startingHp),
+        status: roomState.status,
+        questionIndex,
+        startedAt,
+        timeLimit,
+        phase,
+        phaseStartedAt,
+        phaseEndsAt,
+        players,
+        questions,
+      });
 
       console.log(`[ROYALE][JOIN] ${battleId} client joined at server questionIndex=${questionIndex}`);
 
-      ws.send(
-        JSON.stringify({
-          type: 'ROYALE_STATE_SYNC',
-          battleId,
-          startingHp: Number(roomState.startingHp),
-          status: roomState.status,
-          questionIndex,
-          startedAt,
-          timeLimit,
-          players,
-          questions,
-        })
-      );
+      ws.send(stateSync);
 
-      await redisPublisher.publish(
-        `battle:${battleId}`,
-        JSON.stringify({
-          type: 'ROYALE_STATE_SYNC',
-          battleId,
-          startingHp: Number(roomState.startingHp),
-          status: roomState.status,
-         questionIndex,
-          startedAt,
-          timeLimit,
-          players,
-          questions,
-        })
-      );
+      // Keep both the shared lobby connection and Royale subscribers in sync.
+      await redisPublisher.publish(`battle:${battleId}`, stateSync);
+      await redisPublisher.publish(channel, stateSync);
 
       console.log(`Client joined Battle Royale Room ${battleId}`);
       return;
@@ -389,32 +476,52 @@ class BattleRoyaleHandler {
 
       const rawQuestions = await redisPublisher.get(qKey);
       const questions = rawQuestions ? JSON.parse(rawQuestions) : [];
-      const startedAt = Date.now();
-      const timeLimit = Number(questions[0]?.timeLimit) || DEFAULT_TIME_LIMIT_SECONDS;
+      const currentRoomState = await redisPublisher.hgetall(sKey);
+      const isFreshMatch = currentRoomState.status !== 'active';
+      const phaseStartedAt = Date.now();
+      const phaseEndsAt = phaseStartedAt + POWERUP_PHASE_MS;
 
       await redisPublisher.hset(sKey, {
         status: 'active',
         questionIndex: '0',
-        startedAt: String(startedAt),
-        timeLimit: String(timeLimit),
+        phase: 'powerup',
+        phaseStartedAt: String(phaseStartedAt),
+        phaseEndsAt: String(phaseEndsAt),
       });
       await redisPublisher.expire(sKey, ACTIVE_ROOM_TTL_SECONDS);
 
       const rawPlayers = await redisPublisher.hgetall(pKey);
-      const players = Object.values(rawPlayers || {}).map((item) => JSON.parse(item));
+      const players = await Promise.all(Object.values(rawPlayers || {}).map(async (item) => {
+        const player = JSON.parse(item) as RoyalePlayerData;
+        if (!isFreshMatch) return player;
+        const freshPlayer: RoyalePlayerData = {
+          ...player,
+          lives: Number(startingHp),
+          isAlive: true,
+          score: 0,
+          streak: 0,
+          questionIndex: 0,
+          shield: 0,
+          correctAnswers: 0,
+          totalQuestions: 0,
+        };
+        await redisPublisher.hset(pKey, player.id, JSON.stringify(freshPlayer));
+        return freshPlayer;
+      }));
 
-      console.log(`[ROYALE][START] ${battleId} starting with ${questions.length} questions, timeLimit=${timeLimit}s`);
+      console.log(`[ROYALE][START] ${battleId} starting with ${questions.length} questions, initial power-up phase=10s`);
 
       await redisPublisher.publish(
         channel,
         JSON.stringify({
-          type: 'ROYALE_STATE_SYNC',
+          type: 'ROYALE_POWERUP_PHASE',
           battleId,
           startingHp: Number(startingHp),
           status: 'active',
           questionIndex: 0,
-          startedAt,
-          timeLimit,
+          phase: 'powerup',
+          phaseStartedAt,
+          phaseEndsAt,
           players,
           questions,
         })
@@ -423,42 +530,30 @@ class BattleRoyaleHandler {
             await redisPublisher.publish(
         `battle:${battleId}`,
         JSON.stringify({
-          type: 'ROYALE_STATE_SYNC',
+          type: 'ROYALE_POWERUP_PHASE',
           battleId,
           startingHp: Number(startingHp),
           status: 'active',
           questionIndex: 0,
-          startedAt,
-          timeLimit,
+          phase: 'powerup',
+          phaseStartedAt,
+          phaseEndsAt,
           players,
           questions,
         })
       );
 
-      this.scheduleQuestionTimeout(battleId, timeLimit * 1000, redisPublisher, roomCode);
 
+      this.scheduleQuestionTimeout(battleId, POWERUP_PHASE_MS, redisPublisher, roomCode);
       console.log(`Professor started Battle Royale Room ${battleId} with ${questions.length} synchronized questions.`);
+      this.advancingBattles.delete(battleId);
       return;
     }
 
     if (type === 'ADVANCE_QUESTION') {
-      if (isLastQuestion) {
-        const rawPlayers = await redisPublisher.hgetall(pKey);
-        const players = Object.values(rawPlayers || {}).map((item) => JSON.parse(item));
-        await redisPublisher.hset(sKey, { status: 'completed' });
-        await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
-        await redisPublisher.expire(pKey, COMPLETED_ROOM_TTL_SECONDS);
-        this.clearQuestionTimer(battleId);
-        await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
-        await redisPublisher.publish(channel, JSON.stringify({
-          type: 'ROYALE_MATCH_ENDED',
-          battleId,
-          winner: players.find((player: RoyalePlayerData) => player.isAlive) || null,
-          players,
-        }));
-      } else {
-        await this.advanceOrEnd(battleId, redisPublisher, roomCode);
-      }
+      // Royale progression is server-timed. A generic professor-side advance
+      // must not skip the configured question timer.
+      console.log(`[ROYALE][ADVANCE] ignoring manual advance for ${battleId}; server timer owns progression`);
       return;
     }
 
@@ -481,10 +576,30 @@ class BattleRoyaleHandler {
       return;
     }
 
+    if (type === 'BATTLE_ACTION' && action === 'USE_POWER_CARD') {
+      if (!userId || !cardId) return;
+      const card = getCardById(cardId.split('-').slice(0, 3).join('-')) || getCardById(cardId);
+      if (!card || card.effect.category !== 'shield') return;
+      const rawPlayer = await redisPublisher.hget(pKey, userId);
+      if (!rawPlayer) return;
+      const player = JSON.parse(rawPlayer) as RoyalePlayerData;
+      player.shield = (player.shield || 0) + Number(card.effect.amount || 0);
+      await redisPublisher.hset(pKey, userId, JSON.stringify(player));
+      const players = Object.values(await redisPublisher.hgetall(pKey)).map((item) => JSON.parse(item));
+      await redisPublisher.publish(channel, JSON.stringify({
+        type: 'ROYALE_SHIELD_UPDATED',
+        battleId,
+        playerId: userId,
+        shield: player.shield,
+        players,
+      }));
+      return;
+    }
+
     // ── SUBMIT ANSWER & PROCESS DAMAGE ──
     // NOTE: no longer decides locally whether to move to the next question.
-    // It just records the answer/damage; the server's shared timer (started
-    // in PROF_START_ROYALE / advanceOrEnd) is what moves everyone forward.
+    // It records the answer and formula-based outcome. Each player advances
+    // locally after feedback and the optional power-up phase.
     if (type === 'SUBMIT_ROYALE_ANSWER') {
       if (!playerData || !playerData.id) return;
 
@@ -495,24 +610,49 @@ class BattleRoyaleHandler {
       if (!player.isAlive) return;
 
       const roomState = await redisPublisher.hgetall(sKey);
+      if (roomState.phase !== 'round') return;
       const questionIndex = parseInt(roomState.questionIndex || '0', 10);
       await redisPublisher.sadd(answeredKey(battleId, questionIndex), player.id);
       await redisPublisher.expire(answeredKey(battleId, questionIndex), COMPLETED_ROOM_TTL_SECONDS);
 
-      const isCorrect = optionKey === correctAnswer;
+      const rawQuestionList = await redisPublisher.get(qKey);
+      const questions = rawQuestionList ? JSON.parse(rawQuestionList) : [];
+      const questionNumber = (player.questionIndex ?? player.totalQuestions ?? 0) + 1;
+      const totalQuestions = questions.length || questionNumber;
+      const totalTime = ROYALE_ROUND_TIME_LIMIT_SECONDS;
+      const timedOut = Boolean(isTimeout);
+      const isCorrect = !timedOut && optionKey === correctAnswer;
+      const nextStreak = isCorrect ? (player.streak || 0) + 1 : 0;
+      const outcome = resolveRoyaleAttemptOutcome({
+        questionNumber,
+        totalQuestions,
+        timeRemaining: timedOut ? 0 : Number(timeRemaining ?? 0),
+        totalTime,
+        currentStreak: nextStreak,
+        isCorrect,
+        isTimeout: timedOut,
+      });
       console.log(
-        `[ROYALE][ANSWER] ${battleId} player=${player.id} correct=${isCorrect} at questionIndex=${questionIndex}`
+        `[ROYALE][ANSWER] ${battleId} player=${player.id} correct=${isCorrect} timeout=${timedOut} question=${questionNumber} points=${outcome.totalPoints} damage=${outcome.totalDamage}`
       );
 
-      if (!isCorrect) {
-        player.lives = Math.max(0, player.lives - 1);
+      let absorbedDamage = 0;
+      if (outcome.totalDamage > 0) {
+        const activeShield = player.shield || 0;
+        absorbedDamage = Math.min(activeShield, outcome.totalDamage);
+        const remainingDamage = outcome.totalDamage - absorbedDamage;
+        player.shield = activeShield - absorbedDamage;
+        player.lives = Math.max(0, player.lives - remainingDamage);
         if (player.lives === 0) {
           player.isAlive = false;
         }
       } else {
         player.correctAnswers = (player.correctAnswers || 0) + 1;
       }
+      player.score = (player.score || 0) + outcome.totalPoints;
+      player.streak = nextStreak;
       player.totalQuestions = (player.totalQuestions || 0) + 1;
+      player.questionIndex = questionNumber;
 
       await redisPublisher.hset(pKey, player.id, JSON.stringify(player));
 
@@ -527,19 +667,27 @@ class BattleRoyaleHandler {
           battleId,
           playerId: player.id,
           isCorrect,
+          isTimeout: timedOut,
+          damage: outcome.totalDamage,
+          shieldAbsorbed: absorbedDamage,
+          points: outcome.totalPoints,
+          streak: player.streak,
           lives: player.lives,
           isAlive: player.isAlive,
           players,
         })
       );
 
-      // If everyone still alive has now answered, no need to wait out the
-      // rest of the clock — advance (or end) immediately.
+      // Player progression is local; this broadcast updates shared state only.
       const answeredIds = await redisPublisher.smembers(answeredKey(battleId, questionIndex));
       const stillWaitingOn = activePlayers.filter((p) => !answeredIds.includes(p.id));
       console.log(
         `[ROYALE][ANSWER] ${battleId} ${answeredIds.length} answered, still waiting on ${stillWaitingOn.length} alive player(s)`
       );
+
+      if (stillWaitingOn.length === 0 && activePlayers.length > 1) {
+        await this.advanceOrEnd(battleId, redisPublisher, roomCode);
+      }
 
       if (activePlayers.length <= 1 && players.length > 1) {
         await redisPublisher.hset(sKey, { status: 'completed' });
@@ -560,8 +708,6 @@ class BattleRoyaleHandler {
             players,
           })
         );
-      } else if (stillWaitingOn.length === 0) {
-        await this.advanceOrEnd(battleId, redisPublisher, roomCode);
       }
       return;
     }
