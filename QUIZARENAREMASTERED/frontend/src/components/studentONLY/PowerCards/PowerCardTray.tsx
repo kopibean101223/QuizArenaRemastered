@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Search, Sparkles, X } from 'lucide-react';
 import { PowerCard } from './PowerCard';
+import { PowerCardOverlay } from './PowerCardOverlay';
 import { CARD_CATALOG } from './CardCatalog';
 import type { PowerCardData } from './types';
 
@@ -15,6 +16,8 @@ export interface PowerCardTrayProps {
   onToggleReveal?: (card: PowerCardData, isRevealed: boolean) => void;
   onCardUse?: (card: PowerCardData, targetId?: string) => void;
   targetOptions?: { id: string; name: string }[];
+  /** Keeps the card-use overlay open for the entire synchronized phase. */
+  phaseLocked?: boolean;
 }
 
 function drawBattleCards(count: number): PowerCardData[] {
@@ -29,17 +32,36 @@ export function PowerCardTray({
   onToggleReveal,
   onCardUse,
   targetOptions = [],
+  phaseLocked = false,
 }: PowerCardTrayProps) {
   const [drawnCards] = useState<PowerCardData[]>(() => cards ?? drawBattleCards(count));
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
   const [targetId, setTargetId] = useState('');
   const [targetSearch, setTargetSearch] = useState('');
+  const [usedInPhase, setUsedInPhase] = useState(false);
+  const wasPhaseLockedRef = useRef(phaseLocked);
   const powerCards = cards ?? drawnCards;
   const expandedCard = expandedCardId ? powerCards.find(c => c.id === expandedCardId) : null;
   const needsTarget = expandedCard?.effect.target === 'enemy' && targetOptions.length > 0;
   const filteredTargets = targetOptions.filter((target) =>
     target.name.toLowerCase().includes(targetSearch.toLowerCase())
   );
+
+  useEffect(() => {
+    if (wasPhaseLockedRef.current && !phaseLocked) {
+      setExpandedCardId(null);
+      setTargetId('');
+      setTargetSearch('');
+    }
+    if (!phaseLocked) setUsedInPhase(false);
+    if (phaseLocked && powerCards.length > 0 && !expandedCardId) {
+      setExpandedCardId(powerCards[0].id);
+    }
+    if (expandedCardId && !powerCards.some((card) => card.id === expandedCardId)) {
+      setExpandedCardId(null);
+    }
+    wasPhaseLockedRef.current = phaseLocked;
+  }, [expandedCardId, phaseLocked, powerCards]);
 
   function toggleCard(card: PowerCardData) {
     if (expandedCardId === card.id) {
@@ -89,16 +111,31 @@ export function PowerCardTray({
 
       {/* Full-Screen Card View */}
       {expandedCard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-[powerCardFadeIn_220ms_ease-out]">
-          <div className="relative flex flex-col items-center gap-6 p-8 animate-[powerCardRise_420ms_cubic-bezier(.2,.8,.2,1)]">
+        <PowerCardOverlay locked={phaseLocked} onClose={() => setExpandedCardId(null)}>
             {/* Close button */}
-            <button
-              onClick={() => setExpandedCardId(null)}
-              className="absolute top-4 right-4 p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
-              aria-label="Close card"
-            >
-              <X size={24} className="text-white" />
-            </button>
+            {!phaseLocked && (
+              <button
+                onClick={() => setExpandedCardId(null)}
+                className="absolute top-4 right-4 p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                aria-label="Close card"
+              >
+                <X size={24} className="text-white" />
+              </button>
+            )}
+
+            <div className="flex max-w-5xl flex-wrap items-center justify-center gap-4">
+                {powerCards.map((card) => (
+                  <button
+                    key={card.id}
+                    type="button"
+                    onClick={() => setExpandedCardId(card.id)}
+                    className={`rounded-2xl p-1 transition ${expandedCardId === card.id ? 'ring-2 ring-[#FFC93C]' : 'opacity-75 hover:opacity-100'}`}
+                    aria-label={`Inspect ${card.name}`}
+                  >
+                    <PowerCard card={card} state="revealed" size="md" />
+                  </button>
+                ))}
+            </div>
 
             {/* Large Card Display */}
             <div className="scale-150">
@@ -106,7 +143,7 @@ export function PowerCardTray({
                 card={expandedCard}
                 state="revealed"
                 size="lg"
-                onClick={() => setExpandedCardId(null)}
+                onClick={phaseLocked ? undefined : () => setExpandedCardId(null)}
               />
             </div>
 
@@ -123,7 +160,7 @@ export function PowerCardTray({
               </div>
 
               {needsTarget && (
-                <div className="mt-4 w-full max-w-xs text-left animate-[powerCardFadeIn_300ms_ease-out]">
+                <div className="mt-4 w-full max-w-xs text-left">
                   <label className="mb-2 block text-[10px] font-black uppercase tracking-[0.18em] text-white/50">
                     Target player
                   </label>
@@ -133,13 +170,13 @@ export function PowerCardTray({
                       value={targetSearch}
                       onChange={(event) => setTargetSearch(event.target.value)}
                       placeholder="Search players"
-                      className="w-full rounded-lg border border-white/10 bg-black/20 py-2 pl-9 pr-3 text-xs text-white outline-none transition focus:border-[#FFC93C]"
+                      className="w-full rounded-lg border border-white/10 bg-black/20 py-2 pl-9 pr-3 text-xs text-white outline-none focus:border-[#FFC93C]"
                     />
                   </div>
                   <select
                     value={targetId}
                     onChange={(event) => setTargetId(event.target.value)}
-                    className="w-full rounded-lg border border-white/10 bg-[#171329] px-3 py-2 text-xs font-bold text-white outline-none transition focus:border-[#FFC93C]"
+                    className="w-full rounded-lg border border-white/10 bg-[#171329] px-3 py-2 text-xs font-bold text-white outline-none focus:border-[#FFC93C]"
                     aria-label="Select target player"
                   >
                     <option value="">Choose a player</option>
@@ -149,32 +186,26 @@ export function PowerCardTray({
                   </select>
                 </div>
               )}
+
             </div>
 
-            {/* Use Button */}
-            {onCardUse && (
+            {phaseLocked && onCardUse && (
               <button
-                disabled={needsTarget && !targetId}
+                type="button"
+                disabled={usedInPhase || (needsTarget && !targetId)}
                 onClick={() => {
+                  setUsedInPhase(true);
                   onCardUse(expandedCard, targetId || undefined);
-                  setExpandedCardId(null);
                 }}
-                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#5B3DF6] px-6 py-3 font-extrabold text-white transition hover:bg-[#765dff] disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex items-center gap-2 rounded-xl bg-[#5B3DF6] px-6 py-3 font-extrabold text-white transition hover:bg-[#765dff] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Sparkles size={16} />
-                Use Card
+                {usedInPhase ? 'Card Used' : 'Use Card'}
               </button>
             )}
 
-            {/* Close on click outside */}
-            <div
-              className="absolute inset-0 -z-10"
-              onClick={() => setExpandedCardId(null)}
-            />
-          </div>
-        </div>
+        </PowerCardOverlay>
       )}
-      <style>{`@keyframes powerCardFadeIn{from{opacity:0}to{opacity:1}}@keyframes powerCardRise{from{opacity:0;transform:translateY(18px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}`}</style>
     </>
   );
 }

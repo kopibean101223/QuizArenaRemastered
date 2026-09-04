@@ -386,6 +386,15 @@ export function BattleSocketProvider({
         setBattleStarted(true);
       }
 
+      if (
+        data.type === 'ROYALE_POWERUP_PHASE' ||
+        data.type === 'ROYALE_ROUND_STARTED' ||
+        (data.type === 'ROYALE_STATE_SYNC' && data.status === 'active')
+      ) {
+        setBattleMode('ROYALE');
+        setBattleStarted(true);
+      }
+
       if (data.type === 'ROOM_STATE_SYNC' || data.type === 'ROYALE_STATE_SYNC' || data.type === 'TEAM_STATE_SYNC') {
         setIsSynced(true);
       }

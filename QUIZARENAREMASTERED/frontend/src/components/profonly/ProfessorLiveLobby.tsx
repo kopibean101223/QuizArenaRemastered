@@ -473,6 +473,20 @@ export function Matchmaking({ professorId }: { professorId?: string }) {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        if (data.type === 'ROYALE_POWERUP_PHASE') {
+          setBattleStarted(true);
+          setTimeRemaining(Math.max(0, Math.ceil((Number(data.phaseEndsAt || Date.now()) - Date.now()) / 1000)));
+          return;
+        }
+        if (data.type === 'ROYALE_ROUND_STARTED') {
+          const activeStart = Number(data.startedAt) || Date.now();
+          const limit = Number(data.timeLimit) || 60;
+          setBattleStarted(true);
+          setStartedAt(activeStart);
+          setTimeLimit(limit);
+          setTimeRemaining(Math.max(0, limit - Math.floor((Date.now() - activeStart) / 1000)));
+          return;
+        }
         if (data.type === 'ROOM_STATE_SYNC' || data.type === 'QUESTION_ADVANCED') {
           if (typeof data.currentIndex === 'number') {
             setCurrentIndex(data.currentIndex);

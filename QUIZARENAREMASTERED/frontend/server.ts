@@ -46,6 +46,11 @@ wss.on('connection', (ws: WebSocket) => {
     try {
       const payload = JSON.parse(rawData.toString());
 
+      if (payload.type === 'BATTLE_ACTION' && payload.mode === 'ROYALE' && payload.action === 'USE_POWER_CARD') {
+        await BattleRoyaleHandler.handleMessage(ws, payload as RoyalePayload, redisPublisher, redisSubscriber);
+        return;
+      }
+
       // ── PRESENCE FIRST — mode-agnostic, applies regardless of payload.mode ──
       // JOIN_BATTLE / BATTLE_ACTION are handled here for every mode. If this
       // returns false, the message wasn't a presence message and falls
