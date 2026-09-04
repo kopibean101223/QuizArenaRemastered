@@ -1,0 +1,340 @@
+# Battle Royale — Logic, Flow, Requirements, and Server Variables
+
+## 1) Overview
+- Battle Royale is a live elimination mode for QuizArena.
+- It is treated as a `ROYALE` battle mode in the websocket router.
+- The match is designed to advance on each client individually, rather than forcing every client to wait for one universal server tick.
+- Each player is tracked by `lives`, `isAlive`, `score`, and `streak`.
+- The room ends when:
+  - only one player remains alive,
+  - the question list is exhausted,
+  - the professor force-ends the match,
+  - or a timeout causes elimination.
+- When a player is eliminated, their avatar or player chip receives a visible strike overlay so other players can see they are out.
+
+## 2) Core Game Rules
+- Each player starts with a `startingHp` (default `100`) converted to `lives`.
+- Each wrong answer removes 1 life by default in the current battle royale model.
+- A timeout also counts as a failed attempt and removes 1 life if the player is still alive.
+- Players who answer correctly increase `correctAnswers` and award points based on the scoring model.
+- If a player reaches `lives <= 0`, they become `isAlive = false` and are marked as eliminated.
+- A match continues until only one survivor remains or no more questions exist.
+- The match result is synced to Supabase using `finalizeAndSaveBattle(...)`.
+- Eliminated players remain visible in the room with a strike on the icon to signal their elimination status to others.
+
+## 3) Damage and Pointing System
+- This system follows the attached battle royale damage/pointing spec as the source of truth.
+- Base damage increases across the question list so late-game questions hit harder.
+- Every question has a base damage value that scales from `3` on the first question to `20` on the final question.
+- The system must support any number of questions while keeping the progression smooth.
+- Formula for base damage:
+  - `Base Damage = 3 + (17 × (Current Question - 1) / (Total Questions - 1))`
+  - Round to the nearest whole number.
+- Time remaining changes the reward/punishment:
+  - `Time Remaining % = (Time Remaining / Total Timer) × 100`
+- Timer bonus/damage table:
+  - `75–100%` → correct `+5`, wrong `+5` damage
+  - `50–74%` → correct `+4`, wrong `+4` damage
+  - `25–49%` → correct `+3`, wrong `+3` damage
+  - `1–24%` → correct `+2`, wrong `+2` damage
+  - `0% / Timeout` → correct `0`, wrong `+5` damage
+- Correct answer points:
+  - base correct answer points = `10`
+  - total points = `10 + streak bonus + timer reward`
+- Streak bonus logic:
+  - `Streak Bonus = max(0, (Current Streak - 3) × 10)`
+  - this means 4th consecutive correct answer starts bonus scaling
+- If a player answers incorrectly or times out:
+  - `Current Streak = 0`
+  - points = `0`
+  - damage is applied according to the current question base damage and the time remaining penalty
+- Timeout rule:
+  - timeout does not replace base question damage
+  - total timeout damage = `Base Question Damage + 5`
+  - the `+5` is additional damage, not the whole damage value
+- Correct answer result:
+  - `Points = 10 + Streak Bonus + Timer Reward`
+  - `HP Damage = 0`
+- Wrong answer result:
+  - `Points = 0`
+  - `Total HP Damage = Base Question Damage + Timer Damage`
+  - `Streak = 0`
+- Timeout result:
+  - `Points = 0`
+  - `Total HP Damage = Base Question Damage + 5`
+  - `Streak = 0`
+- Design emphasis:
+  - answer early = higher reward if correct, higher punishment if wrong
+  - late answers lower reward and lower risk
+  - timeout is always a harsh penalty because it includes both base damage and fixed +5 penalty
+
+## 4) Elimination UI Rule
+- If a player is eliminated, their player icon must show a visible strike overlay or cross-out treatment.
+- The strike indicator is visible to all remaining players in the match.
+- The eliminated player remains in the roster but is visually marked as out.
+- The eliminated player should not be able to continue answering future questions.
+- Only survivors can continue the match flow.
+
+## 5) Required System Dependencies
+- WebSocket server via `ws`.
+- Redis via `ioredis`.
+- Environment values for Redis connection.
+- Shared room presence system to track room membership.
+- Supabase battle-finalization integration.
+- Battle questions must be normalized to the shared battle question format.
+
+## 4) Required Environment / Server Variables
+- `PORT`
+  - Default: `8080`
+  - Used to start the websocket server.
+- `REDIS_URL`
+  - Optional override for Redis connection.
+- `REDIS_HOST`
+  - Default: `127.0.0.1`
+- `REDIS_PORT`
+  - Default: `6379`
+- `battleId`
+  - Unique room identifier for a battle session.
+- `roomCode`
+  - Human-readable room identifier shown to players.
+- `startingHp`
+  - Initial life total passed into room state.
+- `questionIndex`
+  - Current active question index.
+- `startedAt`
+  - Timestamp when the current question started.
+- `timeLimit`
+  - Per-question time limit in seconds.
+- `players`
+  - Active player list stored in Redis.
+- `questions`
+  - Full question list JSON array for the battle.
+- `optionKey`
+  - Selected answer key from the client.
+- `correctAnswer`
+  - Correct answer value used by server-side grading.
+- `playerData`
+  - Contains `id`, `name`, `initials`, `color`, `lives`, `isAlive`, and optional score metadata.
+- `sender`, `message`, `userId`
+  - Used for global chat payloads.
+
+## 5) Redis Keys and Storage Shape
+- `battle:royale:${battleId}`
+  - Redis pub/sub channel for real-time relay.
+- `battle:royale:${battleId}:state`
+  - Hash for battle state.
+  - Fields include:
+    - `startingHp`
+    - `status` (`waiting`, `active`, `completed`)
+    - `roomCode`
+    - `questionIndex`
+    - `startedAt`
+    - `timeLimit`
+- `battle:royale:${battleId}:players`
+  - Hash of player records.
+  - Each entry is a JSON-serialized `RoyalePlayerData` object.
+- `battle:royale:${battleId}:questions`
+  - JSON string of the question array.
+- `battle:royale:${battleId}:q:${questionIndex}:answered`
+  - Set of player IDs who submitted an answer for the current question.
+
+## 6) Runtime Constants
+- `COMPLETED_ROOM_TTL_SECONDS = 3600`
+  - TTL for completed rooms.
+- `ACTIVE_ROOM_TTL_SECONDS = 4 * 60 * 60`
+  - TTL for active room state.
+- `DEFAULT_TIME_LIMIT_SECONDS = 20`
+  - Default per-question timer.
+
+## 7) Core Server Objects
+- `activeRooms: Map<string, Set<WebSocket>>`
+  - Tracks websocket clients per battle room.
+- `clientRoomMap: Map<WebSocket, string>`
+  - Maps each client socket to its room.
+- `questionTimers: Map<string, NodeJS.Timeout>`
+  - Stores the authoritative timer for each battle room.
+
+## 8) Battle Flow
+### Join flow
+- Client sends `JOIN_ROYALE`.
+- Server calls `roomPresenceHandler.setBattleMode(battleId, 'ROYALE')`.
+- If room does not exist, it subscribes to the Redis room channel.
+- Server adds the websocket to `activeRooms[battleId]`.
+- If state is missing, it initializes the room state:
+  - `startingHp = 100`
+  - `status = waiting`
+  - `roomCode = roomCode || ''`
+  - `questionIndex = 0`
+- If a player object is present and not professor, it creates a player record in Redis.
+- Server sends `ROYALE_STATE_SYNC` to the joining client.
+- It also publishes the same state to the shared room and this battle channel.
+
+### Start flow
+- Professor sends `PROF_START_ROYALE`.
+- Server stores the question list to Redis.
+- It sets battle state to:
+  - `status = active`
+  - `questionIndex = 0`
+  - `startedAt = Date.now()`
+  - `timeLimit = first question timeLimit or 20`
+- Server publishes `ROYALE_STATE_SYNC` to the room.
+- It schedules the authoritative timer with `scheduleQuestionTimeout(...)`.
+
+### Server-timed question progression
+- The server owns the question clock.
+- `scheduleQuestionTimeout` starts a timeout for the current question.
+- When it fires, `advanceOrEnd(...)` is executed.
+- That function:
+  - clears the current question timer,
+  - reads current room state and question list,
+  - checks who answered the current question,
+  - auto-eliminates all alive players who did not answer,
+  - updates player records in Redis,
+  - broadcasts `ROYALE_HP_UPDATED` with `reason: 'timeout'`,
+  - checks for a winner,
+  - advances to the next question if available,
+  - sets the next `questionIndex`, `startedAt`, and `timeLimit`,
+  - publishes `ROYALE_QUESTION_ADVANCED`,
+  - reschedules the next timeout.
+
+### Answer submission flow
+- Client sends `SUBMIT_ROYALE_ANSWER`.
+- Server loads the current player and checks `isAlive`.
+- It reads the active `questionIndex` from Redis.
+- It records the player in the answered set for that question.
+- It compares `optionKey` with `correctAnswer`.
+- On correct answer:
+  - `correctAnswers += 1`
+- On wrong answer:
+  - `lives -= 1`
+  - if `lives === 0`, `isAlive = false`
+- It increments `totalQuestions` for the player.
+- It updates the player hash in Redis.
+- It broadcasts `ROYALE_HP_UPDATED` with:
+  - `playerId`
+  - `isCorrect`
+  - `lives`
+  - `isAlive`
+  - `players`
+- If only one player remains alive, the match ends immediately.
+
+### Match end flow
+- The server can end the match in several ways:
+  - `activePlayers.length <= 1 && players.length > 1`
+  - `nextIndex >= questions.length`
+  - manual `PROF_END_ROYALE` or `PROF_END_BATTLE`
+  - timeout-driven end after auto-elimination
+- Ending logic:
+  - sets room state to `completed`
+  - expires room state and player state for TTL
+  - calls `syncBattleToSupabase(...)`
+  - publishes `ROYALE_MATCH_ENDED`
+  - includes `winner` and final `players`
+
+## 9) Supabase Sync Requirements
+- `syncBattleToSupabase(...)` reads Redis room state and player records.
+- It builds a `PlayerResult[]` array with:
+  - `userId`
+  - `score`
+  - `correctAnswers`
+  - `totalQuestions`
+  - `accuracy`
+- Then calls:
+  - `finalizeAndSaveBattle({ battleId, roomCode, battleMode: 'ROYALE', players })`
+- This is required to persist the final match scores and rankings.
+
+## 10) Chat Behavior
+- Global chat is supported by `CHAT_MESSAGE`.
+- It is broadcast to all clients in the battle room.
+- Payload includes:
+  - `battleId`
+  - `sender`
+  - `userId`
+  - `message`
+  - `timestamp`
+- This chat is room-wide and not player-specific.
+
+## 11) Client-Side Battle Royale Flow
+### Lobby
+- `Lobby_BattleRoyale` renders a waiting room with:
+  - room code,
+  - current player list,
+  - readiness state,
+  - contest title,
+  - countdown display.
+- Once the professor starts the match, it swaps from lobby to battle view using `BattleRoyale`.
+
+### Battle screen
+- `BattleRoyale` handles:
+  - question rendering,
+  - timer countdown,
+  - answer selection,
+  - elimination status,
+  - power-card rewards,
+  - chat updates,
+  - result navigation.
+- It listens to messages from the shared socket context:
+  - `ROYALE_STATE_SYNC`
+  - `ROYALE_QUESTION_ADVANCED`
+  - `ROYALE_HP_UPDATED`
+  - `ROYALE_MATCH_ENDED`
+  - `CHAT_MESSAGE`
+- Timer is driven from `startedAt` and `timeLimit` from the server.
+- The UI never decides the next question itself; it follows the server’s authoritative state.
+
+## 12) Answer Validation Rules
+- Client sends the answer as `optionKey` and `correctAnswer`.
+- Server grades by string equality.
+- For all question types, the client normalizes answer text before send.
+- The server compares values using the same text representation.
+- For MCQ:
+  - it compares answer text to the correct option text.
+- For non-MCQ:
+  - it compares to the normalized answer representation.
+
+## 13) Power Card / Reward System
+- Every 2 correct answers grants a random Royale power-up card.
+- Power-up selection uses `availablePowerChoices` and `showChoosePowerUP`.
+- The card choice is exposed to the player after correct-answer streaks.
+- Cards are drawn from `BATTLE_ROYALE_CARDS`.
+
+## 14) Important Design Notes
+- The classic bug that caused mismatched question indexes between clients is fixed by making the server the single source of truth.
+- Browsers no longer advance their own question index after an answer.
+- All question progression is synchronized through Redis and the authoritative timer.
+- This prevents slower players from drifting ahead or silently staying alive forever.
+
+## 15) Message Types Used by Royale
+- `JOIN_ROYALE`
+- `PROF_START_ROYALE`
+- `ADVANCE_QUESTION` (ignored on server; progression is timer-driven)
+- `PROF_END_ROYALE`
+- `PROF_END_BATTLE`
+- `SUBMIT_ROYALE_ANSWER`
+- `ROYALE_STATE_SYNC`
+- `ROYALE_QUESTION_ADVANCED`
+- `ROYALE_HP_UPDATED`
+- `ROYALE_MATCH_ENDED`
+- `CHAT_MESSAGE`
+
+## 16) Minimal Implementation Checklist
+- Redis is connected and subscribed to room channels.
+- Player records are stored in a shared hash.
+- Each room has a single authoritative timer.
+- All question progression is server-driven.
+- Players are eliminated on wrong answer or timeout.
+- Match result is persisted to Supabase.
+- Client UI reacts only to server broadcast events.
+- Room state is expired after completion to prevent stale data.
+
+## 17) Actual Files Involved
+- `QUIZARENAREMASTERED/frontend/server.ts`
+- `QUIZARENAREMASTERED/frontend/handlers/BattleRoyale.ts`
+- `QUIZARENAREMASTERED/frontend/src/components/studentONLY/Lobby/Lobby_BattleRoyale.tsx`
+- `QUIZARENAREMASTERED/frontend/src/components/studentONLY/Battle_BattleRoyale.tsx`
+- `QUIZARENAREMASTERED/frontend/src/lib/student/battle/battleSync.ts`
+
+## 18) Summary
+- Battle Royale is a real-time elimination battler that runs off a central Redis-backed room state.
+- The professor starts the room, the server controls question timing, and players take damage until only one remains.
+- All flow is synchronized by Redis and timer-driven server logic, which keeps the room consistent across all clients.

@@ -160,9 +160,8 @@
         }
       }
 
-      // The server broadcasts this when its own timer fires (or once every
-      // alive player has answered) — the only thing that should move the
-      // whole match to the next question at once.
+      // The server broadcasts this when its authoritative timer fires — the
+      // only thing that should move the whole match to the next question.
       if (data.type === 'ROYALE_QUESTION_ADVANCED') {
         setQuestionIndex(data.questionIndex);
         setStartedAt(data.startedAt);

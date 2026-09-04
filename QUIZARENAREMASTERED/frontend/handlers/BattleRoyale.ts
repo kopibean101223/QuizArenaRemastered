@@ -342,37 +342,25 @@ class BattleRoyaleHandler {
       const questionIndex = parseInt(roomState.questionIndex || '0', 10);
       const startedAt = parseInt(roomState.startedAt || String(Date.now()), 10);
       const timeLimit = parseInt(roomState.timeLimit || String(DEFAULT_TIME_LIMIT_SECONDS), 10);
+      const stateSync = JSON.stringify({
+        type: 'ROYALE_STATE_SYNC',
+        battleId,
+        startingHp: Number(roomState.startingHp),
+        status: roomState.status,
+        questionIndex,
+        startedAt,
+        timeLimit,
+        players,
+        questions,
+      });
 
       console.log(`[ROYALE][JOIN] ${battleId} client joined at server questionIndex=${questionIndex}`);
 
-      ws.send(
-        JSON.stringify({
-          type: 'ROYALE_STATE_SYNC',
-          battleId,
-          startingHp: Number(roomState.startingHp),
-          status: roomState.status,
-          questionIndex,
-          startedAt,
-          timeLimit,
-          players,
-          questions,
-        })
-      );
+      ws.send(stateSync);
 
-      await redisPublisher.publish(
-        `battle:${battleId}`,
-        JSON.stringify({
-          type: 'ROYALE_STATE_SYNC',
-          battleId,
-          startingHp: Number(roomState.startingHp),
-          status: roomState.status,
-         questionIndex,
-          startedAt,
-          timeLimit,
-          players,
-          questions,
-        })
-      );
+      // Keep both the shared lobby connection and Royale subscribers in sync.
+      await redisPublisher.publish(`battle:${battleId}`, stateSync);
+      await redisPublisher.publish(channel, stateSync);
 
       console.log(`Client joined Battle Royale Room ${battleId}`);
       return;
@@ -442,23 +430,9 @@ class BattleRoyaleHandler {
     }
 
     if (type === 'ADVANCE_QUESTION') {
-      if (isLastQuestion) {
-        const rawPlayers = await redisPublisher.hgetall(pKey);
-        const players = Object.values(rawPlayers || {}).map((item) => JSON.parse(item));
-        await redisPublisher.hset(sKey, { status: 'completed' });
-        await redisPublisher.expire(sKey, COMPLETED_ROOM_TTL_SECONDS);
-        await redisPublisher.expire(pKey, COMPLETED_ROOM_TTL_SECONDS);
-        this.clearQuestionTimer(battleId);
-        await this.syncBattleToSupabase(redisPublisher, battleId, roomCode);
-        await redisPublisher.publish(channel, JSON.stringify({
-          type: 'ROYALE_MATCH_ENDED',
-          battleId,
-          winner: players.find((player: RoyalePlayerData) => player.isAlive) || null,
-          players,
-        }));
-      } else {
-        await this.advanceOrEnd(battleId, redisPublisher, roomCode);
-      }
+      // Royale progression is server-timed. A generic professor-side advance
+      // must not skip the configured question timer.
+      console.log(`[ROYALE][ADVANCE] ignoring manual advance for ${battleId}; server timer owns progression`);
       return;
     }
 
@@ -533,8 +507,9 @@ class BattleRoyaleHandler {
         })
       );
 
-      // If everyone still alive has now answered, no need to wait out the
-      // rest of the clock — advance (or end) immediately.
+      // Keep the question open until the authoritative server timer expires.
+      // This gives every player the full configured time, even when everyone
+      // currently alive has already submitted an answer.
       const answeredIds = await redisPublisher.smembers(answeredKey(battleId, questionIndex));
       const stillWaitingOn = activePlayers.filter((p) => !answeredIds.includes(p.id));
       console.log(
@@ -560,8 +535,6 @@ class BattleRoyaleHandler {
             players,
           })
         );
-      } else if (stillWaitingOn.length === 0) {
-        await this.advanceOrEnd(battleId, redisPublisher, roomCode);
       }
       return;
     }

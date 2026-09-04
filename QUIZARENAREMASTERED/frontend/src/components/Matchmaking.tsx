@@ -838,8 +838,8 @@ const handleRemoveGroup = (groupName: string) => {
   useEffect(() => {
     if (battleStarted && !quizCompleted && timeRemaining === 0) {
       if (!isAdvancingRef.current) {
-        // Only auto-advance if we are NOT in Boss Raid mode (Boss Raid is manually dragged)
-        if (lobbyType !== 'bossraid') {
+        // Royale progression is server-timed; Boss Raid is manually dragged.
+        if (lobbyType !== 'bossraid' && lobbyType !== 'royale' && lobbyType !== 'chaosclash') {
           handleNextQuestion();
         }
       }

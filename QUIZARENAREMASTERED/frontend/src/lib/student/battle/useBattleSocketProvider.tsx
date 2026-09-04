@@ -299,6 +299,19 @@ export function BattleSocketProvider({
         setCountdown(null);
       }
 
+      if (data.type === 'ROYALE_STATE_SYNC' && Array.isArray(data.players)) {
+        setPlayers(data.players
+          .filter((player: any) => player.id !== 'professor')
+          .map((player: any, index: number) => ({
+            id: player.id || player.userId,
+            name: player.name || player.userId || `Player ${index + 1}`,
+            initials: player.initials || String(player.name || player.userId || 'PL').substring(0, 2).toUpperCase(),
+            color: player.color || AVATAR_COLORS[index % AVATAR_COLORS.length],
+            isHost: false,
+            isReady: true,
+          })));
+      }
+
       if (data.type === 'BINGO_STATE_SYNC') {
         setLastBingoState(data);
         if (Array.isArray(data.players)) {
