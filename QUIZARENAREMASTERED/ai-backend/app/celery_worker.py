@@ -1444,4 +1444,3 @@ def process_and_generate_quiz(
         except Exception:
             pass
         return {"status": "error", "message": str(e)}
-

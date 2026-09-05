@@ -47,10 +47,7 @@ export async function DELETE(req: Request) {
       data: { docId: null }
     });
 
-    await prisma.syllabusDoc.delete({
-      where: { id: docId }
-    });
-
+  
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Error deleting document:', error);
