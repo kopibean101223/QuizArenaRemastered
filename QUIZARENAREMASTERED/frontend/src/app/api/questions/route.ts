@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     // Filter questions by the target user ID
     const questions = await prisma.generatedQuestion.findMany({
       where: { 
-        userId: targetUserId // Scope questions to the target professor
+        userId: targetUserId//tions to the target professor
       },
       orderBy: { createdAt: "desc" },
     });

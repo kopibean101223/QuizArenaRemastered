@@ -46,55 +46,11 @@ const DEFAULT_STUDENTS = [
 ];
 
 export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, bossMaxHealth = 1000, timeLeft = 45, currentQuestion = null, questions = [], onLaunchQuestion, lastMessage, socketSend }: ProfBossRaidProps) {
-  // Local HP & Timer for demo
+  // Authoritative HP & Timers
   const [localBossHp, setLocalBossHp] = useState(bossHealth);
   const [localClassHp, setLocalClassHp] = useState(1000);
   const classMaxHp = 1000;
-
-
-  
-
-
-
-  useEffect(() => {
-    if (lastMessage?.type === 'BOSS_ACTION' || lastMessage?.type === 'ROOM_STATE_SYNC' || lastMessage?.type === 'BOSSRAID_TIME_UP') {
-      console.log("[ProfBossRaid] Received", lastMessage.type, lastMessage);
-      if (lastMessage.bossHp !== undefined) {
-        setLocalBossHp(prev => {
-          if (lastMessage.bossHp < prev && lastMessage.type === 'BOSS_ACTION') {
-            setSlashed(true);
-            setTimeout(() => setSlashed(false), 300);
-          }
-          return lastMessage.bossHp;
-        });
-      }
-      if (lastMessage.classHp !== undefined) {
-        setLocalClassHp(lastMessage.classHp);
-        if (lastMessage.type === 'BOSSRAID_TIME_UP') {
-          toast.error("Time's up! The boss attacked the class!", {
-            position: 'top-center',
-            style: { background: 'red', color: 'white' }
-          });
-        }
-      }
-      if (lastMessage.bossEnergy !== undefined) {
-        setEnergy(lastMessage.bossEnergy); // Absolute override from prof
-      }
-      if (lastMessage?.type === 'BOSS_ACTION' && lastMessage.addBossEnergy !== undefined) {
-        setEnergy(prev => {
-          const next = prev + lastMessage.addBossEnergy;
-          if (next >= 100) {
-            setUltimateReady(true);
-            return 100;
-          }
-          return next;
-        });
-      }
-    }
-  }, [lastMessage]);
-
-  const healthPercent = Math.max(0, (localBossHp / bossMaxHealth) * 100);
-
+  const [endsAt, setEndsAt] = useState<number>(Date.now() + 60_000);
   const [localTimeLeft, setLocalTimeLeft] = useState(timeLeft);
   const [isQuestionActive, setIsQuestionActive] = useState(!!currentQuestion);
   const [slashed, setSlashed] = useState(false);
@@ -102,60 +58,118 @@ export function ProfBossRaid({ students = DEFAULT_STUDENTS, bossHealth = 1000, b
   const [customQuestion, setCustomQuestion] = useState("");
   const [draggedQ, setDraggedQ] = useState<QuestionItem | null>(null);
   const [overrideActive, setOverrideActive] = useState(false);
+  const [overrideUnlocked, setOverrideUnlocked] = useState(false);
   const [globalCooldown, setGlobalCooldown] = useState(0);
   
   // Track questions available to throw
   const [availableQuestions, setAvailableQuestions] = useState<QuestionItem[]>(questions);
 
-  // Energy & Ultimate State
+  // Energy & Ultimate State (Server Authoritative)
   const [energy, setEnergy] = useState(0);
   const [ultimateReady, setUltimateReady] = useState(false);
   
-
-
-const { myDeck, drawnCards, showCardModal, triggerCardDraw, handleAddToDeck, setShowCardModal } = usePowerDeck();
-
+  const { myDeck, drawnCards, showCardModal, triggerCardDraw, handleAddToDeck, setShowCardModal } = usePowerDeck();
 
   // Stagger State
   const [isStaggered, setIsStaggered] = useState(false);
   const [staggerTimer, setStaggerTimer] = useState(0);
+  const [isBossStaggered, setIsBossStaggered] = useState(false);
 
   // Class Accuracy
-  const [classAccuracy] = useState(82);
+  const [classAccuracy, setClassAccuracy] = useState(82);
 
-  // Damage Log (Start Empty)
+  // Damage Log
   const [damageLog, setDamageLog] = useState<DamageLogEntry[]>([]);
 
   useEffect(() => {
-    setLocalTimeLeft(timeLeft);
-    if (timeLeft === 0 && isQuestionActive) {
-      setIsQuestionActive(false);
-      toast.error("Time's up for this question! Prepare to launch the next one.", {
-        position: 'top-right',
-        style: { background: 'var(--gm-red)', color: 'white' }
+    const timer = setInterval(() => {
+      setLocalTimeLeft(Math.max(0, Math.round((endsAt - Date.now()) / 1000)));
+    }, 250);
+    return () => clearInterval(timer);
+  }, [endsAt]);
+
+  useEffect(() => {
+    if (lastMessage?.type === 'BOSSRAID_STATE_SYNC' || lastMessage?.type === 'BOSS_ACTION' || lastMessage?.type === 'ROOM_STATE_SYNC') {
+      if (lastMessage.bossHp !== undefined) setLocalBossHp(lastMessage.bossHp);
+      if (lastMessage.classHp !== undefined) setLocalClassHp(lastMessage.classHp);
+      if (lastMessage.bossEnergy !== undefined) {
+        setEnergy(lastMessage.bossEnergy);
+        setUltimateReady(lastMessage.bossEnergy >= 100);
+      }
+      if (lastMessage.questionEndsAt) setEndsAt(lastMessage.questionEndsAt);
+      if (lastMessage.overrideActive !== undefined) setOverrideActive(lastMessage.overrideActive);
+      if (lastMessage.overrideUnlocked !== undefined) setOverrideUnlocked(lastMessage.overrideUnlocked);
+      if (lastMessage.isStaggered !== undefined) setIsBossStaggered(lastMessage.isStaggered);
+      if (lastMessage.damageLog && Array.isArray(lastMessage.damageLog)) setDamageLog(lastMessage.damageLog);
+      if (lastMessage.phase === 'WAITING' || (typeof lastMessage.currentIndex === 'number' && lastMessage.currentIndex < 0)) {
+        setIsQuestionActive(false);
+      } else if (lastMessage.phase === 'QUESTION' || lastMessage.currentQuestion) {
+        setIsQuestionActive(true);
+      }
+    } else if (lastMessage?.type === 'QUESTION_ADVANCED') {
+      if (lastMessage.questionEndsAt) setEndsAt(lastMessage.questionEndsAt);
+      if (lastMessage.bossEnergy !== undefined) {
+        setEnergy(lastMessage.bossEnergy);
+        setUltimateReady(lastMessage.bossEnergy >= 100);
+      }
+      setIsQuestionActive(true);
+    } else if (lastMessage?.type === 'BOSSRAID_ANSWER_RESULT') {
+      if (lastMessage.bossHp !== undefined) {
+        setLocalBossHp(prev => {
+          if (lastMessage.bossHp < prev) {
+            setSlashed(true);
+            setTimeout(() => setSlashed(false), 300);
+          }
+          return lastMessage.bossHp;
+        });
+      }
+      if (lastMessage.classHp !== undefined) setLocalClassHp(lastMessage.classHp);
+      if (lastMessage.bossEnergy !== undefined) {
+        setEnergy(lastMessage.bossEnergy);
+        setUltimateReady(lastMessage.bossEnergy >= 100);
+      }
+      if (lastMessage.overrideUnlocked !== undefined) setOverrideUnlocked(lastMessage.overrideUnlocked);
+      if (lastMessage.isStaggered !== undefined) setIsBossStaggered(lastMessage.isStaggered);
+
+      setDamageLog(prev => [
+        {
+          player: lastMessage.sender || `Student ${lastMessage.userId?.substring(0, 4) || ''}`,
+          action: lastMessage.isCorrect ? `HIT (-${lastMessage.damage} HP)` : "MISS",
+          value: lastMessage.damage || 0,
+          timestamp: Date.now(),
+        },
+        ...prev.slice(0, 40)
+      ]);
+    } else if (lastMessage?.type === 'BOSSRAID_TIME_UP') {
+      if (lastMessage.classHp !== undefined) setLocalClassHp(lastMessage.classHp);
+      if (lastMessage.bossEnergy !== undefined) {
+        setEnergy(lastMessage.bossEnergy);
+        setUltimateReady(lastMessage.bossEnergy >= 100);
+      }
+      toast.error("Time's up! The boss struck the class!", {
+        position: 'top-center',
+        style: { background: 'red', color: 'white' }
       });
+    } else if (lastMessage?.type === 'BOSSRAID_POWERUP_ACTIVATED') {
+      if (lastMessage.powerupId === 'OVERRIDE') {
+        setOverrideActive(true);
+        toast.info("OVERRIDE PROTOCOL ACTIVATED! True/False challenge unlocked!");
+      }
+    } else if (lastMessage?.type === 'BOSSRAID_POWERUP_RESOLVED') {
+      if (lastMessage.powerupId === 'TIME_SQUEEZE' && lastMessage.questionEndsAt) {
+        setEndsAt(lastMessage.questionEndsAt);
+        toast.warning("Time Squeeze activated!");
+      }
+      if (lastMessage.overrideUnlocked !== undefined) setOverrideUnlocked(lastMessage.overrideUnlocked);
     }
-  }, [timeLeft, isQuestionActive]);
+  }, [lastMessage]);
+
+  const healthPercent = Math.max(0, (localBossHp / bossMaxHealth) * 100);
 
   // Sync state if prop changes entirely (e.g. initial load)
   useEffect(() => {
     setAvailableQuestions(questions);
   }, [questions]);
-
-  // Energy Auto-increment (0.5% per second)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setEnergy(prev => {
-        const next = prev + 5;
-        if (next >= 100) {
-          setUltimateReady(true);
-          return 100;
-        }
-        return next;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Expose or trigger this when a student answers wrong via websocket
   const handleStudentMistake = () => {
@@ -196,6 +210,9 @@ const triggerUltimate = () => {
   if (ultimateReady) {
     const shuffled = [...PROF_CARDS].sort(() => 0.5 - Math.random());
     triggerCardDraw(shuffled.slice(0, 3));
+    if (socketSend) {
+      socketSend({ type: 'PROF_ACTIVATE_OVERRIDE' });
+    }
     setEnergy(0); 
     setUltimateReady(false);
   }
@@ -206,29 +223,25 @@ const triggerUltimate = () => {
   };
 
   const useSkill = (skill: PowerCardData) => {
-    // Activate skill effect globally
     if (skill.category === 'profOverride') {
       setOverrideActive(true);
-      setTimeout(() => setOverrideActive(false), 5000);
-      setDamageLog(prev => [{ player: "ALL", action: "OVERRIDE PROTOCOL", value: 0, timestamp: Date.now() }, ...prev]);
+      setDamageLog(prev => [{ player: "PROFESSOR", action: "OVERRIDE PROTOCOL", value: 0, timestamp: Date.now() }, ...prev]);
     } else if (skill.category === 'profEvasion') {
-      setDamageLog(prev => [{ player: "ALL", action: "EVASION PROTOCOL", value: 0, timestamp: Date.now() }, ...prev]);
+      setDamageLog(prev => [{ player: "PROFESSOR", action: "EVASION PROTOCOL", value: 0, timestamp: Date.now() }, ...prev]);
     } else if (skill.category === 'profTime') {
-      setDamageLog(prev => [{ player: "ALL", action: "TIME SQUEEZE", value: 0, timestamp: Date.now() }, ...prev]);
-      setLocalTimeLeft(prev => Math.max(0, prev - 6)); // Subtract time
+      setDamageLog(prev => [{ player: "PROFESSOR", action: "TIME SQUEEZE", value: 0, timestamp: Date.now() }, ...prev]);
     }
     
     setEnergy(0);
     setUltimateReady(false);
     setShowCardModal(false);
-    setGlobalCooldown(3); // Start 3s GCD
+    setGlobalCooldown(3);
 
-    // Broadcast
     if (socketSend) {
       socketSend({
-        type: 'BOSS_ACTION',
-        bossEnergy: 0,
-        bossCardEffect: skill.category === 'profOverride' ? 'OVERRIDE' : skill.category === 'profEvasion' ? 'EVASION' : 'TIME_SQUEEZE'
+        type: 'PROF_USE_CARD',
+        cardId: skill.id,
+        powerupId: skill.category === 'profOverride' ? 'OVERRIDE' : skill.category === 'profEvasion' ? 'EVASION' : 'TIME_SQUEEZE'
       });
     }
   };
@@ -244,14 +257,21 @@ const triggerUltimate = () => {
       setIsQuestionActive(true);
       triggerSlash();
       
+      // Bump energy by +15 on question launch
+      setEnergy(prev => {
+        const next = Math.min(100, prev + 15);
+        if (next >= 100) setUltimateReady(true);
+        return next;
+      });
+
       // Remove from available list
       setAvailableQuestions(prev => prev.filter(q => q !== draggedQ));
       setGlobalCooldown(3); // Start 3s GCD
 
       if (socketSend) {
         socketSend({
-          type: 'BOSS_ACTION',
-          // no classHp deduction here anymore
+          type: 'BOSS_ACTION_LAUNCH_QUESTION',
+          question: draggedQ,
         });
       }
     }
@@ -276,25 +296,36 @@ const triggerUltimate = () => {
   const [customQuestionAnswer, setCustomQuestionAnswer] = useState("True");
 
   const launchCustom = () => {
-    if (!customQuestion.trim() || !onLaunchQuestion) return;
-    onLaunchQuestion({
-      text: customQuestion,
-      choices: ["True", "False"],
-      answer: customQuestionAnswer
-    });
+    if (!overrideActive) {
+      toast.error("Override Protocol must be active to throw True/False challenges!");
+      return;
+    }
+    if (!customQuestion.trim()) return;
+
+    if (socketSend) {
+      socketSend({
+        type: 'PROF_THROW_TRUE_FALSE',
+        customQuestion: {
+          text: customQuestion,
+          choices: ["True", "False"],
+          answer: customQuestionAnswer
+        }
+      });
+    }
+
+    if (onLaunchQuestion) {
+      onLaunchQuestion({
+        text: customQuestion,
+        choices: ["True", "False"],
+        answer: customQuestionAnswer
+      });
+    }
+
     setCustomQuestion("");
-    // Also trigger slash/damage/broadcast for custom question just like handleDrop
-    setDamageLog(prev => [{ player: "BOSS", action: "LAUNCHED CUSTOM QUESTION", value: 0, timestamp: Date.now() }, ...prev]);
+    setDamageLog(prev => [{ player: "PROFESSOR", action: "LAUNCHED OVERRIDE T/F", value: 0, timestamp: Date.now() }, ...prev]);
     setIsQuestionActive(true);
     triggerSlash();
     setGlobalCooldown(3);
-    
-    if (socketSend) {
-      socketSend({
-        type: 'BOSS_ACTION',
-        // no classHp deduction here anymore
-      });
-    }
   };
 
   const studentsWithMockQuarantine = students.map((s, idx) => ({
@@ -356,32 +387,48 @@ const triggerUltimate = () => {
           })}
         </div>
 
-        {/* Custom Question Throw */}
-        <div className="mt-4 bg-[var(--gm-coral)]/10 border border-[var(--gm-coral)] rounded-xl p-4">
-          <div className="text-xs font-extrabold text-[var(--gm-coral)] mb-2 uppercase">
-            Live Challenge (Custom)
+        {/* Custom Question Throw (Guarded by Override Protocol) */}
+        <div className={cn(
+          "mt-4 border rounded-xl p-4 transition-all duration-300",
+          overrideActive ? "bg-[var(--gm-red)]/15 border-[var(--gm-red)] shadow-[0_0_15px_rgba(255,71,87,0.3)]" : "bg-white/[0.02] border-white/10 opacity-70"
+        )}>
+          <div className="flex items-center justify-between mb-2">
+            <div className={cn("text-xs font-extrabold uppercase", overrideActive ? "text-[var(--gm-red)]" : "text-[var(--gm-muted)]")}>
+              {overrideActive ? "⚡ OVERRIDE CHALLENGE (UNLOCKED)" : "🔒 OVERRIDE CHALLENGE (LOCKED)"}
+            </div>
+            {!overrideActive && (
+              <span className="text-[10px] text-[var(--gm-yellow)] font-bold">Req. 100% Energy</span>
+            )}
           </div>
           <textarea
             value={customQuestion}
+            disabled={!overrideActive}
             onChange={(e) => setCustomQuestion(e.target.value)}
-            placeholder="Type a surprise question..."
-            className="w-full bg-black/30 border-none rounded-lg p-2.5 text-white text-[13px] resize-none h-[60px] mb-2.5 font-[Manrope] focus:outline-none focus:ring-1 focus:ring-[var(--gm-coral)]"
+            placeholder={overrideActive ? "Type a True/False surprise challenge..." : "Locked until Override Protocol activates..."}
+            className={cn(
+              "w-full bg-black/30 border-none rounded-lg p-2.5 text-[13px] resize-none h-[60px] mb-2.5 font-[Manrope] focus:outline-none",
+              overrideActive ? "text-white focus:ring-1 focus:ring-[var(--gm-red)]" : "text-white/40 cursor-not-allowed"
+            )}
           />
           <div className="flex gap-4 mb-3">
-            <label className="flex items-center gap-1.5 text-[13px] cursor-pointer">
-              <input type="radio" name="customAnswer" value="True" checked={customQuestionAnswer === "True"} onChange={() => setCustomQuestionAnswer("True")} className="accent-[var(--gm-coral)]" />
+            <label className={cn("flex items-center gap-1.5 text-[13px]", overrideActive ? "cursor-pointer" : "cursor-not-allowed opacity-50")}>
+              <input type="radio" disabled={!overrideActive} name="customAnswer" value="True" checked={customQuestionAnswer === "True"} onChange={() => setCustomQuestionAnswer("True")} className="accent-[var(--gm-coral)]" />
               True
             </label>
-            <label className="flex items-center gap-1.5 text-[13px] cursor-pointer">
-              <input type="radio" name="customAnswer" value="False" checked={customQuestionAnswer === "False"} onChange={() => setCustomQuestionAnswer("False")} className="accent-[var(--gm-coral)]" />
+            <label className={cn("flex items-center gap-1.5 text-[13px]", overrideActive ? "cursor-pointer" : "cursor-not-allowed opacity-50")}>
+              <input type="radio" disabled={!overrideActive} name="customAnswer" value="False" checked={customQuestionAnswer === "False"} onChange={() => setCustomQuestionAnswer("False")} className="accent-[var(--gm-coral)]" />
               False
             </label>
           </div>
           <button 
+            disabled={!overrideActive}
             onClick={launchCustom} 
-            className="w-full bg-[var(--gm-coral)] border-none rounded-lg py-2 text-white font-bold cursor-pointer flex items-center justify-center gap-1.5 hover:scale-[1.02] transition-transform"
+            className={cn(
+              "w-full border-none rounded-lg py-2 font-bold flex items-center justify-center gap-1.5 transition-transform",
+              overrideActive ? "bg-[var(--gm-red)] text-white cursor-pointer hover:scale-[1.02] shadow-[0_0_10px_rgba(255,71,87,0.4)]" : "bg-white/10 text-white/40 cursor-not-allowed"
+            )}
           >
-            <Send size={14} /> Throw Challenge!
+            <Send size={14} /> {overrideActive ? "Throw Override Challenge!" : "Override Required"}
           </button>
         </div>
       </div>

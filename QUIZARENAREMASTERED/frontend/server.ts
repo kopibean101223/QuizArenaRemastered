@@ -13,6 +13,7 @@ import { finishTeamPowerUpVote, submitTeamPowerUpVote, TeamPowerUpVote } from '.
 import selfPacedBattleHandler, { SelfPacedPayload } from './handlers/OwnPace';
 import bingoBattleHandler, { BingoPayload } from './handlers/BingoBattle';
 import { applyLivePowerCard, LivePowerCardAction } from './handlers/PowerCardActions';
+import EndlessBattleHandler from './handlers/EndlessBattle';
 
 
 const PORT = Number(process.env.PORT) || 8080;
@@ -38,6 +39,7 @@ BossRaidHandler.initSubscriber(redisSubscriber);
 selfPacedBattleHandler.initSubscriber(redisSubscriber);
 TeamBattleHandler.initSubscriber(redisSubscriber);
 BattleRoyaleHandler.initSubscriber(redisSubscriber);
+EndlessBattleHandler.initSubscriber(redisSubscriber);
 
 wss.on('connection', (ws: WebSocket) => {
   console.log('[WS] CLIENT CONNECTED');
@@ -100,8 +102,9 @@ wss.on('connection', (ws: WebSocket) => {
         await bingoBattleHandler.handleMessage(ws, payload as BingoPayload, redisPublisher, redisSubscriber);
       } else if (payload.mode === "BOSSRAID" || payload.mode === "BOSS_RAID" || payload.type?.includes('BOSS')) {
         await BossRaidHandler.handleMessage(ws, payload as BossBattlePayload, redisPublisher, redisSubscriber);
-
-      }else {
+      } else if (payload.mode === "ENDLESS" || payload.type?.includes('ENDLESS')) {
+        await EndlessBattleHandler.handleMessage(ws, payload as any, redisPublisher, redisSubscriber);
+      } else {
         await liveBattleHandler.handleMessage(ws, payload as BattlePayload, redisPublisher, redisSubscriber);
       }  
     } catch (err) {

@@ -46,28 +46,58 @@ export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth =
     }
   }, [lastMessage, navigate]);
   
-  // Use currentQuestion from props if available, otherwise get it from socketCtx
-  const activeQuestion = currentQuestion || (socketCtx?.questions && socketCtx.questions[socketCtx.currentIndex]) || null;
+  // Dynamic question state that tracks launched questions from the boss
+  const [liveQuestion, setLiveQuestion] = useState<any>(currentQuestion);
+
+  useEffect(() => {
+    if (lastMessage?.type === 'BOSSRAID_STATE_SYNC') {
+      if (lastMessage.phase === 'WAITING' || (typeof lastMessage.currentIndex === 'number' && lastMessage.currentIndex < 0)) {
+        setLiveQuestion(null);
+      } else if (lastMessage.currentQuestion || lastMessage.customQuestion) {
+        setLiveQuestion(lastMessage.currentQuestion || lastMessage.customQuestion);
+        setSelected(null);
+        setAnswered(false);
+        setIsCorrect(null);
+      }
+    } else if (lastMessage?.type === 'QUESTION_ADVANCED') {
+      if (lastMessage.currentQuestion || lastMessage.customQuestion) {
+        setLiveQuestion(lastMessage.currentQuestion || lastMessage.customQuestion);
+      } else if (typeof lastMessage.currentIndex === 'number' && lastMessage.currentIndex >= 0 && socketCtx?.questions?.[lastMessage.currentIndex]) {
+        setLiveQuestion(socketCtx.questions[lastMessage.currentIndex]);
+      }
+      setSelected(null);
+      setAnswered(false);
+      setIsCorrect(null);
+    } else if (lastMessage?.type === 'BOSSRAID_OVERRIDE_QUESTION_LAUNCHED' && lastMessage.customQuestion) {
+      setLiveQuestion(lastMessage.customQuestion);
+      setSelected(null);
+      setAnswered(false);
+      setIsCorrect(null);
+    }
+  }, [lastMessage, socketCtx?.questions]);
+
+  // Check if waiting for boss attack
+  const isWaitingForBoss = lastMessage?.phase === 'WAITING' || (typeof lastMessage?.currentIndex === 'number' && lastMessage.currentIndex < 0);
+
+  // Use live question or props only when boss has launched a question
+  const activeQuestion = !isWaitingForBoss
+    ? (liveQuestion || currentQuestion || (socketCtx?.currentIndex !== undefined && socketCtx.currentIndex >= 0 ? socketCtx.questions?.[socketCtx.currentIndex] : null))
+    : null;
 
   const [selected, setSelected] = useState<number | null>(null);
   const [answered, setAnswered] = useState(false);
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
   
-  // Timer State
+  // Server-authoritative timer state
+  const [endsAt, setEndsAt] = useState<number>(Date.now() + 60_000);
   const [timeLeft, setTimeLeft] = useState(60);
 
   useEffect(() => {
-    if (!socketCtx?.startedAt) {
-      setTimeLeft(60);
-      return;
-    }
     const timer = setInterval(() => {
-      const limit = socketCtx.lastMessage?.timeLimit || 60;
-      const elapsed = Math.floor((Date.now() - socketCtx.startedAt) / 1000);
-      setTimeLeft(Math.max(0, limit - elapsed));
-    }, 500);
+      setTimeLeft(Math.max(0, Math.round((endsAt - Date.now()) / 1000)));
+    }, 250);
     return () => clearInterval(timer);
-  }, [socketCtx?.startedAt, socketCtx?.lastMessage?.timeLimit, activeQuestion]);
+  }, [endsAt]);
 
   // Stagger Meter
   const [staggerProgress, setStaggerProgress] = useState(0); // 0 to 3
@@ -78,22 +108,37 @@ export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth =
   const [isQuarantined, setIsQuarantined] = useState(false);
   const [questionsAnswered, setQuestionsAnswered] = useState(0);
   
-  // Local Health States for Demo
+  // Authoritative Health States
   const [localBossHp, setLocalBossHp] = useState(bossHealth);
   const [localClassHp, setLocalClassHp] = useState(1000);
   const classMaxHealth = 1000;
 
   useEffect(() => {
-    if (lastMessage?.type === 'BOSS_ACTION' || lastMessage?.type === 'ROOM_STATE_SYNC') {
+    if (lastMessage?.type === 'BOSSRAID_STATE_SYNC' || lastMessage?.type === 'BOSS_ACTION' || lastMessage?.type === 'ROOM_STATE_SYNC') {
       if (lastMessage.bossHp !== undefined) setLocalBossHp(lastMessage.bossHp);
-      if (lastMessage.classHp !== undefined) {
-        setLocalClassHp(prev => {
-          if (lastMessage.classHp < prev && lastMessage.type === 'BOSS_ACTION') {
-            setSlashed(true);
-            setTimeout(() => setSlashed(false), 300);
-          }
-          return lastMessage.classHp;
-        });
+      if (lastMessage.classHp !== undefined) setLocalClassHp(lastMessage.classHp);
+      if (lastMessage.questionEndsAt) setEndsAt(lastMessage.questionEndsAt);
+      if (lastMessage.staggerProgress !== undefined) setStaggerProgress(lastMessage.staggerProgress);
+      if (lastMessage.isStaggered !== undefined) setIsBossStaggered(lastMessage.isStaggered);
+      if (lastMessage.overrideActive !== undefined) setOverrideActive(lastMessage.overrideActive);
+    } else if (lastMessage?.type === 'QUESTION_ADVANCED') {
+      if (lastMessage.questionEndsAt) setEndsAt(lastMessage.questionEndsAt);
+    } else if (lastMessage?.type === 'BOSSRAID_ANSWER_RESULT') {
+      if (lastMessage.bossHp !== undefined) setLocalBossHp(lastMessage.bossHp);
+      if (lastMessage.classHp !== undefined) setLocalClassHp(lastMessage.classHp);
+      if (lastMessage.isStaggered !== undefined) setIsBossStaggered(lastMessage.isStaggered);
+      if (lastMessage.staggerProgress !== undefined) setStaggerProgress(lastMessage.staggerProgress);
+
+      if (lastMessage.damage && lastMessage.damage > 0) {
+        const dmg = { id: Date.now(), value: lastMessage.damage, x: Math.random() * 80 + 10 };
+        setDamageNumbers(prev => [...prev, dmg]);
+        setTimeout(() => setDamageNumbers(prev => prev.filter(d => d.id !== dmg.id)), 1000);
+        setSlashed(true);
+        setTimeout(() => setSlashed(false), 300);
+      }
+      if (lastMessage.isCorrect === false) {
+        setSlashed(true);
+        setTimeout(() => setSlashed(false), 300);
       }
     } else if (lastMessage?.type === 'BOSSRAID_TIME_UP') {
       if (lastMessage.classHp !== undefined) {
@@ -105,6 +150,26 @@ export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth =
         position: 'top-center',
         style: { background: 'red', color: 'white', fontWeight: 'bold' }
       });
+    } else if (lastMessage?.type === 'BOSSRAID_POWERUP_ACTIVATED') {
+      if (lastMessage.powerupId === 'OVERRIDE') {
+        setOverrideIncoming(true);
+        setTimeout(() => setOverrideIncoming(false), 2000);
+        setOverrideActive(true);
+        setCardAnimation('OVERRIDE PROTOCOL!');
+      } else if (lastMessage.powerupId === 'EVASION') {
+        setCardAnimation('BOSS EVASION!');
+      }
+    } else if (lastMessage?.type === 'BOSSRAID_POWERUP_RESOLVED') {
+      if (lastMessage.powerupId === 'TIME_SQUEEZE' && lastMessage.questionEndsAt) {
+        setEndsAt(lastMessage.questionEndsAt);
+        setCardAnimation('TIME SQUEEZE!');
+      } else if (lastMessage.classHp !== undefined) {
+        setLocalClassHp(lastMessage.classHp);
+      }
+    } else if (lastMessage?.type === 'BOSSRAID_OVERRIDE_QUESTION_LAUNCHED') {
+      if (lastMessage.endsAt) setEndsAt(lastMessage.endsAt);
+      setOverrideActive(true);
+      setCardAnimation('OVERRIDE QUESTION!');
     }
   }, [lastMessage]);
 
@@ -126,7 +191,6 @@ export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth =
       setTimeout(() => setOverrideActive(false), 5000);
       setCardAnimation('OVERRIDE PROTOCOL!');
     } else if (bossCardEffect === 'TIME_SQUEEZE') {
-      setTimeLeft(prev => Math.max(0, prev - 6));
       setCardAnimation('TIME SQUEEZE!');
     } else if (bossCardEffect === 'EVASION') {
       setCardAnimation('BOSS EVASION!');
@@ -172,96 +236,53 @@ export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth =
     if (answered) return;
     setSelected(i);
     setAnswered(true);
-    
+
     const correctAnswer = activeQuestion?.answer || activeQuestion?.options?.[0] || activeQuestion?.choices?.[0];
     const correct = choice === correctAnswer;
     setIsCorrect(correct);
-    
+
+    const bId = battleId || (socketCtx as any)?.battleId;
+    const currentQIdx = socketCtx?.currentIndex ?? 0;
+
+    if (send && bId) {
+      send({
+        type: 'SUBMIT_BOSS_RAID_ANSWER',
+        battleId: bId,
+        questionIndex: currentQIdx,
+        answer: choice,
+        userId: socketCtx?.userId,
+        sender: socketCtx?.userName || 'Student',
+      });
+    }
+
     if (correct) {
-      // Handle Streak
       setStreak(s => {
         const next = s + 1;
-        if (next >= 5) {
-          setShowStreakCard(true);
-        }
+        if (next >= 5) setShowStreakCard(true);
         return next;
       });
-      
-      // Handle Quarantine Recovery
       setMissStreak(0);
       setIsQuarantined(false);
-      
-      // Handle Stagger
-      setStaggerProgress(p => {
-        const next = p + 1;
-        if (next >= 3) {
-          setIsBossStaggered(true);
-          setTimeout(() => {
-            setIsBossStaggered(false);
-            setStaggerProgress(0);
-          }, 10000);
-          return 3;
-        }
-        return next;
-      });
-      
-      // Dynamic Damage calculation based on participant count & speed
-      const maxDamagePerRound = 100; // Base 100 damage for 1 player
-      const baseHit = Math.max(1, Math.round(maxDamagePerRound / Math.max(1, activeStudentsCount)));
-      const speedMultiplier = timeLeft > 25 ? 1.5 : (timeLeft > 15 ? 1.2 : 1.0);
-      const finalDmg = Math.round(baseHit * speedMultiplier);
-
-      // Apply Damage to Boss
-      const newHp = Math.max(0, localBossHp - finalDmg);
-      setLocalBossHp(newHp);
-      if (send) send({ type: 'BOSS_ACTION', battleId, bossHp: newHp });
-
-      // Floating damage
-      const dmg = { id: Date.now(), value: finalDmg, x: Math.random() * 80 + 10 };
-      setDamageNumbers(prev => [...prev, dmg]);
-      setTimeout(() => {
-        setDamageNumbers(prev => prev.filter(d => d.id !== dmg.id));
-      }, 1000);
-
-      // Boss slash effect
-      setSlashed(true);
-      setTimeout(() => setSlashed(false), 300);
-      
     } else {
-      // Handle wrong answer
       setStreak(0);
-      setStaggerProgress(0);
       setMissStreak(m => {
         const next = m + 1;
-        if (next >= 3) {
-          setIsQuarantined(true);
-        }
+        if (next >= 3) setIsQuarantined(true);
         return next;
       });
-
-      // Apply damage to class (mistake)
-      const newHp = Math.max(0, localClassHp - 25);
-      setLocalClassHp(newHp);
-      if (send) send({ type: 'BOSS_ACTION', battleId, classHp: newHp, addBossEnergy: 3 });
-
-      // Player slash effect
-      setSlashed(true);
-      setTimeout(() => setSlashed(false), 300);
     }
-    
-    // Check if every 3 questions for powerup, only for the leading player
+
+    // Check if every 3 questions for powerup
     setQuestionsAnswered(prev => {
       const next = prev + 1;
       const threshold = 3;
-      
       const leaderboard = socketCtx?.leaderboard || [];
       const isLeader = leaderboard.find(p => p.isMe)?.isLeader;
 
       if (next % threshold === 0 && isLeader) {
-        // Unlock a random powerup
         setPowerUpCooldowns(cooldowns => {
           const newCooldowns = [...cooldowns];
-          const lockedIndices = newCooldowns.map((c, i) => c ? i : -1).filter(i => i !== -1);
+          const lockedIndices = newCooldowns.map((c, idx) => c ? idx : -1).filter(idx => idx !== -1);
           if (lockedIndices.length > 0) {
             const unlockIdx = lockedIndices[Math.floor(Math.random() * lockedIndices.length)];
             newCooldowns[unlockIdx] = false;
@@ -288,20 +309,26 @@ export function StudentBossRaid({ battleId, currentQuestion = null, bossHealth =
       });
       
       const powerup = POWER_UP_SLOTS[index].name;
-      if (powerup === 'Heal') {
-        const newClassHp = Math.min(classMaxHealth, localClassHp + 150);
-        setLocalClassHp(newClassHp);
-        if (send) send({ type: 'BOSS_ACTION', battleId, classHp: newClassHp });
-      } else if (powerup === 'Shield') {
-        // Just deduct some boss energy
-        if (send) send({ type: 'BOSS_ACTION', battleId, addBossEnergy: -15 });
-      } else if (powerup === 'Time Boost') {
-        setTimeLeft(prev => prev + 15);
-      } else {
-        // Generic effect for others
-        if (send) send({ type: 'BOSS_ACTION', battleId, classHp: Math.min(classMaxHealth, localClassHp + 50) });
+      const powerupMap: Record<string, string> = {
+        'Heal': 'heal',
+        'Shield': 'shield',
+        'Time Boost': 'time-boost',
+        'Hint': 'hint',
+        'Double Score': 'double-score',
+        'Second Chance': 'second-chance',
+      };
+      const powerupId = powerupMap[powerup] || powerup.toLowerCase();
+      const bId = battleId || (socketCtx as any)?.battleId;
+
+      if (send && bId) {
+        send({
+          type: 'USE_BOSS_POWERUP',
+          battleId: bId,
+          powerupId,
+          userId: socketCtx?.userId,
+        });
       }
-    }, 1000);
+    }, 300);
   };
   
   const handleCollectStreak = () => {

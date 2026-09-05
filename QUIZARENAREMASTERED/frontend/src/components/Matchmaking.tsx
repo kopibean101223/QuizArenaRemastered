@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { ProfSidebar } from "./shared/ProfSidebar";
 import {
   Trophy, LayoutDashboard, Library, BarChart2, Settings,
@@ -15,6 +15,9 @@ import { CountdownDisplay } from "./studentONLY/ComponentsLobby/CountdownDisplay
 import { ProfBingoMonitor } from "./profonly/ProfBingoMonitor";
 import { ProfBossRaid } from "./gamemodes/ProfBossRaid";
 import { ProfEndlessMode } from "./gamemodes/ProfEndlessMode";
+import { ProfBattleRoyaleMonitor, RoyaleStudentTelemetry } from "./profonly/ProfBattleRoyaleMonitor";
+import { ProfTeamBattleMonitor, TeamTelemetry, DEFAULT_TEAM_PALETTES } from "./profonly/ProfTeamBattleMonitor";
+import { ProfIndividualMonitor } from "./profonly/ProfIndividualMonitor";
 import { BattleSocketProvider } from "@/lib/student/battle/useBattleSocketProvider";
 
 // ─── Tokens ────────────────────────────────────────────────────────────────────
@@ -1028,7 +1031,8 @@ const handleRemoveGroup = (groupName: string) => {
    const handleStartBattle = () => {
     setBattleStarted(true);
     if (lobbyType === 'bingo') setProfessorView("bingo-monitor");
-    setCurrentIndex(0);
+    setCurrentIndex(lobbyType === 'bossraid' ? -1 : 0);
+    setActiveCustomQuestion(null);
     startedAtRef.current = Date.now();
     timeLimitRef.current = 60;
     setTimeRemaining(60);
@@ -1064,7 +1068,7 @@ const handleRemoveGroup = (groupName: string) => {
     }
 
     const totalQCount = targetQuestionCount || randomizedQuestions.length || 1;
-    const nextIdx = currentIndex + 1;
+    const nextIdx = currentIndex < 0 ? 0 : currentIndex + 1;
 
     if (lobbyType === 'bossraid' || nextIdx < totalQCount) {
       setCurrentIndex(nextIdx);
@@ -1075,12 +1079,13 @@ const handleRemoveGroup = (groupName: string) => {
       }
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
-          type: 'ADVANCE_QUESTION',
+          type: lobbyType === 'bossraid' ? 'BOSS_ACTION_LAUNCH_QUESTION' : 'ADVANCE_QUESTION',
           battleId: sessionId,
           currentIndex: nextIdx,
           nextTimeLimit: 60,
           isLastQuestion: false,
-          customQuestion: customQ
+          customQuestion: customQ,
+          question: customQ
         }));
       }
       startedAtRef.current = Date.now();
@@ -1158,6 +1163,55 @@ const handleRemoveGroup = (groupName: string) => {
     const totalScore = members.reduce((sum, m) => sum + (m.score || 0), 0);
     return { team, score: totalScore, members };
   }).sort((a, b) => b.score - a.score) : [];
+
+  const dynamicRoyaleTelemetry: RoyaleStudentTelemetry[] = useMemo(() => {
+    return joinedStudents.map((s, idx) => ({
+      id: s.id,
+      name: s.name,
+      avatarColor: s.avatarColor || '#FFC93C',
+      initials: s.name ? s.name.substring(0, 2).toUpperCase() : 'ST',
+      rank: idx + 1,
+      hp: 100,
+      maxHp: 100,
+      isAlive: true,
+      score: s.score || 0,
+      streak: (s as any).streak || 0,
+      accuracy: 100,
+      totalQuestions: 0,
+      correctAnswers: 0,
+      difficulty: 'Medium' as const,
+      lastActivityAt: Date.now(),
+      powerup: null,
+    }));
+  }, [joinedStudents]);
+
+  const dynamicTeamTelemetry: TeamTelemetry[] = useMemo(() => {
+    if (groups.length === 0) return [];
+    return groups.map((g, idx) => {
+      const members = studentsByTeam[g] || [];
+      const totalScore = members.reduce((sum, m) => sum + (m.score || 0), 0);
+      const palette = DEFAULT_TEAM_PALETTES[idx % DEFAULT_TEAM_PALETTES.length];
+      return {
+        teamId: `team-${g.toLowerCase().replace(/\s+/g, '-')}`,
+        teamName: g,
+        color: palette.color,
+        score: totalScore,
+        accuracy: 100,
+        correctAnswers: 0,
+        totalAnswers: 0,
+        members: members.map((m, mIdx) => ({
+          id: m.id,
+          name: m.name,
+          score: m.score || 0,
+          accuracy: 100,
+          streak: (m as any).streak || 0,
+          answeredCurrent: false,
+          isDesignatedLeader: mIdx === 0,
+          status: 'active' as const,
+        })),
+      };
+    });
+  }, [groups, studentsByTeam]);
 
 
   if (viewingAsyncQuiz) {
@@ -1446,13 +1500,36 @@ const handleRemoveGroup = (groupName: string) => {
               students={joinedStudents.map(s => ({ ...s, isActive: true, score: s.score || 0, avatarColor: s.avatarColor || '#FFC93C' }))}
               bossHealth={1000}
               timeLeft={timeRemaining}
-              currentQuestion={activeCustomQuestion || randomizedQuestions[currentIndex] || null}
+              currentQuestion={activeCustomQuestion || (currentIndex >= 0 ? randomizedQuestions[currentIndex] : null)}
               questions={adaptive ? randomizedQuestions : randomizedQuestions.slice(0, targetQuestionCount || randomizedQuestions.length)}
               onLaunchQuestion={(q) => {
                  handleNextQuestion(q);
               }}
               lastMessage={lastMessage}
               socketSend={(msg) => wsRef.current?.send(JSON.stringify({ ...msg, battleId: sessionId }))}
+            />
+          ) : lobbyType === 'royale' ? (
+            <ProfBattleRoyaleMonitor
+              battleId={sessionId}
+              initialStudents={dynamicRoyaleTelemetry.length > 0 ? dynamicRoyaleTelemetry : undefined}
+            />
+          ) : lobbyType === 'team' ? (
+            <ProfTeamBattleMonitor
+              battleId={sessionId}
+              initialTeams={dynamicTeamTelemetry.length > 0 ? dynamicTeamTelemetry : undefined}
+            />
+          ) : lobbyType === 'endless' ? (
+            <ProfEndlessMode
+              session={{ id: sessionId, status: 'ACTIVE', roomCode }}
+            />
+          ) : lobbyType === 'individual' ? (
+            <ProfIndividualMonitor
+              battleId={sessionId}
+              roomCode={roomCode}
+              initialStudents={joinedStudents}
+              totalQuestions={totalQCount}
+              timeRemaining={timeRemaining}
+              onNextQuestion={handleNextQuestion}
             />
           ) : (
             <div style={{ maxWidth: 1000, margin: "0 auto", width: "100%", display: "flex", flexDirection: "column", gap: 20 }}>
@@ -1526,39 +1603,18 @@ const handleRemoveGroup = (groupName: string) => {
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
                 <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 20, padding: 20, border: "1px solid rgba(255,255,255,0.08)" }}>
                   <h3 style={{ fontFamily: "Fredoka, sans-serif", fontSize: 18, marginTop: 0, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                    <Trophy size={18} color={C.yellow} /> {lobbyType === 'team' ? "Live Team Rankings" : "Live Rankings"}
+                    <Trophy size={18} color={C.yellow} /> Live Rankings
                   </h3>
                   <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: 350, overflowY: "auto" }}>
-                    {lobbyType === 'team' ? (
-                      teamScores.map((ts, idx) => (
-                        <div key={ts.team} style={{ background: "rgba(255,255,255,0.06)", borderRadius: 12, padding: 14 }}>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                              <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: idx === 0 ? C.yellow : "rgba(255,255,255,0.5)" }}>#{idx + 1}</span>
-                              <span style={{ fontWeight: 700, fontFamily: "Fredoka, sans-serif", fontSize: 16 }}>{ts.team}</span>
-                            </div>
-                            <span style={{ color: C.green, fontWeight: 700, fontFamily: "Fredoka, sans-serif", fontSize: 16 }}>{ts.score} pts</span>
-                          </div>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                            {ts.members.map(m => (
-                              <span key={m.id} style={{ fontSize: 11, background: "rgba(0,0,0,0.3)", padding: "2px 8px", borderRadius: 8, color: "rgba(255,255,255,0.7)" }}>
-                                {m.name} ({m.score})
-                              </span>
-                            ))}
-                          </div>
+                    {sortedStudents.map((student, idx) => (
+                      <div key={student.id} style={{ background: "rgba(255,255,255,0.06)", borderRadius: 12, padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: idx === 0 ? C.yellow : "rgba(255,255,255,0.5)" }}>#{idx + 1}</span>
+                          <span style={{ fontWeight: 700, fontFamily: "Fredoka, sans-serif", fontSize: 16 }}>{student.name}</span>
                         </div>
-                      ))
-                    ) : (
-                      sortedStudents.map((student, idx) => (
-                        <div key={student.id} style={{ background: "rgba(255,255,255,0.06)", borderRadius: 12, padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <span style={{ fontFamily: "Fredoka, sans-serif", fontSize: 16, fontWeight: 700, color: idx === 0 ? C.yellow : "rgba(255,255,255,0.5)" }}>#{idx + 1}</span>
-                            <span style={{ fontWeight: 700, fontFamily: "Fredoka, sans-serif", fontSize: 16 }}>{student.name}</span>
-                          </div>
-                          <span style={{ color: C.green, fontWeight: 700, fontFamily: "Fredoka, sans-serif", fontSize: 16 }}>{student.score} pts</span>
-                        </div>
-                      ))
-                    )}
+                        <span style={{ color: C.green, fontWeight: 700, fontFamily: "Fredoka, sans-serif", fontSize: 16 }}>{student.score} pts</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
 

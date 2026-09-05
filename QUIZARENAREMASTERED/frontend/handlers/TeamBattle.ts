@@ -516,6 +516,57 @@ class TeamBattleHandler {
       return;
     }
 
+    // ── PROFESSOR AUTO ASSIGNS / BALANCES TEAMS (N-TEAMS DYNAMIC) ──
+    if (type === 'PROF_AUTO_ASSIGN_TEAMS' || type === 'AUTO_ASSIGN_TEAMS') {
+      this.registerClient(ws, battleId, channel, redisSubscriber);
+      const players = this.getLobbyPlayers(battleId);
+      const targetTeamSize = typeof payload.teamSize === 'number' && payload.teamSize > 0 ? payload.teamSize : 4;
+      const teamCount = Math.max(2, Math.ceil((players.length || 1) / targetTeamSize));
+
+      const rawGroups = await redisPublisher.get(gKey);
+      let groups: string[] = rawGroups ? JSON.parse(rawGroups) : [];
+      if (!groups || groups.length < teamCount) {
+        const teamNames = ['Phoenix', 'Titans', 'Nova', 'Echo', 'Orbit', 'Valkyrie', 'Apex', 'Zenith'];
+        groups = [];
+        for (let i = 0; i < teamCount; i++) {
+          groups.push(`Team ${teamNames[i % teamNames.length] || (i + 1)}`);
+        }
+        await redisPublisher.set(gKey, JSON.stringify(groups));
+        await redisPublisher.expire(gKey, COMPLETED_ROOM_TTL_SECONDS);
+      }
+
+      await redisPublisher.del(tKey);
+      // Round-robin distribution across teams ensures balanced team sizes (e.g. 10 with target 4 -> 4, 3, 3)
+      for (let i = 0; i < players.length; i++) {
+        const assignedTeam = groups[i % teamCount];
+        await redisPublisher.hset(tKey, players[i].id, assignedTeam);
+      }
+      await redisPublisher.expire(tKey, COMPLETED_ROOM_TTL_SECONDS);
+
+      const roster = await this.getLobbyRoster(battleId, redisPublisher);
+      await redisPublisher.publish(
+        channel,
+        JSON.stringify({
+          type: 'TEAM_ROSTER_UPDATED',
+          battleId,
+          players: roster,
+          groups,
+          teamSize: targetTeamSize,
+        })
+      );
+      await redisPublisher.publish(
+        `battle:${battleId}`,
+        JSON.stringify({
+          type: 'TEAM_ROSTER_UPDATED',
+          battleId,
+          players: roster,
+          groups,
+          teamSize: targetTeamSize,
+        })
+      );
+      return;
+    }
+
     // ── PROFESSOR STARTS THE TEAM BATTLE ──
     // FIX: now seeds questionIndex/startedAt/timeLimit in Redis (sKey) and
     // schedules the first auto-advance timer, exactly like LiveBattle does
